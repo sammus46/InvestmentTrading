@@ -15,14 +15,35 @@ A simple FastAPI application that pulls free market data with `yfinance`, calcul
 
 ## Quickstart
 
+Run these commands one line at a time from the repository root:
+
 ```bash
 python -m venv .venv
+```
+
+```bash
 source .venv/bin/activate
-pip install -e '.[dev]'
+```
+
+```bash
+python -m pip install --upgrade pip
+```
+
+```bash
+pip install -e .
+```
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000> in your browser.
+Open <http://127.0.0.1:8000> in your browser. The first install can take a while because `pandas`, `yfinance`, and `reportlab` include compiled wheels or sizable transitive dependencies. Subsequent installs should be faster because pip reuses its local download cache.
+
+For test/development tools, install the optional development extra after activating the virtual environment:
+
+```bash
+pip install -e '.[dev]'
+```
 
 ## API usage
 
@@ -45,9 +66,35 @@ curl -X POST http://127.0.0.1:8000/api/reports/pdf \
 
 ## Testing
 
+Run these commands one line at a time from the repository root:
+
+```bash
+source .venv/bin/activate
+```
+
+```bash
+pip install -e '.[dev]'
+```
+
 ```bash
 pytest
 ```
+
+## Dependency audit
+
+The runtime dependency list is intentionally small and maps to imports used by the app:
+
+| Dependency | Why it is needed |
+| --- | --- |
+| `fastapi` | Defines the API application, route decorators, responses, and static-file serving. |
+| `uvicorn` | Runs the ASGI app during local development and deployment. The project uses the base package instead of `uvicorn[standard]` to avoid optional speed/reload extras during the first install. |
+| `pandas` | Performs DataFrame cleanup, rolling Bollinger Band calculations, intraday time-window filtering, and VWAP math. |
+| `yfinance` | Retrieves the free daily and intraday equity data used by the metrics service. |
+| `reportlab` | Builds the downloadable PDF report. |
+| `pydantic` | Provides the request/response schemas and ticker normalization validators. |
+| `pytest` (`dev` extra only) | Runs the unit tests; it is not required to launch the web app. |
+
+The previous development extra included `httpx`, but the current test suite does not import it, so it was removed to avoid installing an unused package.
 
 ## Data source notes
 
