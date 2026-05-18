@@ -5,7 +5,7 @@ description = "FastAPI backend and web UI for calculating daily equity price lev
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0",
-    "uvicorn[standard]>=0.30.0",
+    "uvicorn>=0.30.0",
     "pandas>=2.2.0",
     "yfinance>=0.2.40",
     "reportlab>=4.2.0",
@@ -15,7 +15,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2.0",
-    "httpx>=0.27.0",
 ]
 
 [tool.pytest.ini_options]
