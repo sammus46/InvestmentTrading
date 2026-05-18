@@ -128,10 +128,10 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Completed-session 52-week high and low.
 - Most recent earnings date plus the earnings-day opening gap from the prior close.
 - Latest available session first five-minute regular-session high and low.
-- Major daily swing highs and lows, with nearby levels merged into concise support/resistance lists and displayed in numerical order.
+- Major daily swing highs and lows, with nearby levels merged, prioritized by distance from the latest completed close, and displayed in numerical order.
 - Daily Bollinger Bands.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
-- Web and PDF charts showing up to the latest 365 completed daily closes per ticker, with selected price levels overlaid using a consistent clickable color legend. The web charts include an x-axis zoom slider, preset range buttons, and follow the same ticker order as the draggable metric cards.
+- Web and PDF charts showing up to the latest 365 completed daily closes per ticker, with selected price levels overlaid using a consistent clickable color legend. The web charts include a dual-handle x-axis zoom slider, hover tooltips for close points, preset range buttons, and follow the same ticker order as the draggable metric cards.
 
 ## API usage
 

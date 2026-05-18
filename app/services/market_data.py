@@ -439,12 +439,50 @@ class MarketDataService:
             if lows[index] == lows[lower_bound:upper_bound].min():
                 swing_lows.append(round(float(lows[index]), 2))
 
+        latest_close = self._latest_completed_close(completed)
         return SwingLevels(
-            highs=self._merge_levels(swing_highs, max_levels=max_levels, merge_percent=merge_percent, descending=False),
-            lows=self._merge_levels(swing_lows, max_levels=max_levels, merge_percent=merge_percent, descending=True),
+            highs=self._select_swing_levels(
+                swing_highs,
+                max_levels=max_levels,
+                merge_percent=merge_percent,
+                descending=False,
+                latest_close=latest_close,
+            ),
+            lows=self._select_swing_levels(
+                swing_lows,
+                max_levels=max_levels,
+                merge_percent=merge_percent,
+                descending=True,
+                latest_close=latest_close,
+            ),
             window=window,
             merge_percent=merge_percent,
         )
+
+    @classmethod
+    def _select_swing_levels(
+        cls,
+        levels: list[float],
+        max_levels: int,
+        merge_percent: float,
+        descending: bool,
+        latest_close: float | None,
+    ) -> list[float]:
+        merged = cls._merge_levels(levels, max_levels=len(levels), merge_percent=merge_percent, descending=descending)
+        if latest_close is None:
+            return merged[:max_levels]
+
+        nearest = sorted(merged, key=lambda level: (abs(level - latest_close), level))[:max_levels]
+        return sorted(nearest, reverse=descending)
+
+    @staticmethod
+    def _latest_completed_close(completed: pd.DataFrame) -> float | None:
+        if "Close" not in completed.columns:
+            return None
+        closes = completed["Close"].dropna().astype(float)
+        if closes.empty:
+            return None
+        return float(closes.iloc[-1])
 
     @staticmethod
     def _merge_levels(levels: list[float], max_levels: int, merge_percent: float, descending: bool) -> list[float]:

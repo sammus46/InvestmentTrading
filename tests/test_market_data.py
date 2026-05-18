@@ -154,6 +154,23 @@ def test_swing_levels_find_and_merge_daily_support_resistance():
     assert levels.lows == [8.0, 7.0]
 
 
+def test_swing_levels_prefer_levels_nearest_latest_close():
+    service = MarketDataService(MarketDataSettings(swing_window=1, level_merge_percent=0.003, max_swing_levels=2))
+    daily = pd.DataFrame(
+        {
+            "High": [51.0, 60.0, 53.0, 90.0, 82.0, 110.0, 104.0, 121.0, 118.0],
+            "Low": [49.0, 45.0, 50.0, 78.0, 76.0, 100.0, 98.0, 112.0, 116.0],
+            "Close": [50.0, 55.0, 52.0, 86.0, 80.0, 106.0, 100.0, 119.0, 118.0],
+        },
+        index=pd.date_range("2026-05-01", periods=9, freq="D"),
+    )
+
+    levels = service._swing_levels(daily, [])
+
+    assert levels.highs == [110.0, 121.0]
+    assert levels.lows == [98.0, 76.0]
+
+
 def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
     class FakeTicker:
         @property
