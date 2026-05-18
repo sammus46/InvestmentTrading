@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date as Date, datetime
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
@@ -51,6 +51,39 @@ class PremarketRange(BaseModel):
     bars: int = 0
 
 
+class OpeningRange(BaseModel):
+    """Opening regular-session high/low and sample count."""
+
+    high: float | None = None
+    low: float | None = None
+    bars: int = 0
+    minutes: int = 5
+
+
+class FiftyTwoWeekRange(BaseModel):
+    """Completed-session 52-week high/low range."""
+
+    high: float | None = None
+    low: float | None = None
+
+
+class EarningsGap(BaseModel):
+    """Most recent earnings date and opening gap from the prior close."""
+
+    date: Date | None = None
+    gap: float | None = None
+    gap_percent: float | None = None
+
+
+class SwingLevels(BaseModel):
+    """Major daily swing high/low price levels."""
+
+    highs: list[float] = Field(default_factory=list)
+    lows: list[float] = Field(default_factory=list)
+    window: int = 10
+    merge_percent: float = 0.003
+
+
 class BollingerLevels(BaseModel):
     """Daily Bollinger Band levels."""
 
@@ -68,6 +101,10 @@ class EquityMetrics(BaseModel):
     previous_day: Ohlc
     premarket: PremarketRange
     previous_session_vwap_5m: float | None = None
+    fifty_two_week: FiftyTwoWeekRange
+    earnings_gap: EarningsGap
+    first_five_minutes: OpeningRange
+    swing_levels: SwingLevels
     bollinger_bands: BollingerLevels
     data_timestamp: datetime
     warnings: list[str] = Field(default_factory=list)
