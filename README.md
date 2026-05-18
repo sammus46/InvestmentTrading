@@ -13,12 +13,71 @@ A simple FastAPI application that pulls free market data with `yfinance`, calcul
   - previous regular-session VWAP from 5 minute bars;
   - 20 period, 2 standard deviation Bollinger Bands from daily closes.
 
-## Quickstart
+## Requirements
+
+- Python 3.10 or newer.
+- A terminal opened at the repository root, which is the folder containing `pyproject.toml`.
+
+If you already activated a virtual environment, do not run `python -m venv .venv` again inside that active environment. Create the virtual environment once, then activate it whenever you return to the project.
+
+## Quickstart on Windows Command Prompt
+
+Run these commands one line at a time from the repository root:
+
+```bat
+py -3.10 -m venv .venv
+```
+
+```bat
+.venv\Scripts\activate.bat
+```
+
+```bat
+python -m pip install --upgrade pip
+```
+
+```bat
+python -m pip install -e .
+```
+
+```bat
+python -m uvicorn app.main:app --reload
+```
+
+Open <http://127.0.0.1:8000> in your browser.
+
+## Quickstart on Windows PowerShell
+
+Run these commands one line at a time from the repository root:
+
+```powershell
+py -3.10 -m venv .venv
+```
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+```powershell
+python -m pip install --upgrade pip
+```
+
+```powershell
+python -m pip install -e .
+```
+
+```powershell
+python -m uvicorn app.main:app --reload
+```
+
+Open <http://127.0.0.1:8000> in your browser.
+
+## Quickstart on macOS and Linux
 
 Use Python 3.10 or newer, then run these commands one line at a time from the repository root:
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 ```
 
 ```bash
@@ -30,11 +89,11 @@ python -m pip install --upgrade pip
 ```
 
 ```bash
-pip install -e .
+python -m pip install -e .
 ```
 
 ```bash
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 Open <http://127.0.0.1:8000> in your browser. The first install can take a while because `pandas`, `yfinance`, and `reportlab` include compiled wheels or sizable transitive dependencies. Subsequent installs should be faster because pip reuses its local download cache.
@@ -44,8 +103,21 @@ If pip reports `Package 'investment-trading' requires a different Python`, check
 For test/development tools, install the optional development extra after activating the virtual environment:
 
 ```bash
-pip install -e '.[dev]'
+python -m pip install -e '.[dev]'
 ```
+
+On Windows Command Prompt, use double quotes for the development extra:
+
+```bat
+python -m pip install -e ".[dev]"
+```
+
+## Troubleshooting startup on Windows
+
+- `Permission denied: '.venv\\Scripts\\python.exe'` usually means the virtual environment is already active, a Python process is still using it, or Windows is locking files while you try to recreate it. Stop the running app if needed, run `deactivate`, close terminals that are using `.venv`, then either reuse the existing `.venv` or delete and recreate it.
+- `'source' is not recognized` means you are in Windows Command Prompt. Use `.venv\Scripts\activate.bat` instead. In PowerShell, use `.\.venv\Scripts\Activate.ps1`.
+- `requires a different Python` means the Python used to create `.venv` is outside the supported version range. This project supports Python 3.10 or newer. Check with `python --version` after activation.
+- `'uvicorn' is not recognized` usually means installation did not finish successfully. Rerun `python -m pip install -e .`, then start the app with `python -m uvicorn app.main:app --reload`.
 
 ## API usage
 
@@ -75,12 +147,14 @@ source .venv/bin/activate
 ```
 
 ```bash
-pip install -e '.[dev]'
+python -m pip install -e '.[dev]'
 ```
 
 ```bash
 pytest
 ```
+
+On Windows Command Prompt, activate with `.venv\Scripts\activate.bat` and install the development extra with `python -m pip install -e ".[dev]"`.
 
 ## Dependency audit
 
