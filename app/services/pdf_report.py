@@ -28,28 +28,63 @@ class PdfReportService:
 
         for metric in report.metrics:
             story.append(Paragraph(metric.ticker, styles["Heading2"]))
-            table_data = [
-                ["Metric", "Value"],
-                ["Previous Open", self._fmt(metric.previous_day.open)],
-                ["Previous High", self._fmt(metric.previous_day.high)],
-                ["Previous Low", self._fmt(metric.previous_day.low)],
-                ["Previous Close", self._fmt(metric.previous_day.close)],
-                ["Premarket High", self._fmt(metric.premarket.high)],
-                ["Premarket Low", self._fmt(metric.premarket.low)],
-                ["Previous Session VWAP (5m)", self._fmt(metric.previous_session_vwap_5m)],
-                ["52-Week High", self._fmt(metric.fifty_two_week.high)],
-                ["52-Week Low", self._fmt(metric.fifty_two_week.low)],
-                ["Earnings Date", self._fmt_date(metric.earnings_gap.date)],
-                ["Earnings Gap", self._fmt(metric.earnings_gap.gap)],
-                ["Earnings Gap %", self._fmt(metric.earnings_gap.gap_percent)],
-                ["First 5-Minute High", self._fmt(metric.first_five_minutes.high)],
-                ["First 5-Minute Low", self._fmt(metric.first_five_minutes.low)],
-                ["Swing Highs", self._fmt_levels(metric.swing_levels.highs)],
-                ["Swing Lows", self._fmt_levels(metric.swing_levels.lows)],
-                ["Bollinger Upper", self._fmt(metric.bollinger_bands.upper)],
-                ["Bollinger Middle", self._fmt(metric.bollinger_bands.middle)],
-                ["Bollinger Lower", self._fmt(metric.bollinger_bands.lower)],
-            ]
+            selected = set(metric.selected_metrics)
+            table_data = [["Metric", "Value"]]
+            if "previous_day" in selected:
+                table_data.extend(
+                    [
+                        ["Previous Open", self._fmt(metric.previous_day.open)],
+                        ["Previous High", self._fmt(metric.previous_day.high)],
+                        ["Previous Low", self._fmt(metric.previous_day.low)],
+                        ["Previous Close", self._fmt(metric.previous_day.close)],
+                    ]
+                )
+            if "premarket" in selected:
+                table_data.extend(
+                    [
+                        ["Premarket High", self._fmt(metric.premarket.high)],
+                        ["Premarket Low", self._fmt(metric.premarket.low)],
+                    ]
+                )
+            if "first_five_minutes" in selected:
+                table_data.extend(
+                    [
+                        ["First 5-Minute High", self._fmt(metric.first_five_minutes.high)],
+                        ["First 5-Minute Low", self._fmt(metric.first_five_minutes.low)],
+                    ]
+                )
+            if "previous_session_vwap_5m" in selected:
+                table_data.append(["Previous Session VWAP (5m)", self._fmt(metric.previous_session_vwap_5m)])
+            if "fifty_two_week" in selected:
+                table_data.extend(
+                    [
+                        ["52-Week High", self._fmt(metric.fifty_two_week.high)],
+                        ["52-Week Low", self._fmt(metric.fifty_two_week.low)],
+                    ]
+                )
+            if "swing_levels" in selected:
+                table_data.extend(
+                    [
+                        ["Swing Highs", self._fmt_levels(sorted(metric.swing_levels.highs))],
+                        ["Swing Lows", self._fmt_levels(sorted(metric.swing_levels.lows, reverse=True))],
+                    ]
+                )
+            if "bollinger_bands" in selected:
+                table_data.extend(
+                    [
+                        ["Bollinger Upper", self._fmt(metric.bollinger_bands.upper)],
+                        ["Bollinger Middle", self._fmt(metric.bollinger_bands.middle)],
+                        ["Bollinger Lower", self._fmt(metric.bollinger_bands.lower)],
+                    ]
+                )
+            if "earnings_gap" in selected:
+                table_data.extend(
+                    [
+                        ["Earnings Date", self._fmt_date(metric.earnings_gap.date)],
+                        ["Earnings Gap", self._fmt(metric.earnings_gap.gap)],
+                        ["Earnings Gap %", self._fmt(metric.earnings_gap.gap_percent)],
+                    ]
+                )
             table = Table(table_data, colWidths=[220, 220])
             table.setStyle(
                 TableStyle(

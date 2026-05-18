@@ -12,9 +12,8 @@
         <p class="eyebrow">Daily price levels</p>
         <h1>Equity Levels Dashboard</h1>
         <p>
-          Enter one ticker or a comma-separated watchlist, save it locally, and generate a levels report with
-          previous-session OHLC, premarket range, VWAP, 52-week range, earnings gap, opening range,
-          swing levels, and Bollinger Bands.
+          Enter one ticker or a comma-separated watchlist, choose the metric groups you care about, and generate
+          organized cards that you can rearrange for your trading workflow.
         </p>
       </section>
 
@@ -29,6 +28,15 @@
 
         <label for="tickers">Ticker symbols</label>
         <textarea id="tickers" rows="4" placeholder="AAPL, MSFT, NVDA"></textarea>
+
+        <div class="field-group" aria-labelledby="metrics-heading">
+          <div class="field-heading">
+            <h3 id="metrics-heading">Financial metrics to calculate</h3>
+            <p>Selections are saved in this browser and sent with both web and PDF reports.</p>
+          </div>
+          <div id="metric-selector" class="metric-picker"></div>
+        </div>
+
         <div class="actions">
           <button id="generate" class="primary" type="button">Generate Levels</button>
           <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
@@ -40,7 +48,7 @@
         <div class="panel-header">
           <div>
             <h2 id="results-heading">Report</h2>
-            <p id="generated-at">No report generated yet.</p>
+            <p id="generated-at">No report generated yet. Cards can be dragged after a report is generated.</p>
           </div>
         </div>
         <div id="results" class="results empty">Enter tickers and click Generate Levels.</div>

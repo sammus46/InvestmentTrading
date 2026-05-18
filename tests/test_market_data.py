@@ -150,8 +150,8 @@ def test_swing_levels_find_and_merge_daily_support_resistance():
 
     levels = service._swing_levels(daily, [])
 
-    assert levels.highs == [20.0, 15.0]
-    assert levels.lows == [7.0, 8.0]
+    assert levels.highs == [15.0, 20.0]
+    assert levels.lows == [8.0, 7.0]
 
 
 def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
@@ -177,3 +177,34 @@ def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
     assert gap.date == datetime(2026, 5, 15).date()
     assert gap.gap == 10.0
     assert gap.gap_percent == 10.0
+
+
+def test_latest_session_bars_use_newest_available_date():
+    index = pd.DatetimeIndex(
+        [
+            datetime(2026, 5, 15, 4, 0, tzinfo=EASTERN),
+            datetime(2026, 5, 15, 9, 30, tzinfo=EASTERN),
+            datetime(2026, 5, 14, 4, 0, tzinfo=EASTERN),
+        ]
+    )
+    intraday = pd.DataFrame({"High": [10.0, 11.0, 9.0], "Low": [8.0, 9.0, 7.0]}, index=index)
+
+    latest = MarketDataService._latest_session_bars(intraday)
+
+    assert list(latest.index.date) == [datetime(2026, 5, 15).date(), datetime(2026, 5, 15).date()]
+
+
+def test_build_metrics_skips_unselected_downloads(monkeypatch):
+    downloads = []
+
+    def fake_download(symbol, period, interval, prepost):
+        downloads.append((period, interval, prepost))
+        return pd.DataFrame({"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [11.0]}, index=pd.DatetimeIndex(["2026-05-15"]))
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+
+    [metric] = MarketDataService().build_metrics(["AAPL"], ["previous_day"])
+
+    assert metric.selected_metrics == ["previous_day"]
+    assert metric.previous_day.close == 11.0
+    assert downloads == [("1y", "1d", False)]

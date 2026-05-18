@@ -32,7 +32,7 @@ def generate_levels(request: GenerateRequest) -> GenerateResponse:
     """Generate metrics for each requested ticker."""
     return GenerateResponse(
         generated_at=datetime.now(timezone.utc),
-        metrics=market_data.build_metrics(request.tickers),
+        metrics=market_data.build_metrics(request.tickers, request.metrics),
     )
 
 
