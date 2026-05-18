@@ -14,11 +14,13 @@ import pandas as pd
 import yfinance as yf
 
 from app.models import (
+    DEFAULT_METRICS,
     BollingerLevels,
     EarningsGap,
     EquityMetrics,
     FiftyTwoWeekRange,
     Ohlc,
+    MetricName,
     OpeningRange,
     PremarketRange,
     SwingLevels,
@@ -53,43 +55,80 @@ class MarketDataService:
     def __init__(self, settings: MarketDataSettings | None = None) -> None:
         self.settings = settings or MarketDataSettings()
 
-    def build_metrics(self, tickers: list[str]) -> list[EquityMetrics]:
-        """Generate metric rows for the requested tickers."""
-        return [self._build_metric(ticker) for ticker in tickers]
+    def build_metrics(self, tickers: list[str], metrics: list[MetricName] | None = None) -> list[EquityMetrics]:
+        """Generate metric rows for the requested tickers and selected metrics."""
+        selected = metrics or list(DEFAULT_METRICS)
+        return [self._build_metric(ticker, selected) for ticker in tickers]
 
-    def _build_metric(self, ticker: str) -> EquityMetrics:
+    def _build_metric(self, ticker: str, selected_metrics: list[MetricName]) -> EquityMetrics:
         warnings: list[str] = []
         symbol = ticker.upper().strip()
 
-        daily = self._download(symbol, period=self.settings.daily_history_period, interval="1d", prepost=False)
-        intraday = self._download(
-            symbol,
-            period=self.settings.intraday_history_period,
-            interval=self.settings.intraday_interval,
-            prepost=True,
+        needs_daily = bool(
+            {"previous_day", "fifty_two_week", "earnings_gap", "swing_levels", "bollinger_bands"}
+            & set(selected_metrics)
         )
-        opening_intraday = self._download(
-            symbol,
-            period=self.settings.opening_history_period,
-            interval=self.settings.opening_interval,
-            prepost=True,
+        needs_intraday = "previous_session_vwap_5m" in selected_metrics
+        needs_opening_intraday = bool({"premarket", "first_five_minutes"} & set(selected_metrics))
+
+        daily = (
+            self._download(symbol, period=self.settings.daily_history_period, interval="1d", prepost=False)
+            if needs_daily
+            else pd.DataFrame()
+        )
+        intraday = (
+            self._download(
+                symbol,
+                period=self.settings.intraday_history_period,
+                interval=self.settings.intraday_interval,
+                prepost=True,
+            )
+            if needs_intraday
+            else pd.DataFrame()
+        )
+        opening_intraday = (
+            self._download(
+                symbol,
+                period=self.settings.opening_history_period,
+                interval=self.settings.opening_interval,
+                prepost=True,
+            )
+            if needs_opening_intraday
+            else pd.DataFrame()
         )
 
-        previous_day = self._previous_day_ohlc(daily, warnings)
-        bollinger = self._bollinger_bands(daily, warnings)
-        fifty_two_week = self._fifty_two_week_range(daily, warnings)
-        earnings_gap = self._earnings_gap(symbol, daily, warnings)
-        previous_session = self._previous_regular_session(intraday, warnings)
-        premarket = self._today_premarket_range(opening_intraday, warnings)
-        first_five_minutes = self._opening_range(opening_intraday, warnings)
-        vwap = self._vwap(previous_session, warnings)
-        swing_levels = self._swing_levels(daily, warnings)
+        previous_day = self._previous_day_ohlc(daily, warnings) if "previous_day" in selected_metrics else Ohlc()
+        bollinger = self._bollinger_bands(daily, warnings) if "bollinger_bands" in selected_metrics else BollingerLevels()
+        fifty_two_week = (
+            self._fifty_two_week_range(daily, warnings) if "fifty_two_week" in selected_metrics else FiftyTwoWeekRange()
+        )
+        earnings_gap = self._earnings_gap(symbol, daily, warnings) if "earnings_gap" in selected_metrics else EarningsGap()
+        previous_session = (
+            self._previous_regular_session(intraday, warnings)
+            if "previous_session_vwap_5m" in selected_metrics
+            else pd.DataFrame()
+        )
+        premarket = (
+            self._today_premarket_range(opening_intraday, warnings)
+            if "premarket" in selected_metrics
+            else PremarketRange()
+        )
+        first_five_minutes = (
+            self._opening_range(opening_intraday, warnings)
+            if "first_five_minutes" in selected_metrics
+            else OpeningRange(minutes=self.settings.opening_range_minutes)
+        )
+        vwap = self._vwap(previous_session, warnings) if "previous_session_vwap_5m" in selected_metrics else None
+        swing_levels = self._swing_levels(daily, warnings) if "swing_levels" in selected_metrics else SwingLevels()
 
-        if daily.empty and intraday.empty and opening_intraday.empty:
+        if daily.empty and intraday.empty and opening_intraday.empty and any(
+            [needs_daily, needs_intraday, needs_opening_intraday]
+        ):
             warnings.append("No price data returned. Verify the ticker symbol or try again later.")
 
         return EquityMetrics(
             ticker=symbol,
+            selected_metrics=selected_metrics,
             previous_day=previous_day,
             premarket=premarket,
             previous_session_vwap_5m=vwap,
@@ -264,11 +303,10 @@ class MarketDataService:
             return PremarketRange()
 
         localized = self._with_eastern_index(intraday)
-        today = datetime.now(EASTERN).date()
-        today_bars = localized[localized.index.date == today]
+        today_bars = self._latest_session_bars(localized)
         premarket = today_bars.between_time(PREMARKET_OPEN, MARKET_OPEN, inclusive="left")
         if premarket.empty:
-            warnings.append("No premarket bars were returned for today by the data source.")
+            warnings.append("No premarket bars were returned by the data source for the latest available session.")
             return PremarketRange()
 
         return PremarketRange(
@@ -284,10 +322,9 @@ class MarketDataService:
             return OpeningRange(minutes=minutes)
 
         localized = self._with_eastern_index(intraday)
-        today = datetime.now(EASTERN).date()
-        today_bars = localized[localized.index.date == today]
+        today_bars = self._latest_session_bars(localized)
         if today_bars.empty:
-            warnings.append("No intraday bars were returned for today's opening range.")
+            warnings.append("No intraday bars were returned for the latest available opening range.")
             return OpeningRange(minutes=minutes)
 
         end_hour = MARKET_OPEN.hour
@@ -295,7 +332,7 @@ class MarketDataService:
         end_time = time(end_hour + end_minute // 60, end_minute % 60)
         opening = today_bars.between_time(MARKET_OPEN, end_time, inclusive="left")
         if opening.empty:
-            warnings.append("No first-five-minute regular-session bars were returned for today.")
+            warnings.append("No first-five-minute regular-session bars were returned for the latest available session.")
             return OpeningRange(minutes=minutes)
 
         return OpeningRange(
@@ -304,6 +341,15 @@ class MarketDataService:
             bars=int(len(opening)),
             minutes=minutes,
         )
+
+    @staticmethod
+    def _latest_session_bars(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return frame
+        session_dates = sorted(set(pd.DatetimeIndex(frame.index).date))
+        if not session_dates:
+            return frame.iloc[0:0]
+        return frame[frame.index.date == session_dates[-1]]
 
     @staticmethod
     def _vwap(session: pd.DataFrame, warnings: list[str]) -> float | None:
@@ -352,8 +398,8 @@ class MarketDataService:
                 swing_lows.append(round(float(lows[index]), 4))
 
         return SwingLevels(
-            highs=self._merge_levels(swing_highs, max_levels=max_levels, merge_percent=merge_percent, descending=True),
-            lows=self._merge_levels(swing_lows, max_levels=max_levels, merge_percent=merge_percent, descending=False),
+            highs=self._merge_levels(swing_highs, max_levels=max_levels, merge_percent=merge_percent, descending=False),
+            lows=self._merge_levels(swing_lows, max_levels=max_levels, merge_percent=merge_percent, descending=True),
             window=window,
             merge_percent=merge_percent,
         )

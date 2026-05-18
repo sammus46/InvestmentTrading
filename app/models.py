@@ -3,15 +3,38 @@
 from __future__ import annotations
 
 from datetime import date as Date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+MetricName = Literal[
+    "previous_day",
+    "premarket",
+    "previous_session_vwap_5m",
+    "fifty_two_week",
+    "earnings_gap",
+    "first_five_minutes",
+    "swing_levels",
+    "bollinger_bands",
+]
+
+DEFAULT_METRICS: tuple[MetricName, ...] = (
+    "previous_day",
+    "premarket",
+    "previous_session_vwap_5m",
+    "fifty_two_week",
+    "earnings_gap",
+    "first_five_minutes",
+    "swing_levels",
+    "bollinger_bands",
+)
+
 
 class GenerateRequest(BaseModel):
-    """Request payload containing one or more ticker symbols."""
+    """Request payload containing one or more ticker symbols and selected metrics."""
 
     tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+    metrics: list[MetricName] = Field(default_factory=lambda: list(DEFAULT_METRICS), min_length=1)
 
     @field_validator("tickers", mode="before")
     @classmethod
@@ -31,6 +54,28 @@ class GenerateRequest(BaseModel):
                 cleaned.append(ticker)
         if not cleaned:
             raise ValueError("at least one ticker is required")
+        return cleaned
+
+    @field_validator("metrics", mode="before")
+    @classmethod
+    def normalize_metrics(cls, value: object) -> list[MetricName]:
+        """Deduplicate selected metric names while preserving client order."""
+        candidates = list(DEFAULT_METRICS) if value is None else value
+        if isinstance(candidates, str):
+            candidates = candidates.replace(",", " ").split()
+        if not isinstance(candidates, list):
+            raise ValueError("metrics must be a list or delimited string")
+
+        cleaned: list[MetricName] = []
+        allowed = set(DEFAULT_METRICS)
+        for candidate in candidates:
+            metric = str(candidate).strip()
+            if metric not in allowed:
+                raise ValueError(f"unsupported metric: {metric}")
+            if metric not in cleaned:
+                cleaned.append(metric)  # type: ignore[arg-type]
+        if not cleaned:
+            raise ValueError("at least one metric is required")
         return cleaned
 
 
@@ -98,6 +143,7 @@ class EquityMetrics(BaseModel):
     """Calculated metrics for a single equity."""
 
     ticker: str
+    selected_metrics: list[MetricName] = Field(default_factory=lambda: list(DEFAULT_METRICS))
     previous_day: Ohlc
     premarket: PremarketRange
     previous_session_vwap_5m: float | None = None

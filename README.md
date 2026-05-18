@@ -4,14 +4,12 @@ A simple FastAPI application that pulls free market data with `yfinance`, calcul
 
 ## Features
 
-- Browser-persisted ticker/watchlist input using `localStorage`.
-- `Generate Levels` button that requests metrics from the Python backend.
-- Downloadable PDF report button.
-- Metrics currently include:
-  - previous daily open, high, low, and close;
-  - latest premarket high and low from extended-hours intraday bars;
-  - previous regular-session VWAP from 5 minute bars;
-  - 20 period, 2 standard deviation Bollinger Bands from daily closes.
+- Browser-persisted ticker/watchlist input and metric selections using `localStorage`.
+- `Generate Levels` button that requests only the selected metrics from the Python backend.
+- Downloadable PDF report button that honors the same metric selections.
+- Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
+- Organized metric sections for session levels, ranges, technical indicators, and events.
+- Metrics currently include previous-session OHLC, premarket and opening ranges, previous-session VWAP, 52-week range, earnings gap, swing highs/lows, and Bollinger Bands.
 
 ## Requirements
 
@@ -125,12 +123,12 @@ python -m pip install -e ".[dev]"
 Each JSON and PDF report includes the following levels for every requested ticker when the free data source returns enough data:
 
 - Previous completed session open, high, low, and close.
-- Today's premarket high and low from 1-minute extended-hours bars.
+- Latest available session premarket high and low from 1-minute extended-hours bars.
 - Previous completed regular-session VWAP from 5-minute bars.
 - Completed-session 52-week high and low.
 - Most recent earnings date plus the earnings-day opening gap from the prior close.
-- Today's first five-minute regular-session high and low.
-- Major daily swing highs and lows, with nearby levels merged into concise support/resistance lists.
+- Latest available session first five-minute regular-session high and low.
+- Major daily swing highs and lows, with nearby levels merged into concise support/resistance lists and displayed in numerical order.
 - Daily Bollinger Bands.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
 
@@ -141,8 +139,10 @@ Generate a JSON report:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/levels \
   -H 'Content-Type: application/json' \
-  -d '{"tickers":"AAPL, MSFT, NVDA"}'
+  -d '{"tickers":"AAPL, MSFT, NVDA","metrics":["previous_day","swing_levels","bollinger_bands"]}'
 ```
+
+Omit `metrics` to calculate every available metric. Supported metric IDs are `previous_day`, `premarket`, `previous_session_vwap_5m`, `fifty_two_week`, `earnings_gap`, `first_five_minutes`, `swing_levels`, and `bollinger_bands`.
 
 Download a PDF report:
 
@@ -181,6 +181,7 @@ The runtime dependency list is intentionally small and maps to imports used by t
 | `uvicorn` | Runs the ASGI app during local development and deployment. The project uses the base package instead of `uvicorn[standard]` to avoid optional speed/reload extras during the first install. |
 | `pandas` | Performs DataFrame cleanup, rolling Bollinger Band calculations, intraday time-window filtering, and VWAP math. |
 | `yfinance` | Retrieves the free daily and intraday equity data used by the metrics service. |
+| `lxml` | Provides the optional HTML/XML parser used by yfinance earnings-calendar lookups. |
 | `reportlab` | Builds the downloadable PDF report. |
 | `pydantic` | Provides the request/response schemas and ticker normalization validators. |
 | `pytest` (`dev` extra only) | Runs the unit tests; it is not required to launch the web app. |
