@@ -99,8 +99,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .zoom-row { align-items: center; display: grid; gap: 10px; }
 .range-zoom-row { grid-template-columns: 1fr auto; }
 .range-zoom-row output { color: #475569; font-size: 0.82rem; font-weight: 800; min-width: 88px; text-align: right; }
-.range-slider { background: linear-gradient(to right, #dbeafe 0 var(--range-start), #2563eb var(--range-start) var(--range-end), #dbeafe var(--range-end) 100%); border-radius: 999px; height: 10px; position: relative; width: 100%; }
-.range-slider input { appearance: none; background: transparent; inset: -9px 0 auto; margin: 0; pointer-events: none; position: absolute; width: 100%; }
+.range-slider { cursor: pointer; height: 28px; position: relative; touch-action: none; width: 100%; }
+.range-slider::before { background: linear-gradient(to right, #dbeafe 0 var(--range-start), #2563eb var(--range-start) var(--range-end), #dbeafe var(--range-end) 100%); border-radius: 999px; content: ""; height: 10px; left: 0; position: absolute; right: 0; top: 9px; }
+.range-slider input { appearance: none; background: transparent; height: 28px; inset: 0; margin: 0; pointer-events: none; position: absolute; width: 100%; }
 .range-slider input::-webkit-slider-runnable-track { background: transparent; height: 28px; }
 .range-slider input::-moz-range-track { background: transparent; height: 28px; }
 .range-slider input::-webkit-slider-thumb { appearance: none; background: #ffffff; border: 3px solid #1d4ed8; border-radius: 999px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.24); cursor: grab; height: 26px; pointer-events: auto; width: 26px; }
