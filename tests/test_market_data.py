@@ -208,3 +208,17 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
     assert metric.selected_metrics == ["previous_day"]
     assert metric.previous_day.close == 11.0
     assert downloads == [("1y", "1d", False)]
+    assert [point.close for point in metric.price_history] == [11.0]
+
+
+def test_price_history_uses_latest_completed_daily_closes():
+    service = MarketDataService(MarketDataSettings(chart_history_days=2))
+    daily = pd.DataFrame(
+        {"Close": [10.12345, 11.0, 999.0]},
+        index=pd.DatetimeIndex(["2026-05-14", "2026-05-15", "2026-05-18"]),
+    )
+
+    history = service._price_history(daily, [])
+
+    assert [point.date.isoformat() for point in history] == ["2026-05-14", "2026-05-15"]
+    assert [point.close for point in history] == [10.1235, 11.0]

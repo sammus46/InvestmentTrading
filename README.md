@@ -131,6 +131,7 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Major daily swing highs and lows, with nearby levels merged into concise support/resistance lists and displayed in numerical order.
 - Daily Bollinger Bands.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
+- Web and PDF charts showing up to the latest 180 completed daily closes per ticker, with selected price levels overlaid using a consistent color legend. The web charts include an x-axis zoom slider and follow the same ticker order as the draggable metric cards.
 
 ## API usage
 

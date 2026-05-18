@@ -1,6 +1,18 @@
 const STORAGE_KEY = "equity-levels-watchlist";
 const METRICS_STORAGE_KEY = "equity-levels-selected-metrics";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
+const DEFAULT_CHART_WINDOW_DAYS = 180;
+
+const LEVEL_STYLES = {
+  previous: { color: "#2563eb", width: 2, dash: "6 5", legend: "Previous session" },
+  premarket: { color: "#ea580c", width: 2, dash: "4 4", legend: "Premarket" },
+  opening: { color: "#7c3aed", width: 2, dash: "3 5", legend: "First 5m" },
+  vwap: { color: "#0891b2", width: 2.5, dash: "", legend: "VWAP" },
+  fiftyTwo: { color: "#b91c1c", width: 4, dash: "", legend: "52-week high/low" },
+  swingHigh: { color: "#16a34a", width: 2, dash: "8 4", legend: "Swing highs" },
+  swingLow: { color: "#ca8a04", width: 2, dash: "8 4", legend: "Swing lows" },
+  bollinger: { color: "#64748b", width: 1.75, dash: "2 4", legend: "Bollinger Bands" },
+};
 
 const METRIC_DEFINITIONS = [
   { id: "previous_day", label: "Previous day OHLC", group: "Session" },
@@ -21,9 +33,11 @@ const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
 const saveStateEl = document.querySelector("#save-state");
+const chartsSectionEl = document.querySelector("#charts-section");
 
 let currentReport = null;
 let draggedTicker = null;
+const chartWindows = {};
 
 tickersInput.value = localStorage.getItem(STORAGE_KEY) || "";
 renderMetricSelector();
@@ -51,7 +65,7 @@ pdfButton.addEventListener("click", async () => {
     const response = await fetch("/api/reports/pdf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildPayload()),
+      body: JSON.stringify(buildPayload({ useCurrentReportOrder: true })),
     });
     if (!response.ok) {
       throw new Error(await response.text());
@@ -67,6 +81,13 @@ pdfButton.addEventListener("click", async () => {
     URL.revokeObjectURL(url);
     setStatus("PDF report downloaded.", "success");
   });
+});
+
+chartsSectionEl.addEventListener("input", (event) => {
+  const slider = event.target.closest(".chart-window");
+  if (!slider) return;
+  chartWindows[slider.dataset.ticker] = Number(slider.value);
+  renderCharts();
 });
 
 resultsEl.addEventListener("click", (event) => {
@@ -150,10 +171,12 @@ function persistSelectedMetrics() {
   localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(readSelectedMetrics()));
 }
 
-function buildPayload() {
+function buildPayload(options = {}) {
   persistSelectedMetrics();
   return {
-    tickers: tickersInput.value,
+    tickers: options.useCurrentReportOrder && currentReport?.metrics?.length
+      ? currentReport.metrics.map((metric) => metric.ticker)
+      : tickersInput.value,
     metrics: readSelectedMetrics(),
   };
 }
@@ -211,6 +234,7 @@ function renderCurrentReport() {
   resultsEl.className = "results";
   resultsEl.innerHTML = currentReport.metrics.map((metric, index) => renderMetricCard(metric, index)).join("");
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
+  renderCharts();
 }
 
 function renderMetricCard(metric, index) {
@@ -298,6 +322,168 @@ function renderLevelList(label, levels) {
       </div>
     </section>
   `;
+}
+
+
+function renderCharts() {
+  if (!currentReport?.metrics?.length) {
+    chartsSectionEl.className = "charts-section empty";
+    chartsSectionEl.innerHTML = `
+      <div class="charts-header">
+        <div>
+          <h3>Charts</h3>
+          <p>Generate a report to view 180-day close charts with selected price levels.</p>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  chartsSectionEl.className = "charts-section";
+  chartsSectionEl.innerHTML = `
+    <div class="charts-header">
+      <div>
+        <h3>Charts</h3>
+        <p>Charts stay in the same order as the report cards. Use each slider to zoom the x-axis to fewer recent sessions.</p>
+      </div>
+    </div>
+    <div class="charts-grid">
+      ${currentReport.metrics.map(renderTickerChart).join("")}
+    </div>
+  `;
+}
+
+function renderTickerChart(metric) {
+  const history = metric.price_history || [];
+  if (!history.length) {
+    return `
+      <article class="chart-card">
+        <div class="chart-card-header"><h4>${escapeHtml(metric.ticker)}</h4></div>
+        <p class="chart-empty">No daily close history was returned for this ticker.</p>
+      </article>
+    `;
+  }
+
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, history.length);
+  const minWindow = Math.min(20, maxWindow);
+  const selectedWindow = Math.min(Math.max(chartWindows[metric.ticker] || maxWindow, minWindow), maxWindow);
+  chartWindows[metric.ticker] = selectedWindow;
+  const visibleHistory = history.slice(-selectedWindow);
+  const levels = getChartLevels(metric);
+
+  return `
+    <article class="chart-card">
+      <div class="chart-card-header">
+        <div>
+          <h4>${escapeHtml(metric.ticker)}</h4>
+          <p>${selectedWindow} of ${maxWindow} latest completed daily closes</p>
+        </div>
+        <label class="zoom-control">
+          <span>X-axis zoom</span>
+          <input class="chart-window" data-ticker="${escapeHtml(metric.ticker)}" type="range" min="${minWindow}" max="${maxWindow}" value="${selectedWindow}" />
+        </label>
+      </div>
+      ${buildChartSvg(visibleHistory, levels)}
+      ${renderChartLegend(levels)}
+    </article>
+  `;
+}
+
+function getChartLevels(metric) {
+  const selected = metric.selected_metrics || readSelectedMetrics();
+  const levels = [];
+  const add = (label, value, group) => {
+    if (Number.isFinite(Number(value))) levels.push({ label, value: Number(value), group, ...LEVEL_STYLES[group] });
+  };
+
+  if (selected.includes("previous_day")) {
+    add("Prev High", metric.previous_day.high, "previous");
+    add("Prev Low", metric.previous_day.low, "previous");
+    add("Prev Close", metric.previous_day.close, "previous");
+  }
+  if (selected.includes("premarket")) {
+    add("Premarket High", metric.premarket.high, "premarket");
+    add("Premarket Low", metric.premarket.low, "premarket");
+  }
+  if (selected.includes("first_five_minutes")) {
+    add("First 5m High", metric.first_five_minutes.high, "opening");
+    add("First 5m Low", metric.first_five_minutes.low, "opening");
+  }
+  if (selected.includes("previous_session_vwap_5m")) add("VWAP 5m", metric.previous_session_vwap_5m, "vwap");
+  if (selected.includes("fifty_two_week")) {
+    add("52W High", metric.fifty_two_week.high, "fiftyTwo");
+    add("52W Low", metric.fifty_two_week.low, "fiftyTwo");
+  }
+  if (selected.includes("swing_levels")) {
+    sortLevels(metric.swing_levels.highs, "asc").forEach((value, index) => add(`Swing High ${index + 1}`, value, "swingHigh"));
+    sortLevels(metric.swing_levels.lows, "desc").forEach((value, index) => add(`Swing Low ${index + 1}`, value, "swingLow"));
+  }
+  if (selected.includes("bollinger_bands")) {
+    add("BB Upper", metric.bollinger_bands.upper, "bollinger");
+    add("BB Middle", metric.bollinger_bands.middle, "bollinger");
+    add("BB Lower", metric.bollinger_bands.lower, "bollinger");
+  }
+  return levels;
+}
+
+function buildChartSvg(history, levels) {
+  const width = 860;
+  const height = 320;
+  const margin = { top: 18, right: 88, bottom: 42, left: 58 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const closes = history.map((point) => Number(point.close));
+  const levelValues = levels.map((level) => level.value);
+  let minValue = Math.min(...closes, ...levelValues);
+  let maxValue = Math.max(...closes, ...levelValues);
+  if (minValue === maxValue) {
+    minValue -= 1;
+    maxValue += 1;
+  }
+  const padding = (maxValue - minValue) * 0.08;
+  minValue -= padding;
+  maxValue += padding;
+
+  const xFor = (index) => margin.left + (history.length === 1 ? plotWidth / 2 : (index / (history.length - 1)) * plotWidth);
+  const yFor = (value) => margin.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
+  const closePoints = history.map((point, index) => `${xFor(index).toFixed(2)},${yFor(Number(point.close)).toFixed(2)}`).join(" ");
+  const first = history[0];
+  const last = history[history.length - 1];
+  const gridValues = [0, 0.25, 0.5, 0.75, 1].map((ratio) => maxValue - (maxValue - minValue) * ratio);
+
+  return `
+    <svg class="price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily close chart with marked price levels">
+      <rect class="chart-bg" x="0" y="0" width="${width}" height="${height}" rx="18"></rect>
+      ${gridValues.map((value) => {
+        const y = yFor(value).toFixed(2);
+        return `<line class="chart-grid-line" x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}"></line><text class="chart-axis-label" x="12" y="${Number(y) + 4}">${formatValue(value)}</text>`;
+      }).join("")}
+      ${levels.map((level) => {
+        const y = yFor(level.value).toFixed(2);
+        return `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}" stroke="${level.color}" stroke-width="${level.width}" stroke-dasharray="${level.dash}"></line><text class="chart-level-label" x="${width - margin.right + 8}" y="${Number(y) + 4}" fill="${level.color}">${escapeHtml(level.label)}</text>`;
+      }).join("")}
+      <polyline class="chart-close-line" points="${closePoints}"></polyline>
+      ${history.map((point, index) => `<circle class="chart-close-point" cx="${xFor(index).toFixed(2)}" cy="${yFor(Number(point.close)).toFixed(2)}" r="${history.length > 80 ? 1.5 : 2.5}"></circle>`).join("")}
+      <line class="chart-axis" x1="${margin.left}" x2="${width - margin.right}" y1="${height - margin.bottom}" y2="${height - margin.bottom}"></line>
+      <text class="chart-axis-label" x="${margin.left}" y="${height - 14}">${formatChartDate(first.date)}</text>
+      <text class="chart-axis-label" x="${width - margin.right - 80}" y="${height - 14}">${formatChartDate(last.date)}</text>
+    </svg>
+  `;
+}
+
+function renderChartLegend(levels) {
+  if (!levels.length) return `<p class="chart-empty">No selected price levels are available to mark.</p>`;
+  const groups = [...new Map(levels.map((level) => [level.group, level])).values()];
+  return `
+    <div class="chart-legend" aria-label="Chart level color legend">
+      <span><i class="legend-close"></i>Daily close</span>
+      ${groups.map((level) => `<span><i style="background:${level.color}; height:${Math.max(3, level.width)}px"></i>${escapeHtml(level.legend)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function formatChartDate(value) {
+  return new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function moveMetric(ticker, direction) {
