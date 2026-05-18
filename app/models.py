@@ -139,6 +139,13 @@ class BollingerLevels(BaseModel):
     standard_deviations: float = 2.0
 
 
+class PricePoint(BaseModel):
+    """Daily close used by web and PDF charts."""
+
+    date: Date
+    close: float
+
+
 class EquityMetrics(BaseModel):
     """Calculated metrics for a single equity."""
 
@@ -152,6 +159,7 @@ class EquityMetrics(BaseModel):
     first_five_minutes: OpeningRange
     swing_levels: SwingLevels
     bollinger_bands: BollingerLevels
+    price_history: list[PricePoint] = Field(default_factory=list)
     data_timestamp: datetime
     warnings: list[str] = Field(default_factory=list)
 

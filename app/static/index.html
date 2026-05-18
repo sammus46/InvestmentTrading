@@ -39,19 +39,27 @@
 
         <div class="actions">
           <button id="generate" class="primary" type="button">Generate Levels</button>
-          <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
         </div>
         <p id="status" class="status" role="status" aria-live="polite"></p>
       </section>
 
       <section class="panel results-panel" aria-labelledby="results-heading">
-        <div class="panel-header">
+        <div class="panel-header report-ribbon">
           <div>
             <h2 id="results-heading">Report</h2>
             <p id="generated-at">No report generated yet. Cards can be dragged after a report is generated.</p>
           </div>
+          <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
         </div>
         <div id="results" class="results empty">Enter tickers and click Generate Levels.</div>
+        <section id="charts-section" class="charts-section empty" aria-live="polite">
+          <div class="charts-header">
+            <div>
+              <h3>Charts</h3>
+              <p>Generate a report to view 180-day close charts with selected price levels.</p>
+            </div>
+          </div>
+        </section>
       </section>
     </main>
     <script src="/app.js" defer></script>

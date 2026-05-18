@@ -21,6 +21,7 @@ from app.models import (
     FiftyTwoWeekRange,
     Ohlc,
     MetricName,
+    PricePoint,
     OpeningRange,
     PremarketRange,
     SwingLevels,
@@ -47,6 +48,7 @@ class MarketDataSettings:
     swing_window: int = 10
     max_swing_levels: int = 5
     level_merge_percent: float = 0.003
+    chart_history_days: int = 180
 
 
 class MarketDataService:
@@ -64,10 +66,7 @@ class MarketDataService:
         warnings: list[str] = []
         symbol = ticker.upper().strip()
 
-        needs_daily = bool(
-            {"previous_day", "fifty_two_week", "earnings_gap", "swing_levels", "bollinger_bands"}
-            & set(selected_metrics)
-        )
+        needs_daily = True
         needs_intraday = "previous_session_vwap_5m" in selected_metrics
         needs_opening_intraday = bool({"premarket", "first_five_minutes"} & set(selected_metrics))
 
@@ -120,6 +119,7 @@ class MarketDataService:
         )
         vwap = self._vwap(previous_session, warnings) if "previous_session_vwap_5m" in selected_metrics else None
         swing_levels = self._swing_levels(daily, warnings) if "swing_levels" in selected_metrics else SwingLevels()
+        price_history = self._price_history(daily, warnings)
 
         if daily.empty and intraday.empty and opening_intraday.empty and any(
             [needs_daily, needs_intraday, needs_opening_intraday]
@@ -137,9 +137,33 @@ class MarketDataService:
             first_five_minutes=first_five_minutes,
             swing_levels=swing_levels,
             bollinger_bands=bollinger,
+            price_history=price_history,
             data_timestamp=datetime.now(timezone.utc),
             warnings=warnings,
         )
+
+
+    def _price_history(self, daily: pd.DataFrame, warnings: list[str]) -> list[PricePoint]:
+        """Return recent completed daily closes for frontend and PDF charts."""
+        if daily.empty:
+            warnings.append("Daily data was unavailable for chart history.")
+            return []
+
+        completed = daily.dropna(subset=["Close"])
+        completed = self._exclude_current_eastern_day(completed)
+        if completed.empty:
+            warnings.append("Daily data did not include completed sessions for chart history.")
+            return []
+
+        recent = completed.tail(self.settings.chart_history_days)
+        index = pd.DatetimeIndex(recent.index)
+        if index.tz is not None:
+            index = index.tz_convert(EASTERN)
+
+        points: list[PricePoint] = []
+        for session_date, close in zip(index.date, recent["Close"].astype(float), strict=False):
+            points.append(PricePoint(date=session_date, close=round(float(close), 4)))
+        return points
 
     @staticmethod
     def _download(symbol: str, period: str, interval: str, prepost: bool) -> pd.DataFrame:
