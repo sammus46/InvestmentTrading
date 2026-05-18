@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Equity Levels Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Daily price levels</p>
+        <h1>Equity Levels Dashboard</h1>
+        <p>
+          Enter one ticker or a comma-separated watchlist, save it locally, and generate a levels report with
+          previous-session OHLC, premarket range, VWAP, and Bollinger Bands.
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="watchlist-heading">
+        <div class="panel-header">
+          <div>
+            <h2 id="watchlist-heading">Watchlist</h2>
+            <p>Your input is persisted in this browser so you can return later.</p>
+          </div>
+          <span id="save-state" class="save-state">Saved locally</span>
+        </div>
+
+        <label for="tickers">Ticker symbols</label>
+        <textarea id="tickers" rows="4" placeholder="AAPL, MSFT, NVDA"></textarea>
+        <div class="actions">
+          <button id="generate" class="primary" type="button">Generate Levels</button>
+          <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel results-panel" aria-labelledby="results-heading">
+        <div class="panel-header">
+          <div>
+            <h2 id="results-heading">Report</h2>
+            <p id="generated-at">No report generated yet.</p>
+          </div>
+        </div>
+        <div id="results" class="results empty">Enter tickers and click Generate Levels.</div>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
