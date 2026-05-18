@@ -15,7 +15,7 @@ A simple FastAPI application that pulls free market data with `yfinance`, calcul
 
 ## Quickstart
 
-Run these commands one line at a time from the repository root:
+Use Python 3.10 or newer, then run these commands one line at a time from the repository root:
 
 ```bash
 python -m venv .venv
@@ -38,6 +38,8 @@ uvicorn app.main:app --reload
 ```
 
 Open <http://127.0.0.1:8000> in your browser. The first install can take a while because `pandas`, `yfinance`, and `reportlab` include compiled wheels or sizable transitive dependencies. Subsequent installs should be faster because pip reuses its local download cache.
+
+If pip reports `Package 'investment-trading' requires a different Python`, check the virtual environment's interpreter with `python --version` and recreate it with Python 3.10 or newer before reinstalling.
 
 For test/development tools, install the optional development extra after activating the virtual environment:
 
