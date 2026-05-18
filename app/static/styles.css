@@ -96,9 +96,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .chart-zoom-panel { display: grid; gap: 10px; margin-top: 12px; }
 .zoom-control { color: #334155; display: grid; gap: 6px; margin: 0; width: 100%; }
 .zoom-control span { font-size: 0.78rem; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
-.zoom-row { align-items: center; display: grid; gap: 10px; grid-template-columns: auto 1fr auto; }
-.zoom-control input { accent-color: #2563eb; width: 100%; }
-.zoom-grabber { align-items: center; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 999px; color: #1d4ed8; display: inline-flex; font-size: 1rem; font-weight: 900; height: 32px; justify-content: center; padding: 0; width: 32px; }
+.zoom-row { align-items: center; display: grid; gap: 10px; }
+.range-zoom-row { grid-template-columns: 1fr auto; }
+.range-zoom-row output { color: #475569; font-size: 0.82rem; font-weight: 800; min-width: 88px; text-align: right; }
+.range-slider { background: linear-gradient(to right, #dbeafe 0 var(--range-start), #2563eb var(--range-start) var(--range-end), #dbeafe var(--range-end) 100%); border-radius: 999px; height: 10px; position: relative; width: 100%; }
+.range-slider input { appearance: none; background: transparent; inset: -9px 0 auto; margin: 0; pointer-events: none; position: absolute; width: 100%; }
+.range-slider input::-webkit-slider-runnable-track { background: transparent; height: 28px; }
+.range-slider input::-moz-range-track { background: transparent; height: 28px; }
+.range-slider input::-webkit-slider-thumb { appearance: none; background: #ffffff; border: 3px solid #1d4ed8; border-radius: 999px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.24); cursor: grab; height: 26px; pointer-events: auto; width: 26px; }
+.range-slider input::-moz-range-thumb { background: #ffffff; border: 3px solid #1d4ed8; border-radius: 999px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.24); cursor: grab; height: 20px; pointer-events: auto; width: 20px; }
+.range-slider input:active::-webkit-slider-thumb { cursor: grabbing; transform: scale(1.08); }
+.range-slider input:active::-moz-range-thumb { cursor: grabbing; transform: scale(1.08); }
 .chart-range-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .chart-range-buttons button { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 999px; color: #334155; font-size: 0.78rem; font-weight: 800; padding: 7px 10px; }
 .price-chart { display: block; height: auto; max-height: 520px; width: 100%; }
@@ -106,9 +114,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .chart-grid-line { stroke: #dbe3ef; stroke-width: 1; }
 .chart-axis { stroke: #94a3b8; stroke-width: 1.5; }
 .chart-axis-label { fill: #64748b; font-size: 12px; font-weight: 700; }
-.chart-level-label { font-size: 11px; font-weight: 900; paint-order: stroke; stroke: #f8fafc; stroke-width: 3px; }
-.chart-close-line { fill: none; stroke: #0f172a; stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
-.chart-close-point { fill: white; stroke: #0f172a; stroke-width: 1.5; }
+.chart-level-line { opacity: 0.68; }
+.chart-level-label { font-size: 11px; font-weight: 800; opacity: 0.82; paint-order: stroke; stroke: #f8fafc; stroke-width: 3px; }
+.chart-close-line { fill: none; stroke: #0f172a; stroke-linecap: round; stroke-linejoin: round; stroke-width: 4; }
+.chart-close-point { fill: white; stroke: #0f172a; stroke-width: 2; transition: r 120ms ease, stroke-width 120ms ease; }
+.chart-close-point:hover { fill: #dbeafe; r: 6; stroke: #1d4ed8; stroke-width: 3; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 12px; }
 .chart-legend-toggle { align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px; color: #334155; display: inline-flex; font-size: 0.82rem; font-weight: 800; gap: 7px; padding: 6px 10px; }
 .chart-legend-toggle.is-hidden { opacity: 0.45; text-decoration: line-through; }

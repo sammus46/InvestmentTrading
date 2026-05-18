@@ -4,14 +4,14 @@ const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const DEFAULT_CHART_WINDOW_DAYS = 365;
 
 const LEVEL_STYLES = {
-  previous: { color: "#2563eb", width: 2, dash: "6 5", legend: "Previous session" },
-  premarket: { color: "#ea580c", width: 2, dash: "4 4", legend: "Premarket" },
-  opening: { color: "#7c3aed", width: 2, dash: "3 5", legend: "First 5m" },
-  vwap: { color: "#0891b2", width: 2.5, dash: "", legend: "VWAP" },
-  fiftyTwo: { color: "#b91c1c", width: 4, dash: "", legend: "52-week high/low" },
-  swingHigh: { color: "#16a34a", width: 2, dash: "8 4", legend: "Swing highs" },
-  swingLow: { color: "#ca8a04", width: 2, dash: "8 4", legend: "Swing lows" },
-  bollinger: { color: "#64748b", width: 1.75, dash: "2 4", legend: "Bollinger Bands" },
+  previous: { color: "#2563eb", width: 1.35, dash: "6 5", legend: "Previous session" },
+  premarket: { color: "#ea580c", width: 1.35, dash: "4 4", legend: "Premarket" },
+  opening: { color: "#7c3aed", width: 1.35, dash: "3 5", legend: "First 5m" },
+  vwap: { color: "#0891b2", width: 1.75, dash: "", legend: "VWAP" },
+  fiftyTwo: { color: "#b91c1c", width: 2, dash: "", legend: "52-week high/low" },
+  swingHigh: { color: "#16a34a", width: 1.35, dash: "8 4", legend: "Swing highs" },
+  swingLow: { color: "#ca8a04", width: 1.35, dash: "8 4", legend: "Swing lows" },
+  bollinger: { color: "#64748b", width: 1.2, dash: "2 4", legend: "Bollinger Bands" },
 };
 
 const METRIC_DEFINITIONS = [
@@ -85,9 +85,9 @@ pdfButton.addEventListener("click", async () => {
 });
 
 chartsSectionEl.addEventListener("input", (event) => {
-  const slider = event.target.closest(".chart-window");
+  const slider = event.target.closest("[data-window-bound]");
   if (!slider) return;
-  chartWindows[slider.dataset.ticker] = Number(slider.value);
+  updateChartWindowBound(slider.dataset.ticker, slider.dataset.windowBound, Number(slider.value));
   renderCharts();
 });
 
@@ -95,12 +95,6 @@ chartsSectionEl.addEventListener("click", (event) => {
   const legendButton = event.target.closest("[data-chart-group]");
   if (legendButton) {
     toggleChartGroup(legendButton.dataset.ticker, legendButton.dataset.chartGroup);
-    return;
-  }
-
-  const windowButton = event.target.closest("[data-window-delta]");
-  if (windowButton) {
-    adjustChartWindow(windowButton.dataset.ticker, Number(windowButton.dataset.windowDelta));
     return;
   }
 
@@ -364,7 +358,7 @@ function renderCharts() {
     <div class="charts-header">
       <div>
         <h3>Charts</h3>
-        <p>Charts stay in the same order as the report cards. Use each slider to zoom the x-axis to fewer recent sessions.</p>
+        <p>Charts stay in the same order as the report cards. Drag either end of a chart range slider to zoom the x-axis.</p>
       </div>
     </div>
     <div class="charts-grid">
@@ -385,10 +379,9 @@ function renderTickerChart(metric) {
   }
 
   const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, history.length);
-  const minWindow = 1;
-  const selectedWindow = Math.min(Math.max(chartWindows[metric.ticker] || maxWindow, minWindow), maxWindow);
-  chartWindows[metric.ticker] = selectedWindow;
-  const visibleHistory = history.slice(-selectedWindow);
+  const range = normalizeChartWindow(metric.ticker, maxWindow);
+  const selectedWindow = range.end - range.start + 1;
+  const visibleHistory = history.slice(range.start - 1, range.end);
   const levels = getChartLevels(metric);
   const hiddenGroups = getHiddenChartGroups(metric.ticker);
   const visibleLevels = levels.filter((level) => !hiddenGroups.has(level.group));
@@ -403,7 +396,7 @@ function renderTickerChart(metric) {
       </div>
       ${renderChartLegend(metric.ticker, levels, hiddenGroups)}
       ${buildChartSvg(visibleHistory, visibleLevels, showClose)}
-      ${renderChartZoomControls(metric.ticker, selectedWindow, minWindow, maxWindow)}
+      ${renderChartZoomControls(metric.ticker, range, selectedWindow, maxWindow)}
     </article>
   `;
 }
@@ -480,10 +473,10 @@ function buildChartSvg(history, levels, showClose = true) {
       }).join("")}
       ${levels.map((level) => {
         const y = yFor(level.value).toFixed(2);
-        return `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}" stroke="${level.color}" stroke-width="${level.width}" stroke-dasharray="${level.dash}"></line><text class="chart-level-label" x="${width - margin.right + 8}" y="${Number(y) + 4}" fill="${level.color}">${escapeHtml(level.label)}</text>`;
+        return `<line class="chart-level-line" x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}" stroke="${level.color}" stroke-width="${level.width}" stroke-dasharray="${level.dash}"></line><text class="chart-level-label" x="${width - margin.right + 8}" y="${Number(y) + 4}" fill="${level.color}">${escapeHtml(level.label)}</text>`;
       }).join("")}
       ${showClose ? `<polyline class="chart-close-line" points="${closePoints}"></polyline>` : ""}
-      ${showClose ? history.map((point, index) => `<circle class="chart-close-point" cx="${xFor(index).toFixed(2)}" cy="${yFor(Number(point.close)).toFixed(2)}" r="${history.length > 80 ? 1.5 : 2.5}"></circle>`).join("") : ""}
+      ${showClose ? history.map((point, index) => `<circle class="chart-close-point" cx="${xFor(index).toFixed(2)}" cy="${yFor(Number(point.close)).toFixed(2)}" r="${history.length > 80 ? 2 : 3}"><title>${escapeHtml(buildPointTooltip(point, levels))}</title></circle>`).join("") : ""}
       <line class="chart-axis" x1="${margin.left}" x2="${width - margin.right}" y1="${height - margin.bottom}" y2="${height - margin.bottom}"></line>
       <text class="chart-axis-label" x="${margin.left}" y="${height - 14}">${formatChartDate(first.date)}</text>
       <text class="chart-axis-label" x="${width - margin.right - 80}" y="${height - 14}">${formatChartDate(last.date)}</text>
@@ -506,7 +499,7 @@ function renderChartLegend(ticker, levels, hiddenGroups) {
   `;
 }
 
-function renderChartZoomControls(ticker, selectedWindow, minWindow, maxWindow) {
+function renderChartZoomControls(ticker, range, selectedWindow, maxWindow) {
   const presets = [
     ["1d", "Last 1 day"],
     ["3d", "Last 3 days"],
@@ -521,10 +514,12 @@ function renderChartZoomControls(ticker, selectedWindow, minWindow, maxWindow) {
     <div class="chart-zoom-panel">
       <div class="zoom-control" aria-label="X-axis zoom">
         <span>X-axis zoom</span>
-        <div class="zoom-row">
-          <button class="zoom-grabber" type="button" data-ticker="${escapeHtml(ticker)}" data-window-delta="-1" aria-label="Show fewer sessions">−</button>
-          <input class="chart-window" data-ticker="${escapeHtml(ticker)}" type="range" min="${minWindow}" max="${maxWindow}" value="${selectedWindow}" aria-label="Visible sessions" />
-          <button class="zoom-grabber" type="button" data-ticker="${escapeHtml(ticker)}" data-window-delta="1" aria-label="Show more sessions">+</button>
+        <div class="zoom-row range-zoom-row">
+          <div class="range-slider" style="--range-start:${((range.start - 1) / Math.max(1, maxWindow - 1)) * 100}%; --range-end:${((range.end - 1) / Math.max(1, maxWindow - 1)) * 100}%">
+            <input class="chart-window chart-window-start" data-ticker="${escapeHtml(ticker)}" data-window-bound="start" type="range" min="1" max="${maxWindow}" value="${range.start}" aria-label="First visible session" />
+            <input class="chart-window chart-window-end" data-ticker="${escapeHtml(ticker)}" data-window-bound="end" type="range" min="1" max="${maxWindow}" value="${range.end}" aria-label="Last visible session" />
+          </div>
+          <output>${selectedWindow} session${selectedWindow === 1 ? "" : "s"}</output>
         </div>
       </div>
       <div class="chart-range-buttons" aria-label="Quick x-axis ranges">
@@ -543,6 +538,40 @@ function getHiddenChartGroups(ticker) {
   return hiddenChartGroups[ticker];
 }
 
+function normalizeChartWindow(ticker, maxWindow) {
+  const saved = chartWindows[ticker];
+  let range = typeof saved === "object" && saved !== null
+    ? { start: Number(saved.start), end: Number(saved.end) }
+    : { start: Math.max(1, maxWindow - Number(saved || maxWindow) + 1), end: maxWindow };
+
+  range.start = Math.min(Math.max(Number.isFinite(range.start) ? Math.round(range.start) : 1, 1), maxWindow);
+  range.end = Math.min(Math.max(Number.isFinite(range.end) ? Math.round(range.end) : maxWindow, 1), maxWindow);
+  if (range.start > range.end) {
+    [range.start, range.end] = [range.end, range.start];
+  }
+  chartWindows[ticker] = range;
+  return range;
+}
+
+function updateChartWindowBound(ticker, bound, value) {
+  const metric = currentReport?.metrics?.find((item) => item.ticker === ticker);
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric?.price_history?.length || 1);
+  const range = normalizeChartWindow(ticker, maxWindow);
+  if (bound === "start") {
+    range.start = Math.min(Math.max(Math.round(value), 1), range.end);
+  } else {
+    range.end = Math.max(Math.min(Math.round(value), maxWindow), range.start);
+  }
+  chartWindows[ticker] = range;
+}
+
+function buildPointTooltip(point, levels) {
+  const levelLines = levels.length
+    ? levels.map((level) => `${level.label}: ${formatValue(level.value)}`).join("\n")
+    : "No visible price levels";
+  return `${formatChartDate(point.date)} close: ${formatValue(point.close)}\n${levelLines}`;
+}
+
 function toggleChartGroup(ticker, group) {
   const groups = getHiddenChartGroups(ticker);
   if (groups.has(group)) {
@@ -553,19 +582,12 @@ function toggleChartGroup(ticker, group) {
   renderCharts();
 }
 
-function adjustChartWindow(ticker, delta) {
-  const metric = currentReport?.metrics?.find((item) => item.ticker === ticker);
-  if (!metric) return;
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric.price_history?.length || 1);
-  const currentWindow = chartWindows[ticker] || maxWindow;
-  chartWindows[ticker] = Math.min(Math.max(currentWindow + delta, 1), maxWindow);
-  renderCharts();
-}
-
 function applyChartWindowPreset(ticker, preset) {
   const metric = currentReport?.metrics?.find((item) => item.ticker === ticker);
   if (!metric?.price_history?.length) return;
-  chartWindows[ticker] = getPresetWindow(metric.price_history, preset);
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric.price_history.length);
+  const windowSize = getPresetWindow(metric.price_history, preset);
+  chartWindows[ticker] = { start: maxWindow - windowSize + 1, end: maxWindow };
   renderCharts();
 }
 
