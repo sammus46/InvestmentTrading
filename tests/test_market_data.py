@@ -31,9 +31,9 @@ def test_bollinger_bands_use_latest_rolling_window():
     latest_window = pd.Series(closes[-20:])
     expected_middle = latest_window.mean()
     expected_std = latest_window.std()
-    assert bands.middle == round(float(expected_middle), 4)
-    assert bands.upper == round(float(expected_middle + 2 * expected_std), 4)
-    assert bands.lower == round(float(expected_middle - 2 * expected_std), 4)
+    assert bands.middle == round(float(expected_middle), 2)
+    assert bands.upper == round(float(expected_middle + 2 * expected_std), 2)
+    assert bands.lower == round(float(expected_middle - 2 * expected_std), 2)
 
 
 def test_with_eastern_index_treats_naive_intraday_data_as_utc():
@@ -197,8 +197,8 @@ def test_latest_session_bars_use_newest_available_date():
 def test_build_metrics_skips_unselected_downloads(monkeypatch):
     downloads = []
 
-    def fake_download(symbol, period, interval, prepost):
-        downloads.append((period, interval, prepost))
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        downloads.append((period, interval, prepost, start, end))
         return pd.DataFrame({"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [11.0]}, index=pd.DatetimeIndex(["2026-05-15"]))
 
     monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
@@ -207,7 +207,11 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
 
     assert metric.selected_metrics == ["previous_day"]
     assert metric.previous_day.close == 11.0
-    assert downloads == [("1y", "1d", False)]
+    [(period, interval, prepost, start, end)] = downloads
+    assert (period, interval, prepost) == (None, "1d", False)
+    assert start is not None
+    assert end is not None
+    assert (end - start).days == 365
     assert [point.close for point in metric.price_history] == [11.0]
 
 
@@ -221,4 +225,4 @@ def test_price_history_uses_latest_completed_daily_closes():
     history = service._price_history(daily, [])
 
     assert [point.date.isoformat() for point in history] == ["2026-05-14", "2026-05-15"]
-    assert [point.close for point in history] == [10.1235, 11.0]
+    assert [point.close for point in history] == [10.12, 11.0]

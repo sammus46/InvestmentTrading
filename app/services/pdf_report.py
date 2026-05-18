@@ -129,12 +129,12 @@ class PdfReportService:
         return buffer.getvalue()
 
     def _chart(self, metric: EquityMetrics) -> Drawing | None:
-        history = metric.price_history[-180:]
+        history = metric.price_history[-365:]
         if not history:
             return None
 
         width = 440
-        height = 180
+        height = 220
         left = 38
         right = 56
         bottom = 26
@@ -244,7 +244,7 @@ class PdfReportService:
 
     @staticmethod
     def _fmt(value: float | int | None) -> str:
-        return "—" if value is None else f"{value:,.4f}" if isinstance(value, float) else str(value)
+        return "—" if value is None else f"{value:,.2f}" if isinstance(value, float) else str(value)
 
     @staticmethod
     def _fmt_date(value: date | None) -> str:
@@ -252,4 +252,4 @@ class PdfReportService:
 
     @staticmethod
     def _fmt_levels(values: list[float]) -> str:
-        return "—" if not values else ", ".join(f"{value:,.4f}" for value in values)
+        return "—" if not values else ", ".join(f"{value:,.2f}" for value in values)

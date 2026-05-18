@@ -7,7 +7,7 @@ paid data source can replace yfinance without touching API routes or UI code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -39,7 +39,7 @@ class MarketDataSettings:
 
     bollinger_period: int = 20
     bollinger_standard_deviations: float = 2.0
-    daily_history_period: str = "1y"
+    daily_history_days: int = 365
     intraday_history_period: str = "5d"
     intraday_interval: str = "5m"
     opening_history_period: str = "1d"
@@ -48,7 +48,7 @@ class MarketDataSettings:
     swing_window: int = 10
     max_swing_levels: int = 5
     level_merge_percent: float = 0.003
-    chart_history_days: int = 180
+    chart_history_days: int = 365
 
 
 class MarketDataService:
@@ -71,7 +71,7 @@ class MarketDataService:
         needs_opening_intraday = bool({"premarket", "first_five_minutes"} & set(selected_metrics))
 
         daily = (
-            self._download(symbol, period=self.settings.daily_history_period, interval="1d", prepost=False)
+            self._download_daily_history(symbol)
             if needs_daily
             else pd.DataFrame()
         )
@@ -143,6 +143,11 @@ class MarketDataService:
         )
 
 
+    def _download_daily_history(self, symbol: str) -> pd.DataFrame:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=self.settings.daily_history_days)
+        return self._download(symbol, period=None, interval="1d", prepost=False, start=start, end=end)
+
     def _price_history(self, daily: pd.DataFrame, warnings: list[str]) -> list[PricePoint]:
         """Return recent completed daily closes for frontend and PDF charts."""
         if daily.empty:
@@ -162,20 +167,33 @@ class MarketDataService:
 
         points: list[PricePoint] = []
         for session_date, close in zip(index.date, recent["Close"].astype(float), strict=False):
-            points.append(PricePoint(date=session_date, close=round(float(close), 4)))
+            points.append(PricePoint(date=session_date, close=round(float(close), 2)))
         return points
 
     @staticmethod
-    def _download(symbol: str, period: str, interval: str, prepost: bool) -> pd.DataFrame:
-        frame = yf.download(
-            symbol,
-            period=period,
-            interval=interval,
-            prepost=prepost,
-            progress=False,
-            auto_adjust=False,
-            threads=False,
-        )
+    def _download(
+        symbol: str,
+        period: str | None,
+        interval: str,
+        prepost: bool,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> pd.DataFrame:
+        query = {
+            "interval": interval,
+            "prepost": prepost,
+            "progress": False,
+            "auto_adjust": False,
+            "threads": False,
+        }
+        if period is not None:
+            query["period"] = period
+        if start is not None:
+            query["start"] = start
+        if end is not None:
+            query["end"] = end
+
+        frame = yf.download(symbol, **query)
         if frame.empty:
             return frame
         if isinstance(frame.columns, pd.MultiIndex):
@@ -196,10 +214,10 @@ class MarketDataService:
 
         row = completed.iloc[-1]
         return Ohlc(
-            open=round(float(row["Open"]), 4),
-            high=round(float(row["High"]), 4),
-            low=round(float(row["Low"]), 4),
-            close=round(float(row["Close"]), 4),
+            open=round(float(row["Open"]), 2),
+            high=round(float(row["High"]), 2),
+            low=round(float(row["Low"]), 2),
+            close=round(float(row["Close"]), 2),
         )
 
     @staticmethod
@@ -224,9 +242,9 @@ class MarketDataService:
         rolling_mean = closes.rolling(period).mean().iloc[-1]
         rolling_std = closes.rolling(period).std().iloc[-1]
         return BollingerLevels(
-            upper=round(float(rolling_mean + deviations * rolling_std), 4),
-            middle=round(float(rolling_mean), 4),
-            lower=round(float(rolling_mean - deviations * rolling_std), 4),
+            upper=round(float(rolling_mean + deviations * rolling_std), 2),
+            middle=round(float(rolling_mean), 2),
+            lower=round(float(rolling_mean - deviations * rolling_std), 2),
             period=period,
             standard_deviations=deviations,
         )
@@ -244,8 +262,8 @@ class MarketDataService:
             return FiftyTwoWeekRange()
 
         return FiftyTwoWeekRange(
-            high=round(float(completed["High"].astype(float).max()), 4),
-            low=round(float(completed["Low"].astype(float).min()), 4),
+            high=round(float(completed["High"].astype(float).max()), 2),
+            low=round(float(completed["Low"].astype(float).min()), 2),
         )
 
     @staticmethod
@@ -301,8 +319,8 @@ class MarketDataService:
         gap = earnings_open - previous_close
         return EarningsGap(
             date=earnings_date,
-            gap=round(gap, 4),
-            gap_percent=round((gap / previous_close) * 100, 4),
+            gap=round(gap, 2),
+            gap_percent=round((gap / previous_close) * 100, 2),
         )
 
     def _previous_regular_session(self, intraday: pd.DataFrame, warnings: list[str]) -> pd.DataFrame:
@@ -334,8 +352,8 @@ class MarketDataService:
             return PremarketRange()
 
         return PremarketRange(
-            high=round(float(premarket["High"].max()), 4),
-            low=round(float(premarket["Low"].min()), 4),
+            high=round(float(premarket["High"].max()), 2),
+            low=round(float(premarket["Low"].min()), 2),
             bars=int(len(premarket)),
         )
 
@@ -360,8 +378,8 @@ class MarketDataService:
             return OpeningRange(minutes=minutes)
 
         return OpeningRange(
-            high=round(float(opening["High"].max()), 4),
-            low=round(float(opening["Low"].min()), 4),
+            high=round(float(opening["High"].max()), 2),
+            low=round(float(opening["Low"].min()), 2),
             bars=int(len(opening)),
             minutes=minutes,
         )
@@ -392,7 +410,7 @@ class MarketDataService:
             return None
 
         typical_price = (priced["High"].astype(float) + priced["Low"].astype(float) + priced["Close"].astype(float)) / 3
-        return round(float((typical_price * volume).sum() / total_volume), 4)
+        return round(float((typical_price * volume).sum() / total_volume), 2)
 
     def _swing_levels(self, daily: pd.DataFrame, warnings: list[str]) -> SwingLevels:
         window = self.settings.swing_window
@@ -417,9 +435,9 @@ class MarketDataService:
             lower_bound = index - window
             upper_bound = index + window + 1
             if highs[index] == highs[lower_bound:upper_bound].max():
-                swing_highs.append(round(float(highs[index]), 4))
+                swing_highs.append(round(float(highs[index]), 2))
             if lows[index] == lows[lower_bound:upper_bound].min():
-                swing_lows.append(round(float(lows[index]), 4))
+                swing_lows.append(round(float(lows[index]), 2))
 
         return SwingLevels(
             highs=self._merge_levels(swing_highs, max_levels=max_levels, merge_percent=merge_percent, descending=False),
