@@ -2,7 +2,7 @@
 name = "investment-trading"
 version = "0.1.0"
 description = "FastAPI backend and web UI for calculating daily equity price levels of significance."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn>=0.30.0",
