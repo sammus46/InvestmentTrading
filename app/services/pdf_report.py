@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -36,6 +37,15 @@ class PdfReportService:
                 ["Premarket High", self._fmt(metric.premarket.high)],
                 ["Premarket Low", self._fmt(metric.premarket.low)],
                 ["Previous Session VWAP (5m)", self._fmt(metric.previous_session_vwap_5m)],
+                ["52-Week High", self._fmt(metric.fifty_two_week.high)],
+                ["52-Week Low", self._fmt(metric.fifty_two_week.low)],
+                ["Earnings Date", self._fmt_date(metric.earnings_gap.date)],
+                ["Earnings Gap", self._fmt(metric.earnings_gap.gap)],
+                ["Earnings Gap %", self._fmt(metric.earnings_gap.gap_percent)],
+                ["First 5-Minute High", self._fmt(metric.first_five_minutes.high)],
+                ["First 5-Minute Low", self._fmt(metric.first_five_minutes.low)],
+                ["Swing Highs", self._fmt_levels(metric.swing_levels.highs)],
+                ["Swing Lows", self._fmt_levels(metric.swing_levels.lows)],
                 ["Bollinger Upper", self._fmt(metric.bollinger_bands.upper)],
                 ["Bollinger Middle", self._fmt(metric.bollinger_bands.middle)],
                 ["Bollinger Lower", self._fmt(metric.bollinger_bands.lower)],
@@ -64,3 +74,11 @@ class PdfReportService:
     @staticmethod
     def _fmt(value: float | int | None) -> str:
         return "—" if value is None else f"{value:,.4f}" if isinstance(value, float) else str(value)
+
+    @staticmethod
+    def _fmt_date(value: date | None) -> str:
+        return "—" if value is None else value.isoformat()
+
+    @staticmethod
+    def _fmt_levels(values: list[float]) -> str:
+        return "—" if not values else ", ".join(f"{value:,.4f}" for value in values)

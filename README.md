@@ -119,6 +119,21 @@ python -m pip install -e ".[dev]"
 - `requires a different Python` means the Python used to create `.venv` is outside the supported version range. This project supports Python 3.10 or newer. Check with `python --version` after activation.
 - `'uvicorn' is not recognized` usually means installation did not finish successfully. Rerun `python -m pip install -e .`, then start the app with `python -m uvicorn app.main:app --reload`.
 
+
+## Generated metrics
+
+Each JSON and PDF report includes the following levels for every requested ticker when the free data source returns enough data:
+
+- Previous completed session open, high, low, and close.
+- Today's premarket high and low from 1-minute extended-hours bars.
+- Previous completed regular-session VWAP from 5-minute bars.
+- Completed-session 52-week high and low.
+- Most recent earnings date plus the earnings-day opening gap from the prior close.
+- Today's first five-minute regular-session high and low.
+- Major daily swing highs and lows, with nearby levels merged into concise support/resistance lists.
+- Daily Bollinger Bands.
+- Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
+
 ## API usage
 
 Generate a JSON report:
@@ -174,7 +189,7 @@ The previous development extra included `httpx`, but the current test suite does
 
 ## Data source notes
 
-The starter implementation uses `yfinance` because it is free and quick to integrate. Free data sources can be delayed, rate-limited, unavailable for some symbols, or limited in extended-hours coverage. The market data implementation is isolated in `app/services/market_data.py` so a future provider can be added without changing the API or frontend.
+The starter implementation uses `yfinance` because it is free and quick to integrate. Free data sources can be delayed, rate-limited, unavailable for some symbols, or limited in extended-hours coverage. One-minute extended-hours data, earnings calendars, and current-day opening ranges can be especially inconsistent outside active market hours or for thinly traded symbols. The market data implementation is isolated in `app/services/market_data.py` so a future provider can be added without changing the API or frontend.
 
 ## Architecture
 
