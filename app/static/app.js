@@ -88,7 +88,20 @@ chartsSectionEl.addEventListener("input", (event) => {
   const slider = event.target.closest("[data-window-bound]");
   if (!slider) return;
   updateChartWindowBound(slider.dataset.ticker, slider.dataset.windowBound, Number(slider.value));
-  renderCharts();
+  syncChartZoomControl(slider.dataset.ticker);
+});
+
+chartsSectionEl.addEventListener("change", (event) => {
+  const slider = event.target.closest("[data-window-bound]");
+  if (!slider) return;
+  renderTickerChartByTicker(slider.dataset.ticker);
+});
+
+chartsSectionEl.addEventListener("pointerdown", (event) => {
+  const rangeSlider = event.target.closest(".range-slider");
+  if (!rangeSlider || event.target.closest("input")) return;
+  event.preventDefault();
+  startChartWindowTrackDrag(rangeSlider, event);
 });
 
 chartsSectionEl.addEventListener("click", (event) => {
@@ -371,7 +384,7 @@ function renderTickerChart(metric) {
   const history = metric.price_history || [];
   if (!history.length) {
     return `
-      <article class="chart-card">
+      <article class="chart-card" data-chart-ticker="${escapeHtml(metric.ticker)}">
         <div class="chart-card-header"><h4>${escapeHtml(metric.ticker)}</h4></div>
         <p class="chart-empty">No daily close history was returned for this ticker.</p>
       </article>
@@ -380,7 +393,7 @@ function renderTickerChart(metric) {
 
   const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, history.length);
   const range = normalizeChartWindow(metric.ticker, maxWindow);
-  const selectedWindow = range.end - range.start + 1;
+  const selectedWindow = chartWindowLength(range);
   const visibleHistory = history.slice(range.start - 1, range.end);
   const levels = getChartLevels(metric);
   const hiddenGroups = getHiddenChartGroups(metric.ticker);
@@ -388,7 +401,7 @@ function renderTickerChart(metric) {
   const showClose = !hiddenGroups.has("close");
 
   return `
-    <article class="chart-card">
+    <article class="chart-card" data-chart-ticker="${escapeHtml(metric.ticker)}">
       <div class="chart-card-header">
         <div>
           <h4>${escapeHtml(metric.ticker)}</h4>
@@ -515,11 +528,11 @@ function renderChartZoomControls(ticker, range, selectedWindow, maxWindow) {
       <div class="zoom-control" aria-label="X-axis zoom">
         <span>X-axis zoom</span>
         <div class="zoom-row range-zoom-row">
-          <div class="range-slider" style="--range-start:${((range.start - 1) / Math.max(1, maxWindow - 1)) * 100}%; --range-end:${((range.end - 1) / Math.max(1, maxWindow - 1)) * 100}%">
+          <div class="range-slider" data-ticker="${escapeHtml(ticker)}" data-max-window="${maxWindow}" style="--range-start:${chartWindowPercent(range.start, maxWindow)}%; --range-end:${chartWindowPercent(range.end, maxWindow)}%">
             <input class="chart-window chart-window-start" data-ticker="${escapeHtml(ticker)}" data-window-bound="start" type="range" min="1" max="${maxWindow}" value="${range.start}" aria-label="First visible session" />
             <input class="chart-window chart-window-end" data-ticker="${escapeHtml(ticker)}" data-window-bound="end" type="range" min="1" max="${maxWindow}" value="${range.end}" aria-label="Last visible session" />
           </div>
-          <output>${selectedWindow} session${selectedWindow === 1 ? "" : "s"}</output>
+          <output>${formatChartWindowLength(selectedWindow)}</output>
         </div>
       </div>
       <div class="chart-range-buttons" aria-label="Quick x-axis ranges">
@@ -554,7 +567,7 @@ function normalizeChartWindow(ticker, maxWindow) {
 }
 
 function updateChartWindowBound(ticker, bound, value) {
-  const metric = currentReport?.metrics?.find((item) => item.ticker === ticker);
+  const metric = findMetric(ticker);
   const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric?.price_history?.length || 1);
   const range = normalizeChartWindow(ticker, maxWindow);
   if (bound === "start") {
@@ -563,6 +576,91 @@ function updateChartWindowBound(ticker, bound, value) {
     range.end = Math.max(Math.min(Math.round(value), maxWindow), range.start);
   }
   chartWindows[ticker] = range;
+  return range;
+}
+
+function renderTickerChartByTicker(ticker) {
+  const metric = findMetric(ticker);
+  const chartCard = findTickerChartCard(ticker);
+  if (!metric || !chartCard) return;
+  chartCard.outerHTML = renderTickerChart(metric);
+}
+
+function syncChartZoomControl(ticker) {
+  const metric = findMetric(ticker);
+  const chartCard = findTickerChartCard(ticker);
+  if (!metric || !chartCard) return;
+
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric.price_history?.length || 1);
+  const range = normalizeChartWindow(ticker, maxWindow);
+  const rangeSlider = chartCard.querySelector(".range-slider");
+  const startInput = chartCard.querySelector("[data-window-bound='start']");
+  const endInput = chartCard.querySelector("[data-window-bound='end']");
+  const output = chartCard.querySelector(".range-zoom-row output");
+
+  if (rangeSlider) {
+    rangeSlider.style.setProperty("--range-start", `${chartWindowPercent(range.start, maxWindow)}%`);
+    rangeSlider.style.setProperty("--range-end", `${chartWindowPercent(range.end, maxWindow)}%`);
+  }
+  if (startInput) startInput.value = range.start;
+  if (endInput) endInput.value = range.end;
+  if (output) output.textContent = formatChartWindowLength(chartWindowLength(range));
+}
+
+function startChartWindowTrackDrag(rangeSlider, event) {
+  const ticker = rangeSlider.dataset.ticker;
+  const maxWindow = Number(rangeSlider.dataset.maxWindow) || 1;
+  if (!ticker) return;
+
+  const initialValue = chartWindowValueFromPointer(rangeSlider, event.clientX, maxWindow);
+  const initialRange = normalizeChartWindow(ticker, maxWindow);
+  const startDistance = Math.abs(initialValue - initialRange.start);
+  const endDistance = Math.abs(initialValue - initialRange.end);
+  const activeBound = startDistance <= endDistance ? "start" : "end";
+
+  const updateFromPointer = (pointerEvent) => {
+    const value = chartWindowValueFromPointer(rangeSlider, pointerEvent.clientX, maxWindow);
+    updateChartWindowBound(ticker, activeBound, value);
+    syncChartZoomControl(ticker);
+  };
+
+  const stopDrag = (pointerEvent) => {
+    updateFromPointer(pointerEvent);
+    window.removeEventListener("pointermove", updateFromPointer);
+    window.removeEventListener("pointerup", stopDrag);
+    renderTickerChartByTicker(ticker);
+  };
+
+  updateFromPointer(event);
+  window.addEventListener("pointermove", updateFromPointer);
+  window.addEventListener("pointerup", stopDrag, { once: true });
+}
+
+function chartWindowValueFromPointer(rangeSlider, clientX, maxWindow) {
+  const rect = rangeSlider.getBoundingClientRect();
+  const ratio = rect.width ? (clientX - rect.left) / rect.width : 0;
+  const clampedRatio = Math.min(Math.max(ratio, 0), 1);
+  return Math.round(1 + clampedRatio * (maxWindow - 1));
+}
+
+function chartWindowLength(range) {
+  return range.end - range.start + 1;
+}
+
+function formatChartWindowLength(selectedWindow) {
+  return `${selectedWindow} session${selectedWindow === 1 ? "" : "s"}`;
+}
+
+function chartWindowPercent(value, maxWindow) {
+  return ((value - 1) / Math.max(1, maxWindow - 1)) * 100;
+}
+
+function findMetric(ticker) {
+  return currentReport?.metrics?.find((item) => item.ticker === ticker);
+}
+
+function findTickerChartCard(ticker) {
+  return [...chartsSectionEl.querySelectorAll("[data-chart-ticker]")].find((card) => card.dataset.chartTicker === ticker);
 }
 
 function buildPointTooltip(point, levels) {
@@ -579,16 +677,16 @@ function toggleChartGroup(ticker, group) {
   } else {
     groups.add(group);
   }
-  renderCharts();
+  renderTickerChartByTicker(ticker);
 }
 
 function applyChartWindowPreset(ticker, preset) {
-  const metric = currentReport?.metrics?.find((item) => item.ticker === ticker);
+  const metric = findMetric(ticker);
   if (!metric?.price_history?.length) return;
   const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric.price_history.length);
   const windowSize = getPresetWindow(metric.price_history, preset);
   chartWindows[ticker] = { start: maxWindow - windowSize + 1, end: maxWindow };
-  renderCharts();
+  renderTickerChartByTicker(ticker);
 }
 
 function getPresetWindow(history, preset) {
