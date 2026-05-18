@@ -7,7 +7,7 @@ paid data source can replace yfinance without touching API routes or UI code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -69,7 +69,7 @@ class MarketDataService:
             premarket=premarket,
             previous_session_vwap_5m=vwap,
             bollinger_bands=bollinger,
-            data_timestamp=datetime.now(UTC),
+            data_timestamp=datetime.now(timezone.utc),
             warnings=warnings,
         )
 
@@ -194,6 +194,6 @@ class MarketDataService:
         localized = frame.copy()
         index = pd.DatetimeIndex(localized.index)
         if index.tz is None:
-            index = index.tz_localize(UTC)
+            index = index.tz_localize(timezone.utc)
         localized.index = index.tz_convert(EASTERN)
         return localized
