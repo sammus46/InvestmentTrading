@@ -1,7 +1,7 @@
 [project]
 name = "investment-trading"
 version = "0.1.0"
-description = "FastAPI backend and web UI for calculating daily equity price levels of significance."
+description = "FastAPI and Streamlit web UIs for calculating daily equity price levels of significance."
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.111.0",
@@ -11,6 +11,7 @@ dependencies = [
     "lxml>=5.2.0",
     "reportlab>=4.2.0",
     "pydantic>=2.7.0",
+    "streamlit>=1.35.0",
 ]
 
 [project.optional-dependencies]
