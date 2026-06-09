@@ -6,8 +6,12 @@ paid data source can replace yfinance without touching API routes or UI code.
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
+from urllib.parse import urlencode
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -49,6 +53,8 @@ class MarketDataSettings:
     max_swing_levels: int = 5
     level_merge_percent: float = 0.003
     chart_history_days: int = 365
+    scanner_daily_history_days: int = 400
+    pattern_history_period: str = "58d"
 
 
 class MarketDataService:
@@ -143,10 +149,22 @@ class MarketDataService:
         )
 
 
-    def _download_daily_history(self, symbol: str) -> pd.DataFrame:
+    def _download_daily_history(self, symbol: str, days: int | None = None) -> pd.DataFrame:
         end = datetime.now(timezone.utc)
-        start = end - timedelta(days=self.settings.daily_history_days)
+        start = end - timedelta(days=days or self.settings.daily_history_days)
         return self._download(symbol, period=None, interval="1d", prepost=False, start=start, end=end)
+
+    def download_scanner_daily_history(self, symbol: str) -> pd.DataFrame:
+        """Return daily bars with enough history for scanner indicators."""
+        return self._download_daily_history(symbol, days=self.settings.scanner_daily_history_days)
+
+    def download_today_minute_history(self, symbol: str) -> pd.DataFrame:
+        """Return latest 1-minute bars including extended hours."""
+        return self._download(symbol, period="1d", interval="1m", prepost=True)
+
+    def download_five_minute_history(self, symbol: str, period: str | None = None) -> pd.DataFrame:
+        """Return 5-minute bars for setup and pattern scanning."""
+        return self._download(symbol, period=period or self.settings.intraday_history_period, interval="5m", prepost=False)
 
     def _price_history(self, daily: pd.DataFrame, warnings: list[str]) -> list[PricePoint]:
         """Return recent completed daily closes for frontend and PDF charts."""
@@ -199,6 +217,34 @@ class MarketDataService:
         if isinstance(frame.columns, pd.MultiIndex):
             frame.columns = frame.columns.get_level_values(0)
         return frame.dropna(how="all")
+
+    def _current_price(self, symbol: str, minute_frame: pd.DataFrame, warnings: list[str]) -> float | None:
+        """Return the freshest available price using free-data fallbacks."""
+        if not minute_frame.empty and "Close" in minute_frame.columns:
+            closes = minute_frame["Close"].dropna().astype(float)
+            if not closes.empty:
+                return round(float(closes.iloc[-1]), 2)
+
+        try:
+            price = yf.Ticker(symbol).fast_info.get("last_price")
+            if price:
+                return round(float(price), 2)
+        except Exception as exc:
+            warnings.append(f"Fast price lookup was unavailable for {symbol}: {exc}")
+
+        api_key = os.getenv("FINNHUB_API_KEY", "")
+        if not api_key:
+            return None
+        try:
+            query = urlencode({"symbol": symbol, "token": api_key})
+            with urlopen(f"https://finnhub.io/api/v1/quote?{query}", timeout=8) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            price = data.get("c")
+            if price:
+                return round(float(price), 2)
+        except Exception as exc:
+            warnings.append(f"Finnhub quote was unavailable for {symbol}: {exc}")
+        return None
 
     @staticmethod
     def _previous_day_ohlc(daily: pd.DataFrame, warnings: list[str]) -> Ohlc:
@@ -265,6 +311,19 @@ class MarketDataService:
             high=round(float(completed["High"].astype(float).max()), 2),
             low=round(float(completed["Low"].astype(float).min()), 2),
         )
+
+    @staticmethod
+    def _monthly_range(daily: pd.DataFrame, warnings: list[str]) -> tuple[float | None, float | None]:
+        """Return the past 22 completed-session high and low."""
+        if daily.empty:
+            warnings.append("Daily data was unavailable for the 1-month range.")
+            return None, None
+        completed = daily.dropna(subset=["High", "Low"])
+        completed = MarketDataService._exclude_current_eastern_day(completed).tail(22)
+        if completed.empty:
+            warnings.append("Daily data did not include completed sessions for the 1-month range.")
+            return None, None
+        return round(float(completed["High"].astype(float).max()), 2), round(float(completed["Low"].astype(float).min()), 2)
 
     @staticmethod
     def _earnings_gap(symbol: str, daily: pd.DataFrame, warnings: list[str]) -> EarningsGap:
@@ -339,6 +398,14 @@ class MarketDataService:
         previous_date = session_dates[-1]
         return regular[regular.index.date == previous_date]
 
+    def _today_regular_session(self, intraday: pd.DataFrame) -> pd.DataFrame:
+        """Return latest available regular-session bars from today-like intraday data."""
+        if intraday.empty:
+            return intraday
+        localized = self._with_eastern_index(intraday)
+        latest = self._latest_session_bars(localized)
+        return latest.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left")
+
     def _today_premarket_range(self, intraday: pd.DataFrame, warnings: list[str]) -> PremarketRange:
         if intraday.empty:
             warnings.append("Intraday 1 minute data was unavailable for premarket calculations.")
@@ -411,6 +478,69 @@ class MarketDataService:
 
         typical_price = (priced["High"].astype(float) + priced["Low"].astype(float) + priced["Close"].astype(float)) / 3
         return round(float((typical_price * volume).sum() / total_volume), 2)
+
+    def _today_vwap(self, intraday: pd.DataFrame, warnings: list[str]) -> float | None:
+        """Calculate VWAP from the latest regular-session 1-minute bars."""
+        session = self._today_regular_session(intraday)
+        if session.empty:
+            warnings.append("No regular-session intraday bars were returned for today's VWAP.")
+            return None
+        return self._vwap(session, warnings)
+
+    @staticmethod
+    def _sma(daily: pd.DataFrame, period: int, warnings: list[str]) -> float | None:
+        completed = MarketDataService._exclude_current_eastern_day(daily.dropna(subset=["Close"])) if not daily.empty else daily
+        if completed.empty or len(completed) < period:
+            warnings.append(f"At least {period} completed daily closes are required for {period} SMA.")
+            return None
+        return round(float(completed["Close"].astype(float).tail(period).mean()), 2)
+
+    @staticmethod
+    def _daily_ema(daily: pd.DataFrame, period: int, warnings: list[str]) -> float | None:
+        completed = MarketDataService._exclude_current_eastern_day(daily.dropna(subset=["Close"])) if not daily.empty else daily
+        if completed.empty or len(completed) < period:
+            warnings.append(f"At least {period} completed daily closes are required for {period} EMA.")
+            return None
+        return round(float(completed["Close"].astype(float).ewm(span=period, adjust=False).mean().iloc[-1]), 2)
+
+    def _intraday_ema(self, intraday: pd.DataFrame, period: int, warnings: list[str]) -> float | None:
+        session = self._today_regular_session(intraday)
+        if session.empty or len(session.dropna(subset=["Close"])) < period:
+            warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
+            return None
+        return round(float(session["Close"].dropna().astype(float).ewm(span=period, adjust=False).mean().iloc[-1]), 2)
+
+    @staticmethod
+    def _pivot_points(previous_day: Ohlc) -> dict[str, float | None]:
+        """Return classic floor trader pivot points from prior day H/L/C."""
+        if previous_day.high is None or previous_day.low is None or previous_day.close is None:
+            return {"pivot": None, "r1": None, "s1": None, "r2": None, "s2": None}
+        pivot = round((previous_day.high + previous_day.low + previous_day.close) / 3, 2)
+        return {
+            "pivot": pivot,
+            "r1": round(2 * pivot - previous_day.low, 2),
+            "s1": round(2 * pivot - previous_day.high, 2),
+            "r2": round(pivot + (previous_day.high - previous_day.low), 2),
+            "s2": round(pivot - (previous_day.high - previous_day.low), 2),
+        }
+
+    @staticmethod
+    def _fibonacci_levels(high: float | None, low: float | None) -> dict[str, float | None]:
+        """Return common retracement levels over a high/low range."""
+        if high is None or low is None or high <= low:
+            return {"fib_382": None, "fib_500": None, "fib_618": None}
+        spread = high - low
+        return {
+            "fib_382": round(low + 0.382 * spread, 2),
+            "fib_500": round(low + 0.500 * spread, 2),
+            "fib_618": round(low + 0.618 * spread, 2),
+        }
+
+    @staticmethod
+    def _pct_from(price: float | None, level: float | None) -> float | None:
+        if price is None or level is None or level == 0:
+            return None
+        return round(((price - level) / level) * 100, 2)
 
     def _swing_levels(self, daily: pd.DataFrame, warnings: list[str]) -> SwingLevels:
         window = self.settings.swing_window

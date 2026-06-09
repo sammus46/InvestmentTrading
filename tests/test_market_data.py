@@ -214,6 +214,46 @@ def test_latest_session_bars_use_newest_available_date():
     assert list(latest.index.date) == [datetime(2026, 5, 15).date(), datetime(2026, 5, 15).date()]
 
 
+def test_monthly_range_uses_last_22_completed_sessions():
+    today = datetime.now(EASTERN).date()
+    dates = pd.date_range(today - timedelta(days=30), periods=30, freq="D")
+    daily = pd.DataFrame(
+        {
+            "High": list(range(10, 40)),
+            "Low": list(range(1, 31)),
+        },
+        index=dates,
+    )
+
+    high, low = MarketDataService._monthly_range(daily, [])
+
+    completed = daily[pd.DatetimeIndex(daily.index).date < today].tail(22)
+    assert high == float(completed["High"].max())
+    assert low == float(completed["Low"].min())
+
+
+def test_sma_daily_ema_pivots_and_fibonacci_levels():
+    daily = pd.DataFrame({"Close": [float(value) for value in range(1, 31)]})
+    warnings: list[str] = []
+
+    assert MarketDataService._sma(daily, 10, warnings) == 25.5
+    assert MarketDataService._daily_ema(daily, 10, warnings) == round(float(daily["Close"].ewm(span=10, adjust=False).mean().iloc[-1]), 2)
+
+    pivots = MarketDataService._pivot_points(previous_day=type("Previous", (), {"high": 12.0, "low": 8.0, "close": 10.0})())
+    assert pivots == {"pivot": 10.0, "r1": 12.0, "s1": 8.0, "r2": 14.0, "s2": 6.0}
+
+    fibs = MarketDataService._fibonacci_levels(20.0, 10.0)
+    assert fibs == {"fib_382": 13.82, "fib_500": 15.0, "fib_618": 16.18}
+
+
+def test_current_price_uses_latest_minute_close_before_fallback():
+    minute = pd.DataFrame({"Close": [100.0, None, 105.5]})
+
+    price = MarketDataService()._current_price("AAPL", minute, [])
+
+    assert price == 105.5
+
+
 def test_build_metrics_skips_unselected_downloads(monkeypatch):
     downloads = []
 

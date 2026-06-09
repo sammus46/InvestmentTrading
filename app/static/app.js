@@ -33,6 +33,12 @@ const pdfButton = document.querySelector("#download-pdf");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
+const runScannerButton = document.querySelector("#run-scanner");
+const scannerStatusEl = document.querySelector("#scanner-status");
+const scannerGeneratedAtEl = document.querySelector("#scanner-generated-at");
+const scannerSetupEl = document.querySelector("#scanner-setup-results");
+const scannerPatternEl = document.querySelector("#scanner-pattern-results");
+const scannerTabButtons = [...document.querySelectorAll("[data-scanner-tab]")];
 const saveStateEl = document.querySelector("#save-state");
 const chartsSectionEl = document.querySelector("#charts-section");
 const viewNavButtons = [...document.querySelectorAll("[data-view]")];
@@ -53,6 +59,8 @@ const metricsControlsEl = document.querySelector("#metrics-controls");
 
 let currentReport = null;
 let currentNews = null;
+let currentScanner = null;
+let scannerSort = { key: "score", direction: "desc" };
 let draggedTicker = null;
 const chartWindows = {};
 const hiddenChartGroups = {};
@@ -90,7 +98,9 @@ tickersInput.addEventListener("input", () => {
   localStorage.setItem(STORAGE_KEY, tickersInput.value);
   saveStateEl.textContent = "Saved locally";
   currentNews = null;
+  currentScanner = null;
   renderNewsEmptyState();
+  renderScannerEmptyState();
 });
 
 generateButton.addEventListener("click", async () => {
@@ -126,6 +136,25 @@ pdfButton.addEventListener("click", async () => {
 
 refreshNewsButton.addEventListener("click", async () => {
   await loadNews();
+});
+
+runScannerButton.addEventListener("click", async () => {
+  await loadScanner();
+});
+
+scannerTabButtons.forEach((button) => {
+  button.addEventListener("click", () => switchScannerTab(button.dataset.scannerTab));
+});
+
+scannerSetupEl.addEventListener("click", (event) => {
+  const sortButton = event.target.closest("[data-scanner-sort]");
+  if (!sortButton || !currentScanner) return;
+  const key = sortButton.dataset.scannerSort;
+  scannerSort = {
+    key,
+    direction: scannerSort.key === key && scannerSort.direction === "desc" ? "asc" : "desc",
+  };
+  renderScannerSetup(currentScanner.setup_rows || []);
 });
 
 chartsSectionEl.addEventListener("input", (event) => {
@@ -298,6 +327,15 @@ function buildNewsPayload() {
   };
 }
 
+function buildScannerPayload() {
+  return {
+    tickers: tickersInput.value,
+    include_setup: true,
+    include_patterns: true,
+    pattern_lookback_days: 30,
+  };
+}
+
 async function postJson(url, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -350,6 +388,23 @@ async function withNewsBusyState(message, callback) {
   }
 }
 
+async function withScannerBusyState(message, callback) {
+  const tickers = tickersInput.value.trim();
+  if (!tickers) {
+    setScannerStatus("Enter at least one ticker symbol.", "error");
+    return;
+  }
+  setScannerStatus(message, "");
+  runScannerButton.disabled = true;
+  try {
+    await callback();
+  } catch (error) {
+    setScannerStatus(readableError(error), "error");
+  } finally {
+    runScannerButton.disabled = false;
+  }
+}
+
 async function loadNews() {
   await withNewsBusyState("Loading market and watchlist news...", async () => {
     const news = await postJson("/api/news", buildNewsPayload());
@@ -357,6 +412,14 @@ async function loadNews() {
     if (!news.warnings?.length) {
       setNewsStatus("News refreshed.", "success");
     }
+  });
+}
+
+async function loadScanner() {
+  await withScannerBusyState("Running scanner for the shared watchlist...", async () => {
+    const scanner = await postJson("/api/scanner", buildScannerPayload());
+    renderScanner(scanner);
+    setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "Scanner completed.", scanner.warnings?.length ? "error" : "success");
   });
 }
 
@@ -397,6 +460,198 @@ function renderNewsEmptyState() {
   watchlistNewsEl.className = "ticker-news-grid empty";
   watchlistNewsEl.textContent = "Enter tickers and refresh news.";
   setNewsStatus("", "");
+}
+
+function renderScannerEmptyState() {
+  if (currentScanner) return;
+  scannerGeneratedAtEl.textContent = "Run the setup scanner and intraday pattern analysis for the shared watchlist.";
+  scannerSetupEl.className = "scanner-empty";
+  scannerSetupEl.textContent = "Run the scanner to view setup scores, support/resistance zones, and risk/reward.";
+  scannerPatternEl.className = "scanner-empty";
+  scannerPatternEl.textContent = "Run the scanner to view recurring intraday dip patterns.";
+  setScannerStatus("", "");
+}
+
+function renderScanner(scanner) {
+  currentScanner = scanner;
+  scannerGeneratedAtEl.textContent = `Scanner generated ${new Date(scanner.generated_at).toLocaleString()}`;
+  renderScannerSetup(scanner.setup_rows || []);
+  renderScannerPatterns(scanner);
+}
+
+function switchScannerTab(tab) {
+  const nextTab = tab === "patterns" ? "patterns" : "setup";
+  scannerTabButtons.forEach((button) => {
+    const active = button.dataset.scannerTab === nextTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll(".scanner-section").forEach((section) => {
+    const active = section.id === `scanner-${nextTab}`;
+    section.classList.toggle("active", active);
+    section.hidden = !active;
+  });
+}
+
+function renderScannerSetup(rows) {
+  if (!rows.length) {
+    scannerSetupEl.className = "scanner-empty";
+    scannerSetupEl.textContent = "Run the scanner to view setup scores, support/resistance zones, and risk/reward.";
+    return;
+  }
+  const sorted = [...rows].sort((left, right) => compareScannerRows(left, right, scannerSort.key, scannerSort.direction));
+  const columns = [
+    ["score", "Score"],
+    ["ticker", "Ticker"],
+    ["price", "Price"],
+    ["signal", "Signal"],
+    ["vwap_extension_percent", "VWAP Ext"],
+    ["rs_vs_spy_percent", "RS vs SPY"],
+    ["rs_vs_sector_percent", "RS vs Sec"],
+    ["best_support", "Best Support"],
+    ["support_confidence", "Sup Conf"],
+    ["best_resistance", "Best Resistance"],
+    ["resistance_confidence", "Res Conf"],
+    ["risk_reward", "R/R"],
+    ["setup_level", "Setup At"],
+    ["setup_distance_percent", "% Away"],
+    ["lows_held", "Lows Held"],
+    ["range_compression", "Range"],
+    ["off_high_percent", "Off High"],
+    ["momentum", "Momentum"],
+  ];
+  scannerSetupEl.className = "scanner-table-wrap";
+  scannerSetupEl.innerHTML = `
+    <table class="scanner-table">
+      <thead>
+        <tr>${columns.map(([key, label]) => `<th><button type="button" data-scanner-sort="${key}">${label}${scannerSort.key === key ? `<span>${scannerSort.direction === "desc" ? " desc" : " asc"}</span>` : ""}</button></th>`).join("")}</tr>
+      </thead>
+      <tbody>
+        ${sorted.map((row) => `
+          <tr>
+            <td>${renderScore(row.score)}</td>
+            <td><strong>${escapeHtml(row.ticker)}</strong></td>
+            <td>${formatValue(row.price)}</td>
+            <td>${formatScannerText(row.signal)}</td>
+            <td>${formatScannerText(row.vwap_extension_label)}</td>
+            <td>${formatScannerText(row.rs_vs_spy_label)}</td>
+            <td>${formatScannerText(row.rs_vs_sector_label)}</td>
+            <td>${formatScannerText(row.best_support)}</td>
+            <td>${formatValue(row.support_confidence)}</td>
+            <td>${formatScannerText(row.best_resistance)}</td>
+            <td>${formatValue(row.resistance_confidence)}</td>
+            <td>${row.risk_reward ? `${formatValue(row.risk_reward)}R` : "&mdash;"}</td>
+            <td>${formatScannerText(row.setup_level)}</td>
+            <td>${formatPercent(row.setup_distance_percent)}</td>
+            <td>${row.lows_held ? `${row.lows_held}x` : "&mdash;"}</td>
+            <td>${formatScannerText(row.range_compression)}</td>
+            <td>${formatPercent(row.off_high_percent)}</td>
+            <td>${formatScannerText(row.momentum)}</td>
+          </tr>
+          ${row.warnings?.length ? `<tr class="scanner-warning-row"><td colspan="${columns.length}">${row.warnings.map(escapeHtml).join(" ")}</td></tr>` : ""}
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderScannerPatterns(scanner) {
+  const summary = scanner.pattern_summary || [];
+  if (!summary.length) {
+    scannerPatternEl.className = "scanner-empty";
+    scannerPatternEl.textContent = "No pattern analysis was returned.";
+    return;
+  }
+  scannerPatternEl.className = "scanner-patterns";
+  const buckets = scanner.pattern_bucket_labels || scanner.pattern_buckets || [];
+  scannerPatternEl.innerHTML = `
+    <section class="scanner-subsection">
+      <h3>Pattern Summary</h3>
+      <div class="scanner-table-wrap">
+        <table class="scanner-table compact">
+          <thead><tr><th>Sector</th><th>Ticker</th><th>Days</th><th>Dip Days</th><th>Consistency</th><th>Avg Dip</th><th>Avg Recovery</th><th>Common Low Times</th></tr></thead>
+          <tbody>
+            ${summary.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.sector || "Other")}</td>
+                <td><strong>${escapeHtml(row.ticker)}</strong></td>
+                <td>${row.total_days}</td>
+                <td>${row.dip_days}</td>
+                <td>${row.consistency_percent}%</td>
+                <td>${formatPercent(row.average_dip_percent)}</td>
+                <td>${formatSignedPercent(row.average_recovery_percent)}</td>
+                <td>${(row.top_low_times || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="scanner-subsection">
+      <h3>5-Min Heatmap</h3>
+      ${renderPatternHeatmap(scanner.pattern_heatmap || [], buckets)}
+    </section>
+    <section class="scanner-subsection">
+      <h3>Per-Ticker Detail</h3>
+      ${renderPatternDetails(scanner.pattern_details || [])}
+    </section>
+    <section class="scanner-subsection">
+      <h3>Key Takeaways</h3>
+      <ul class="scanner-takeaways">${(scanner.takeaways || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+    </section>
+  `;
+}
+
+function renderPatternHeatmap(rows, bucketLabels) {
+  if (!rows.length) return '<div class="scanner-empty">No heatmap data returned.</div>';
+  return `
+    <div class="heatmap-wrap">
+      <table class="heatmap-table">
+        <thead><tr><th>Ticker</th>${bucketLabels.map((label, index) => `<th title="${escapeHtml(label)}">${index % 6 === 0 ? escapeHtml(label.replace(" ET", "")) : ""}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <th>${escapeHtml(row.ticker)}</th>
+              ${(row.values || []).map((value) => `<td style="background:${heatmapColor(value)}" title="${value === null || value === undefined ? "No data" : `${value.toFixed(2)}%`}">${value === null || value === undefined ? "" : value.toFixed(1)}</td>`).join("")}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderPatternDetails(details) {
+  if (!details.length) return '<div class="scanner-empty">No day-by-day details returned.</div>';
+  const byTicker = details.reduce((groups, detail) => {
+    groups[detail.ticker] = groups[detail.ticker] || [];
+    groups[detail.ticker].push(detail);
+    return groups;
+  }, {});
+  return Object.entries(byTicker).map(([ticker, rows]) => `
+    <details class="pattern-detail">
+      <summary>${escapeHtml(ticker)} - ${rows.length} days</summary>
+      <div class="scanner-table-wrap">
+        <table class="scanner-table compact">
+          <thead><tr><th>Date</th><th>Morning Low</th><th>Low Time</th><th>Recovery</th><th>Dip?</th><th>Day Low</th><th>Day Low Time</th><th>Close From Open</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${formatDate(row.date) || escapeHtml(row.date)}</td>
+                <td>${formatPercent(row.morning_low_percent)}</td>
+                <td>${escapeHtml(row.morning_low_time)}</td>
+                <td>${formatSignedPercent(row.recovery_to_close_percent)}</td>
+                <td>${row.dip_in_window ? "Yes" : "No"}</td>
+                <td>${formatPercent(row.day_low_percent)}</td>
+                <td>${escapeHtml(row.day_low_time)}</td>
+                <td>${formatSignedPercent(row.close_from_open_percent)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `).join("");
 }
 
 function renderWarningStatus(warnings) {
@@ -964,6 +1219,52 @@ function persistCardOrder(order) {
   localStorage.setItem(CARD_ORDER_STORAGE_KEY, JSON.stringify(order));
 }
 
+function compareScannerRows(left, right, key, direction) {
+  const leftValue = left[key];
+  const rightValue = right[key];
+  const emptyLeft = leftValue === null || leftValue === undefined || leftValue === "";
+  const emptyRight = rightValue === null || rightValue === undefined || rightValue === "";
+  if (emptyLeft && emptyRight) return 0;
+  if (emptyLeft) return 1;
+  if (emptyRight) return -1;
+  const factor = direction === "desc" ? -1 : 1;
+  if (typeof leftValue === "number" && typeof rightValue === "number") {
+    return (leftValue - rightValue) * factor;
+  }
+  return String(leftValue).localeCompare(String(rightValue)) * factor;
+}
+
+function renderScore(score) {
+  if (score === null || score === undefined) return "&mdash;";
+  return `<span class="scanner-score">${Number(score)}/8</span>`;
+}
+
+function formatScannerText(value) {
+  if (value === null || value === undefined || value === "") return "&mdash;";
+  return escapeHtml(value);
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || value === "") return "&mdash;";
+  return `${Number(value).toFixed(2)}%`;
+}
+
+function formatSignedPercent(value) {
+  if (value === null || value === undefined || value === "") return "&mdash;";
+  const number = Number(value);
+  return `${number >= 0 ? "+" : ""}${number.toFixed(2)}%`;
+}
+
+function heatmapColor(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "#f8fafc";
+  const bounded = Math.max(-3, Math.min(3, Number(value)));
+  const intensity = Math.abs(bounded) / 3;
+  if (bounded < 0) {
+    return `rgba(185, 28, 28, ${0.12 + intensity * 0.62})`;
+  }
+  return `rgba(15, 118, 110, ${0.12 + intensity * 0.62})`;
+}
+
 function sortLevels(levels, direction) {
   const sorted = [...(levels || [])].sort((left, right) => left - right);
   return direction === "desc" ? sorted.reverse() : sorted;
@@ -988,6 +1289,11 @@ function setStatus(message, type) {
 function setNewsStatus(message, type) {
   newsStatusEl.textContent = message;
   newsStatusEl.className = `status ${type}`.trim();
+}
+
+function setScannerStatus(message, type) {
+  scannerStatusEl.textContent = message;
+  scannerStatusEl.className = `status ${type}`.trim();
 }
 
 function filenameFromDisposition(header) {

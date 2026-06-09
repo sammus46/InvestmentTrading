@@ -171,6 +171,102 @@ class GenerateResponse(BaseModel):
     metrics: list[EquityMetrics]
 
 
+class ScannerRequest(BaseModel):
+    """Request payload for setup and intraday pattern scanning."""
+
+    tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+    include_setup: bool = True
+    include_patterns: bool = True
+    pattern_lookback_days: int = Field(default=30, ge=5, le=58)
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def split_ticker_input(cls, value: object) -> list[str]:
+        """Accept either a list or comma/space/newline separated ticker text."""
+        return GenerateRequest.split_ticker_input(value)
+
+
+class ScannerSetupRow(BaseModel):
+    """One ticker row in the setup scanner."""
+
+    ticker: str
+    price: float | None = None
+    score: int | None = None
+    signal: str | None = None
+    vwap_extension_label: str | None = None
+    vwap_extension_percent: float | None = None
+    rs_vs_spy_label: str | None = None
+    rs_vs_spy_percent: float | None = None
+    rs_vs_sector_label: str | None = None
+    rs_vs_sector_percent: float | None = None
+    best_support: str | None = None
+    support_confidence: int | None = None
+    support_reason: str | None = None
+    best_resistance: str | None = None
+    resistance_confidence: int | None = None
+    resistance_reason: str | None = None
+    risk_reward: float | None = None
+    setup_level: str | None = None
+    setup_distance_percent: float | None = None
+    consecutive_bars: int | None = None
+    lows_held: int | None = None
+    range_compression: str | None = None
+    off_high_percent: float | None = None
+    momentum: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PatternSummaryRow(BaseModel):
+    """Summary of recurring intraday dip behavior for one ticker."""
+
+    sector: str = "Other"
+    ticker: str
+    total_days: int
+    dip_days: int
+    consistency_percent: int
+    average_dip_percent: float
+    average_recovery_percent: float
+    common_low_time: str | None = None
+    top_low_times: list[str] = Field(default_factory=list)
+
+
+class PatternHeatmapRow(BaseModel):
+    """Average percent-from-open values by 5-minute time bucket."""
+
+    ticker: str
+    sector: str = "Other"
+    values: list[float | None] = Field(default_factory=list)
+
+
+class PatternDayDetail(BaseModel):
+    """Day-by-day intraday pattern details for one ticker."""
+
+    ticker: str
+    date: Date
+    morning_low_percent: float
+    morning_low_time: str
+    recovery_to_close_percent: float
+    dip_in_window: bool
+    day_low_percent: float
+    day_low_time: str
+    close_from_open_percent: float
+
+
+class ScannerResponse(BaseModel):
+    """Setup scanner and intraday pattern analysis response."""
+
+    generated_at: datetime
+    watchlist: list[str]
+    setup_rows: list[ScannerSetupRow] = Field(default_factory=list)
+    pattern_summary: list[PatternSummaryRow] = Field(default_factory=list)
+    pattern_buckets: list[str] = Field(default_factory=list)
+    pattern_bucket_labels: list[str] = Field(default_factory=list)
+    pattern_heatmap: list[PatternHeatmapRow] = Field(default_factory=list)
+    pattern_details: list[PatternDayDetail] = Field(default_factory=list)
+    takeaways: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class NewsRequest(BaseModel):
     """Request payload for watchlist and market news."""
 

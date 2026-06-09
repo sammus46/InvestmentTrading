@@ -19,10 +19,13 @@ from app.models import (
     NewsArticle,
     NewsRequest,
     NewsResponse,
+    ScannerRequest,
+    ScannerResponse,
 )
 from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
+from app.services.scanner import ScannerService
 
 
 METRIC_OPTIONS: dict[MetricName, str] = {
@@ -66,6 +69,12 @@ def news_service() -> NewsService:
     return NewsService()
 
 
+@st.cache_resource
+def scanner_service() -> ScannerService:
+    """Return one scanner service instance per Streamlit worker process."""
+    return ScannerService(market_data_service())
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> GenerateResponse:
     """Fetch and calculate metrics, cached briefly to avoid repeated provider calls."""
@@ -79,6 +88,12 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> G
 def build_news(tickers: tuple[str, ...], per_ticker: int = 5, general_count: int = 8) -> NewsResponse:
     """Fetch and normalize watchlist plus broad market news."""
     return news_service().build_news(list(tickers), per_ticker=per_ticker, general_count=general_count)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def build_scanner(tickers: tuple[str, ...]) -> ScannerResponse:
+    """Run setup scanner and intraday pattern analysis."""
+    return scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=True)
 
 
 def fmt(value: Any) -> str:
@@ -423,6 +438,36 @@ def render_app_chrome() -> str:
             font-size: 0.72rem;
             font-weight: 900;
             padding: 0.25rem 0.45rem;
+          }
+          .streamlit-scanner-card {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+            margin: 1rem 0;
+            padding: 1.25rem;
+          }
+          .streamlit-scanner-card h2,
+          .streamlit-scanner-card h3,
+          .streamlit-scanner-card p {
+            color: #111827;
+          }
+          .streamlit-heatmap {
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.25rem;
+            margin-top: 0.75rem;
+            overflow-x: auto;
+            padding: 0.75rem;
+          }
+          .streamlit-takeaway {
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            color: #334155 !important;
+            margin: 0.4rem 0;
+            padding: 0.75rem;
           }
           div[data-testid="stExpander"] details {
             background: #ffffff !important;
@@ -773,6 +818,123 @@ def render_news(report: NewsResponse) -> None:
                 st.info("No recent headlines returned.")
 
 
+def render_scanner(report: ScannerResponse) -> None:
+    """Render setup scanner and intraday pattern analysis."""
+    st.caption(f"Scanner generated at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    for warning in report.warnings:
+        st.warning(warning)
+
+    setup_tab, pattern_tab = st.tabs(["Setup Scanner", "Intraday Pattern Analysis"])
+    with setup_tab:
+        if not report.setup_rows:
+            st.info("No setup scanner rows were returned.")
+        else:
+            st.dataframe(scanner_setup_frame(report), use_container_width=True, hide_index=True)
+            warned = [row for row in report.setup_rows if row.warnings]
+            for row in warned:
+                st.warning(f"{row.ticker}: {' '.join(row.warnings)}")
+
+    with pattern_tab:
+        if not report.pattern_summary:
+            st.info("No intraday pattern analysis was returned.")
+            return
+        st.subheader("Pattern Summary")
+        st.dataframe(pattern_summary_frame(report), use_container_width=True, hide_index=True)
+        st.subheader("5-Min Heatmap")
+        st.caption("Average percent from open by 5-minute ET bucket. Negative values mark below-open periods.")
+        st.dataframe(pattern_heatmap_frame(report), use_container_width=True, hide_index=True)
+        st.subheader("Per-Ticker Detail")
+        for ticker in sorted({detail.ticker for detail in report.pattern_details}):
+            rows = [detail for detail in report.pattern_details if detail.ticker == ticker]
+            with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
+                st.dataframe(pattern_detail_frame(rows), use_container_width=True, hide_index=True)
+        st.subheader("Key Takeaways")
+        if report.takeaways:
+            for takeaway in report.takeaways:
+                st.markdown(f'<div class="streamlit-takeaway">{escape(takeaway)}</div>', unsafe_allow_html=True)
+        else:
+            st.info("No strong recurring pattern takeaways were found.")
+
+
+def scanner_setup_frame(report: ScannerResponse) -> pd.DataFrame:
+    """Build a display frame for setup scanner rows."""
+    rows = []
+    for row in report.setup_rows:
+        rows.append(
+            {
+                "Score": f"{row.score}/8" if row.score is not None else "-",
+                "Ticker": row.ticker,
+                "Price": fmt(row.price),
+                "Signal": row.signal or "-",
+                "VWAP Ext": row.vwap_extension_label or "-",
+                "RS vs SPY": row.rs_vs_spy_label or "-",
+                "RS vs Sec": row.rs_vs_sector_label or "-",
+                "Best Support": row.best_support or "-",
+                "Sup Conf": row.support_confidence or "-",
+                "Best Resistance": row.best_resistance or "-",
+                "Res Conf": row.resistance_confidence or "-",
+                "R/R": f"{row.risk_reward:.1f}R" if row.risk_reward else "-",
+                "Setup At": row.setup_level or "-",
+                "% Away": f"{row.setup_distance_percent:.2f}%" if row.setup_distance_percent is not None else "-",
+                "Lows Held": f"{row.lows_held}x" if row.lows_held else "-",
+                "Range": row.range_compression or "-",
+                "Off High": f"{row.off_high_percent:.2f}%" if row.off_high_percent is not None else "-",
+                "Momentum": row.momentum or "-",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
+    """Build a display frame for pattern summary rows."""
+    return pd.DataFrame(
+        [
+            {
+                "Sector": row.sector,
+                "Ticker": row.ticker,
+                "Days": row.total_days,
+                "Dip Days": row.dip_days,
+                "Consistency": f"{row.consistency_percent}%",
+                "Avg Dip": f"{row.average_dip_percent:.2f}%",
+                "Avg Recovery": f"{row.average_recovery_percent:+.2f}%",
+                "Common Low Times": ", ".join(row.top_low_times) or "-",
+            }
+            for row in report.pattern_summary
+        ]
+    )
+
+
+def pattern_heatmap_frame(report: ScannerResponse) -> pd.DataFrame:
+    """Build a wide heatmap frame using existing table rendering."""
+    labels = report.pattern_bucket_labels or report.pattern_buckets
+    rows = []
+    for row in report.pattern_heatmap:
+        display = {"Ticker": row.ticker}
+        for label, value in zip(labels, row.values, strict=False):
+            display[label.replace(" ET", "")] = "" if value is None else f"{value:.2f}%"
+        rows.append(display)
+    return pd.DataFrame(rows)
+
+
+def pattern_detail_frame(details: list[Any]) -> pd.DataFrame:
+    """Build a display frame for per-day pattern details."""
+    return pd.DataFrame(
+        [
+            {
+                "Date": detail.date.isoformat(),
+                "Morning Low": f"{detail.morning_low_percent:.2f}%",
+                "Low Time": detail.morning_low_time,
+                "Recovery": f"{detail.recovery_to_close_percent:+.2f}%",
+                "Dip?": "Yes" if detail.dip_in_window else "No",
+                "Day Low": f"{detail.day_low_percent:.2f}%",
+                "Day Low Time": detail.day_low_time,
+                "Close From Open": f"{detail.close_from_open_percent:+.2f}%",
+            }
+            for detail in details
+        ]
+    )
+
+
 def selected_metric_ids(labels: list[str]) -> list[MetricName]:
     """Translate selected labels back to metric ids."""
     label_to_id = {label: metric_id for metric_id, label in METRIC_OPTIONS.items()}
@@ -798,6 +960,8 @@ def main() -> None:
         st.session_state.report = None
     if "news" not in st.session_state:
         st.session_state.news = None
+    if "scanner" not in st.session_state:
+        st.session_state.scanner = None
     if "levels_status" not in st.session_state:
         st.session_state.levels_status = ""
 
@@ -813,6 +977,13 @@ def main() -> None:
             levels_status_slot = st.empty()
             if st.session_state.levels_status:
                 levels_status_slot.success(st.session_state.levels_status)
+        with st.container(border=True):
+            scanner_text_col, scanner_action_col = st.columns([2.2, 1], vertical_alignment="center")
+            with scanner_text_col:
+                st.subheader("Scanner")
+                st.caption("Run setup scoring and intraday pattern analysis for the shared watchlist.")
+            with scanner_action_col:
+                run_scanner = st.button("Run Scanner", type="primary", use_container_width=True)
         refresh_news = False
     else:
         with st.container():
@@ -824,6 +995,7 @@ def main() -> None:
             with action_col:
                 refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
         generate = False
+        run_scanner = False
 
     if generate:
         try:
@@ -836,6 +1008,16 @@ def main() -> None:
             st.session_state.report = build_report(tuple(request.tickers), tuple(request.metrics))
         st.session_state.levels_status = "Report generated successfully."
         levels_status_slot.success(st.session_state.levels_status)
+
+    if run_scanner:
+        try:
+            request = ScannerRequest(tickers=ticker_text)
+        except ValidationError as exc:
+            st.error(exc.errors()[0]["msg"])
+            return
+
+        with st.spinner("Running scanner..."):
+            st.session_state.scanner = build_scanner(tuple(request.tickers))
 
     if refresh_news:
         try:
@@ -854,6 +1036,11 @@ def main() -> None:
             return
         render_news(news)
         return
+
+    scanner: ScannerResponse | None = st.session_state.scanner
+    if scanner is not None:
+        with st.container(border=True):
+            render_scanner(scanner)
 
     report: GenerateResponse | None = st.session_state.report
     if report is None:

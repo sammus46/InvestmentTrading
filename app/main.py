@@ -8,10 +8,11 @@ from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.models import GenerateRequest, GenerateResponse, NewsRequest, NewsResponse
+from app.models import GenerateRequest, GenerateResponse, NewsRequest, NewsResponse, ScannerRequest, ScannerResponse
 from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
+from app.services.scanner import ScannerService
 
 app = FastAPI(
     title="Investment Trading Levels API",
@@ -21,6 +22,7 @@ app = FastAPI(
 market_data = MarketDataService()
 news_service = NewsService()
 pdf_reports = PdfReportService()
+scanner_service = ScannerService(market_data)
 
 
 @app.get("/api/health")
@@ -45,6 +47,17 @@ def generate_news(request: NewsRequest) -> NewsResponse:
         request.tickers,
         per_ticker=request.per_ticker,
         general_count=request.general_count,
+    )
+
+
+@app.post("/api/scanner", response_model=ScannerResponse)
+def generate_scanner(request: ScannerRequest) -> ScannerResponse:
+    """Generate setup scanner and intraday pattern analysis."""
+    return scanner_service.build_scanner(
+        request.tickers,
+        include_setup=request.include_setup,
+        include_patterns=request.include_patterns,
+        pattern_lookback_days=request.pattern_lookback_days,
     )
 
 
