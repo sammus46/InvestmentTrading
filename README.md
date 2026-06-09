@@ -19,6 +19,7 @@ A simple web application that pulls free market data with `yfinance`, calculates
 
 - Python 3.10 or newer.
 - A terminal opened at the repository root, which is the folder containing `pyproject.toml`.
+- Optional: a Finnhub API key in `FINNHUB_API_KEY` to use Finnhub for news before falling back to Yahoo Finance.
 
 If you already activated a virtual environment, do not run `python -m venv .venv` again inside that active environment. Create the virtual environment once, then activate it whenever you return to the project.
 
@@ -209,6 +210,8 @@ curl -X POST http://127.0.0.1:8000/api/news \
   -d '{"tickers":"AAPL, MSFT, NVDA","per_ticker":5,"general_count":8}'
 ```
 
+The news endpoint works without extra configuration through Yahoo Finance data. If `FINNHUB_API_KEY` is set in the environment, the app tries Finnhub first for general market news and watchlist company news, then falls back to Yahoo Finance when Finnhub is unavailable or returns no articles.
+
 Download a PDF report:
 
 ```bash
@@ -256,7 +259,7 @@ The previous development extra included `httpx`, but the current test suite does
 
 ## Data source notes
 
-The starter implementation uses `yfinance` because it is free and quick to integrate. Free data sources can be delayed, rate-limited, unavailable for some symbols, or limited in extended-hours coverage. One-minute extended-hours data, earnings calendars, and current-day opening ranges can be especially inconsistent outside active market hours or for thinly traded symbols. The market data implementation is isolated in `app/services/market_data.py` so a future provider can be added without changing the API or frontend.
+The starter implementation uses `yfinance` because it is free and quick to integrate. News retrieval supports Yahoo Finance by default and can use Finnhub when `FINNHUB_API_KEY` is configured. Free data sources can be delayed, rate-limited, unavailable for some symbols, or limited in extended-hours coverage. One-minute extended-hours data, earnings calendars, current-day opening ranges, and free news endpoints can be especially inconsistent outside active market hours or for thinly traded symbols. Provider-specific code is isolated in `app/services/market_data.py` and `app/services/news.py` so future providers can be added without changing routes or frontend code.
 
 ## Architecture
 

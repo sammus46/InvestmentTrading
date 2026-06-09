@@ -2,16 +2,40 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+import json
+import os
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import yfinance as yf
 
 from app.models import NewsArticle, NewsResponse, TickerNews
 
 
+@dataclass(frozen=True)
+class NewsSettings:
+    """Provider settings for news retrieval."""
+
+    finnhub_api_key: str | None = None
+    finnhub_base_url: str = "https://finnhub.io/api/v1"
+    finnhub_company_news_days: int = 14
+    request_timeout: int = 10
+
+    @classmethod
+    def from_environment(cls) -> "NewsSettings":
+        """Build settings from environment variables."""
+        api_key = os.getenv("FINNHUB_API_KEY")
+        return cls(finnhub_api_key=api_key.strip() if api_key else None)
+
+
 class NewsService:
-    """Fetch and normalize news from yfinance/Yahoo Finance."""
+    """Fetch and normalize news from configured providers."""
+
+    def __init__(self, settings: NewsSettings | None = None) -> None:
+        self.settings = settings or NewsSettings.from_environment()
 
     def build_news(self, tickers: list[str], per_ticker: int = 5, general_count: int = 8) -> NewsResponse:
         """Return general market news plus per-ticker watchlist news."""
@@ -29,6 +53,17 @@ class NewsService:
         )
 
     def _general_market_news(self, count: int, warnings: list[str]) -> list[NewsArticle]:
+        if self.settings.finnhub_api_key:
+            try:
+                articles = self._normalize_finnhub_articles(
+                    self._fetch_finnhub("news", {"category": "general"}),
+                    limit=count,
+                )
+                if articles:
+                    return articles
+            except Exception as exc:
+                warnings.append(f"Finnhub general market news was unavailable: {exc}")
+
         errors: list[str] = []
         for query in ["stock market", "S&P 500", "Dow Jones Nasdaq"]:
             try:
@@ -56,6 +91,24 @@ class NewsService:
 
     def _ticker_news(self, ticker: str, count: int) -> TickerNews:
         warnings: list[str] = []
+        if self.settings.finnhub_api_key:
+            try:
+                articles = self._normalize_finnhub_articles(
+                    self._fetch_finnhub(
+                        "company-news",
+                        {
+                            "symbol": ticker,
+                            "from": (date.today() - timedelta(days=self.settings.finnhub_company_news_days)).isoformat(),
+                            "to": date.today().isoformat(),
+                        },
+                    ),
+                    limit=count,
+                )
+                if articles:
+                    return TickerNews(ticker=ticker, articles=articles)
+            except Exception as exc:
+                warnings.append(f"Finnhub news was unavailable for {ticker}: {exc}")
+
         try:
             raw_articles = yf.Ticker(ticker).get_news(count=count)
         except Exception as exc:
@@ -66,6 +119,17 @@ class NewsService:
         if not articles and not warnings:
             warnings.append(f"No recent news was returned for {ticker}.")
         return TickerNews(ticker=ticker, articles=articles, warnings=warnings)
+
+    def _fetch_finnhub(self, endpoint: str, params: dict[str, str]) -> list[dict[str, Any]]:
+        if not self.settings.finnhub_api_key:
+            return []
+
+        query = urlencode({**params, "token": self.settings.finnhub_api_key})
+        url = f"{self.settings.finnhub_base_url.rstrip('/')}/{endpoint.lstrip('/')}?{query}"
+        request = Request(url, headers={"Accept": "application/json"})
+        with urlopen(request, timeout=self.settings.request_timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return data if isinstance(data, list) else []
 
     @classmethod
     def _normalize_articles(cls, raw_articles: list[dict[str, Any]], limit: int) -> list[NewsArticle]:
@@ -101,6 +165,32 @@ class NewsService:
             thumbnail_url=cls._thumbnail_url(content.get("thumbnail") or raw.get("thumbnail")),
             related_tickers=cls._related_tickers(raw.get("relatedTickers") or content.get("relatedTickers")),
         )
+
+    @classmethod
+    def _normalize_finnhub_articles(cls, raw_articles: list[dict[str, Any]], limit: int) -> list[NewsArticle]:
+        articles: list[NewsArticle] = []
+        seen: set[str] = set()
+        for raw in raw_articles:
+            title = cls._string(raw.get("headline") or raw.get("title"))
+            if not title:
+                continue
+            article = NewsArticle(
+                title=title,
+                url=cls._string(raw.get("url") or raw.get("link")),
+                publisher=cls._string(raw.get("source")),
+                published_at=cls._published_at(raw.get("datetime")),
+                summary=cls._string(raw.get("summary")),
+                thumbnail_url=cls._string(raw.get("image")),
+                related_tickers=cls._related_tickers(raw.get("related")),
+            )
+            key = article.url or article.title
+            if key in seen:
+                continue
+            seen.add(key)
+            articles.append(article)
+            if len(articles) == limit:
+                break
+        return articles
 
     @staticmethod
     def _string(value: object) -> str | None:
@@ -142,11 +232,15 @@ class NewsService:
 
     @staticmethod
     def _related_tickers(value: object) -> list[str]:
-        if not isinstance(value, list):
+        if isinstance(value, str):
+            candidates = value.replace(",", " ").split()
+        elif isinstance(value, list):
+            candidates = [str(item) for item in value]
+        else:
             return []
         tickers: list[str] = []
-        for item in value:
-            ticker = str(item).upper().strip()
+        for item in candidates:
+            ticker = item.upper().strip()
             if ticker and ticker not in tickers:
                 tickers.append(ticker)
         return tickers
