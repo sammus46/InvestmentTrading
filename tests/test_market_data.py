@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -49,11 +49,13 @@ def test_with_eastern_index_treats_naive_intraday_data_as_utc():
 
 
 def test_previous_regular_session_excludes_today_partial_session():
+    today = datetime.now(EASTERN).date()
+    previous = today - timedelta(days=1)
     index = pd.DatetimeIndex(
         [
-            datetime(2026, 5, 15, 9, 30, tzinfo=EASTERN),
-            datetime(2026, 5, 15, 9, 35, tzinfo=EASTERN),
-            datetime(2026, 5, 18, 9, 30, tzinfo=EASTERN),
+            datetime.combine(previous, time(9, 30), tzinfo=EASTERN),
+            datetime.combine(previous, time(9, 35), tzinfo=EASTERN),
+            datetime.combine(today, time(9, 30), tzinfo=EASTERN),
         ]
     )
     intraday = pd.DataFrame(
@@ -68,17 +70,18 @@ def test_previous_regular_session_excludes_today_partial_session():
 
     session = MarketDataService()._previous_regular_session(intraday, [])
 
-    assert list(session.index.date) == [datetime(2026, 5, 15).date(), datetime(2026, 5, 15).date()]
+    assert list(session.index.date) == [previous, previous]
     assert session["High"].tolist() == [10.0, 11.0]
 
 
 def test_fifty_two_week_range_uses_completed_sessions_only():
+    today = datetime.now(EASTERN).date()
     daily = pd.DataFrame(
         {
             "High": [10.0, 20.0, 999.0],
             "Low": [5.0, 7.0, 1.0],
         },
-        index=pd.DatetimeIndex(["2026-05-14", "2026-05-15", "2026-05-18"]),
+        index=pd.DatetimeIndex([today - timedelta(days=2), today - timedelta(days=1), today]),
     )
 
     levels = MarketDataService._fifty_two_week_range(daily, [])
@@ -233,13 +236,16 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
 
 
 def test_price_history_uses_latest_completed_daily_closes():
+    today = datetime.now(EASTERN).date()
+    first = today - timedelta(days=2)
+    second = today - timedelta(days=1)
     service = MarketDataService(MarketDataSettings(chart_history_days=2))
     daily = pd.DataFrame(
         {"Close": [10.12345, 11.0, 999.0]},
-        index=pd.DatetimeIndex(["2026-05-14", "2026-05-15", "2026-05-18"]),
+        index=pd.DatetimeIndex([first, second, today]),
     )
 
     history = service._price_history(daily, [])
 
-    assert [point.date.isoformat() for point in history] == ["2026-05-14", "2026-05-15"]
+    assert [point.date for point in history] == [first, second]
     assert [point.close for point in history] == [10.12, 11.0]

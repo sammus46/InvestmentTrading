@@ -141,6 +141,7 @@ python -m pip install -e ".[dev]"
 - `'source' is not recognized` means you are in Windows Command Prompt. Use `.venv\Scripts\activate.bat` instead. In PowerShell, use `.\.venv\Scripts\Activate.ps1`.
 - `requires a different Python` means the Python used to create `.venv` is outside the supported version range. This project supports Python 3.10 or newer. Check with `python --version` after activation.
 - `'uvicorn' is not recognized` usually means installation did not finish successfully. Rerun `python -m pip install -e .`, then start the app with `python -m uvicorn app.main:app --reload`.
+- `No module named streamlit` means the active virtual environment does not have the project dependencies installed. With `.venv` activated, rerun `python -m pip install -e .`, then start the Streamlit UI with `python -m streamlit run app/streamlit_app.py`.
 
 ## Remote access
 
