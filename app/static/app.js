@@ -45,6 +45,11 @@ const newsStatusEl = document.querySelector("#news-status");
 const newsGeneratedAtEl = document.querySelector("#news-generated-at");
 const marketNewsEl = document.querySelector("#market-news");
 const watchlistNewsEl = document.querySelector("#watchlist-news");
+const menuToggleButton = document.querySelector("#menu-toggle");
+const controlsDrawerEl = document.querySelector("#controls-drawer");
+const drawerBackdropEl = document.querySelector("#drawer-backdrop");
+const drawerCloseButton = document.querySelector("#drawer-close");
+const metricsControlsEl = document.querySelector("#metrics-controls");
 
 let currentReport = null;
 let currentNews = null;
@@ -58,6 +63,22 @@ switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews
 
 viewNavButtons.forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.view));
+});
+
+menuToggleButton.addEventListener("click", () => {
+  if (document.body.classList.contains("drawer-open")) {
+    closeControlsDrawer();
+  } else {
+    openControlsDrawer();
+  }
+});
+
+drawerCloseButton.addEventListener("click", closeControlsDrawer);
+drawerBackdropEl.addEventListener("click", closeControlsDrawer);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeControlsDrawer();
+  }
 });
 
 metricSelectorEl.addEventListener("change", () => {
@@ -206,17 +227,36 @@ function switchView(view, options = {}) {
   viewNavButtons.forEach((button) => {
     const active = button.dataset.view === nextView;
     button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
+    if (active) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
   });
   Object.entries(viewPanels).forEach(([panelView, panel]) => {
     const active = panelView === nextView;
     panel.classList.toggle("active", active);
     panel.hidden = !active;
   });
+  metricsControlsEl.hidden = nextView !== "levels";
 
   if (nextView === "news" && options.loadNews !== false && !currentNews) {
     loadNews();
   }
+}
+
+function openControlsDrawer() {
+  document.body.classList.add("drawer-open");
+  controlsDrawerEl.setAttribute("aria-hidden", "false");
+  menuToggleButton.setAttribute("aria-expanded", "true");
+  drawerBackdropEl.hidden = false;
+}
+
+function closeControlsDrawer() {
+  document.body.classList.remove("drawer-open");
+  controlsDrawerEl.setAttribute("aria-hidden", "true");
+  menuToggleButton.setAttribute("aria-expanded", "false");
+  drawerBackdropEl.hidden = true;
 }
 
 function getSelectedMetrics() {

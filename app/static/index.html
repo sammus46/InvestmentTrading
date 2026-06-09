@@ -7,47 +7,65 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="app-header">
-        <div>
-          <p class="eyebrow">Investment workspace</p>
-          <h1>Equity Levels Dashboard</h1>
+    <header class="top-ribbon">
+      <div class="top-ribbon-inner">
+        <button id="menu-toggle" class="menu-button" type="button" aria-controls="controls-drawer" aria-expanded="false">
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+          <span class="sr-only">Open watchlist and metric controls</span>
+        </button>
+        <div class="app-brand" aria-label="Investment Trading">
+          <span class="brand-mark" aria-hidden="true">IT</span>
+          <span>Investment Trading</span>
         </div>
-        <nav class="view-nav" aria-label="Main views">
-          <button id="levels-nav" class="view-tab active" type="button" data-view="levels" aria-pressed="true">
-            Levels
+        <nav class="site-nav" aria-label="Subapps">
+          <button id="levels-nav" class="nav-link active" type="button" data-view="levels" aria-current="page">
+            Trading Levels
           </button>
-          <button id="news-nav" class="view-tab" type="button" data-view="news" aria-pressed="false">
-            News
+          <button id="news-nav" class="nav-link" type="button" data-view="news">
+            Stock News
           </button>
         </nav>
-      </header>
+      </div>
+    </header>
 
-      <section class="panel" aria-labelledby="watchlist-heading">
-        <div class="panel-header">
-          <div>
-            <h2 id="watchlist-heading">Watchlist</h2>
-            <p>One shared list drives both price levels and relevant ticker news.</p>
-          </div>
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="controls-drawer" class="controls-drawer" aria-labelledby="controls-heading" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">Controls</p>
+          <h2 id="controls-heading">Watchlist</h2>
+        </div>
+        <button id="drawer-close" class="drawer-close" type="button" aria-label="Close controls">&times;</button>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-header">
+          <h3 id="watchlist-heading">Tickers</h3>
           <span id="save-state" class="save-state">Saved locally</span>
         </div>
-
         <label for="tickers">Ticker symbols</label>
-        <textarea id="tickers" rows="4" placeholder="AAPL, MSFT, NVDA"></textarea>
-      </section>
+        <textarea id="tickers" rows="5" placeholder="AAPL, MSFT, NVDA"></textarea>
+      </div>
+
+      <div id="metrics-controls" class="drawer-section" aria-labelledby="metrics-heading">
+        <div class="drawer-section-header">
+          <h3 id="metrics-heading">Metrics</h3>
+        </div>
+        <div id="metric-selector" class="metric-picker"></div>
+      </div>
+    </aside>
+
+    <main class="shell">
 
       <section id="view-levels" class="view-panel active" aria-labelledby="levels-heading">
-        <section class="panel">
-          <div class="field-group" aria-labelledby="metrics-heading">
-            <div class="field-heading">
-              <div>
-                <h2 id="levels-heading">Investment Trading Levels</h2>
-                <p>Choose metric groups, generate report cards, and keep charts aligned to the watchlist order.</p>
-              </div>
-            </div>
-            <div id="metric-selector" class="metric-picker"></div>
+        <section class="panel subapp-hero">
+          <div>
+            <p class="eyebrow">Subapp</p>
+            <h1 id="levels-heading">Investment Trading Levels</h1>
+            <p>Generate price-level reports from the shared watchlist.</p>
           </div>
-
           <div class="actions">
             <button id="generate" class="primary" type="button">Generate Levels</button>
           </div>
@@ -78,7 +96,8 @@
         <section class="panel news-panel">
           <div class="panel-header report-ribbon">
             <div>
-              <h2 id="news-heading">Stock News</h2>
+              <p class="eyebrow">Subapp</p>
+              <h1 id="news-heading">Stock News</h1>
               <p id="news-generated-at">Use the shared watchlist to pull ticker-specific headlines plus broad US market news.</p>
             </div>
             <button id="refresh-news" class="primary" type="button">Refresh News</button>
