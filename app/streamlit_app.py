@@ -9,8 +9,18 @@ import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
-from app.models import DEFAULT_METRICS, EquityMetrics, GenerateRequest, GenerateResponse, MetricName
+from app.models import (
+    DEFAULT_METRICS,
+    EquityMetrics,
+    GenerateRequest,
+    GenerateResponse,
+    MetricName,
+    NewsArticle,
+    NewsRequest,
+    NewsResponse,
+)
 from app.services.market_data import MarketDataService
+from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 
 
@@ -41,6 +51,12 @@ def pdf_report_service() -> PdfReportService:
     return PdfReportService()
 
 
+@st.cache_resource
+def news_service() -> NewsService:
+    """Return one news service instance per Streamlit worker process."""
+    return NewsService()
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> GenerateResponse:
     """Fetch and calculate metrics, cached briefly to avoid repeated provider calls."""
@@ -48,6 +64,12 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> G
         generated_at=datetime.now(timezone.utc),
         metrics=market_data_service().build_metrics(list(tickers), list(metrics)),
     )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def build_news(tickers: tuple[str, ...], per_ticker: int = 5, general_count: int = 8) -> NewsResponse:
+    """Fetch and normalize watchlist plus broad market news."""
+    return news_service().build_news(list(tickers), per_ticker=per_ticker, general_count=general_count)
 
 
 def fmt(value: Any) -> str:
@@ -157,6 +179,49 @@ def render_metric(metric: EquityMetrics) -> None:
                 st.warning(warning)
 
 
+def render_article(article: NewsArticle) -> None:
+    """Render one normalized news article."""
+    published = article.published_at.astimezone().strftime("%Y-%m-%d %H:%M") if article.published_at else None
+    meta = " · ".join(item for item in [article.publisher, published] if item)
+    if article.url:
+        st.markdown(f"**[{article.title}]({article.url})**")
+    else:
+        st.markdown(f"**{article.title}**")
+    if meta:
+        st.caption(meta)
+    if article.summary:
+        st.write(article.summary)
+    if article.related_tickers:
+        st.caption("Related: " + ", ".join(article.related_tickers[:8]))
+
+
+def render_news(report: NewsResponse) -> None:
+    """Render watchlist and general market news."""
+    st.caption(f"Refreshed at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    for warning in report.warnings:
+        st.warning(warning)
+
+    st.subheader("General Market News")
+    if report.general_market:
+        for article in report.general_market:
+            with st.container(border=True):
+                render_article(article)
+    else:
+        st.info("No general market headlines were returned.")
+
+    st.subheader("Watchlist News")
+    for ticker_group in report.ticker_news:
+        with st.expander(f"{ticker_group.ticker} · {len(ticker_group.articles)} headline(s)", expanded=True):
+            for warning in ticker_group.warnings:
+                st.warning(warning)
+            if ticker_group.articles:
+                for article in ticker_group.articles:
+                    render_article(article)
+                    st.divider()
+            else:
+                st.info("No recent headlines returned.")
+
+
 def selected_metric_ids(labels: list[str]) -> list[MetricName]:
     """Translate selected labels back to metric ids."""
     label_to_id = {label: metric_id for metric_id, label in METRIC_OPTIONS.items()}
@@ -165,19 +230,28 @@ def selected_metric_ids(labels: list[str]) -> list[MetricName]:
 
 def main() -> None:
     """Run the Streamlit application."""
-    st.title("Investment Trading Levels")
+    st.title("Investment Trading Workspace")
 
     with st.sidebar:
+        view = st.radio("View", ["Investment Trading Levels", "Stock News"])
         ticker_text = st.text_area("Tickers", value="AAPL, MSFT, NVDA", height=110)
-        selected_labels = st.multiselect(
-            "Metrics",
-            options=list(METRIC_OPTIONS.values()),
-            default=[METRIC_OPTIONS[metric_id] for metric_id in DEFAULT_METRICS],
-        )
-        generate = st.button("Generate Levels", type="primary", use_container_width=True)
+        selected_labels: list[str] = []
+        generate = False
+        refresh_news = False
+        if view == "Investment Trading Levels":
+            selected_labels = st.multiselect(
+                "Metrics",
+                options=list(METRIC_OPTIONS.values()),
+                default=[METRIC_OPTIONS[metric_id] for metric_id in DEFAULT_METRICS],
+            )
+            generate = st.button("Generate Levels", type="primary", use_container_width=True)
+        else:
+            refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
 
     if "report" not in st.session_state:
         st.session_state.report = None
+    if "news" not in st.session_state:
+        st.session_state.news = None
 
     if generate:
         try:
@@ -188,6 +262,24 @@ def main() -> None:
 
         with st.spinner("Generating levels..."):
             st.session_state.report = build_report(tuple(request.tickers), tuple(request.metrics))
+
+    if refresh_news:
+        try:
+            request = NewsRequest(tickers=ticker_text)
+        except ValidationError as exc:
+            st.error(exc.errors()[0]["msg"])
+            return
+
+        with st.spinner("Loading news..."):
+            st.session_state.news = build_news(tuple(request.tickers))
+
+    if view == "Stock News":
+        news: NewsResponse | None = st.session_state.news
+        if news is None:
+            st.info("Enter tickers and refresh news.")
+            return
+        render_news(news)
+        return
 
     report: GenerateResponse | None = st.session_state.report
     if report is None:

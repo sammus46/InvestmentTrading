@@ -169,3 +169,47 @@ class GenerateResponse(BaseModel):
 
     generated_at: datetime
     metrics: list[EquityMetrics]
+
+
+class NewsRequest(BaseModel):
+    """Request payload for watchlist and market news."""
+
+    tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+    per_ticker: int = Field(default=5, ge=1, le=10)
+    general_count: int = Field(default=8, ge=1, le=20)
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def split_ticker_input(cls, value: object) -> list[str]:
+        """Accept either a list or comma/space/newline separated ticker text."""
+        return GenerateRequest.split_ticker_input(value)
+
+
+class NewsArticle(BaseModel):
+    """Normalized news article data returned by the configured market data provider."""
+
+    title: str
+    url: str | None = None
+    publisher: str | None = None
+    published_at: datetime | None = None
+    summary: str | None = None
+    thumbnail_url: str | None = None
+    related_tickers: list[str] = Field(default_factory=list)
+
+
+class TickerNews(BaseModel):
+    """News articles and provider warnings for one ticker."""
+
+    ticker: str
+    articles: list[NewsArticle] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NewsResponse(BaseModel):
+    """Watchlist and general market news response."""
+
+    generated_at: datetime
+    watchlist: list[str]
+    general_market: list[NewsArticle] = Field(default_factory=list)
+    ticker_news: list[TickerNews] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

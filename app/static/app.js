@@ -1,6 +1,7 @@
 const STORAGE_KEY = "equity-levels-watchlist";
 const METRICS_STORAGE_KEY = "equity-levels-selected-metrics";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
+const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
 const DEFAULT_CHART_WINDOW_DAYS = 365;
 
 const LEVEL_STYLES = {
@@ -34,14 +35,30 @@ const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
 const saveStateEl = document.querySelector("#save-state");
 const chartsSectionEl = document.querySelector("#charts-section");
+const viewNavButtons = [...document.querySelectorAll("[data-view]")];
+const viewPanels = {
+  levels: document.querySelector("#view-levels"),
+  news: document.querySelector("#view-news"),
+};
+const refreshNewsButton = document.querySelector("#refresh-news");
+const newsStatusEl = document.querySelector("#news-status");
+const newsGeneratedAtEl = document.querySelector("#news-generated-at");
+const marketNewsEl = document.querySelector("#market-news");
+const watchlistNewsEl = document.querySelector("#watchlist-news");
 
 let currentReport = null;
+let currentNews = null;
 let draggedTicker = null;
 const chartWindows = {};
 const hiddenChartGroups = {};
 
 tickersInput.value = localStorage.getItem(STORAGE_KEY) || "";
 renderMetricSelector();
+switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false });
+
+viewNavButtons.forEach((button) => {
+  button.addEventListener("click", () => switchView(button.dataset.view));
+});
 
 metricSelectorEl.addEventListener("change", () => {
   persistSelectedMetrics();
@@ -51,6 +68,8 @@ metricSelectorEl.addEventListener("change", () => {
 tickersInput.addEventListener("input", () => {
   localStorage.setItem(STORAGE_KEY, tickersInput.value);
   saveStateEl.textContent = "Saved locally";
+  currentNews = null;
+  renderNewsEmptyState();
 });
 
 generateButton.addEventListener("click", async () => {
@@ -82,6 +101,10 @@ pdfButton.addEventListener("click", async () => {
     URL.revokeObjectURL(url);
     setStatus("PDF report downloaded.", "success");
   });
+});
+
+refreshNewsButton.addEventListener("click", async () => {
+  await loadNews();
 });
 
 chartsSectionEl.addEventListener("input", (event) => {
@@ -177,6 +200,25 @@ function renderMetricSelector() {
   `).join("");
 }
 
+function switchView(view, options = {}) {
+  const nextView = viewPanels[view] ? view : "levels";
+  localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, nextView);
+  viewNavButtons.forEach((button) => {
+    const active = button.dataset.view === nextView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  Object.entries(viewPanels).forEach(([panelView, panel]) => {
+    const active = panelView === nextView;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+
+  if (nextView === "news" && options.loadNews !== false && !currentNews) {
+    loadNews();
+  }
+}
+
 function getSelectedMetrics() {
   try {
     const stored = JSON.parse(localStorage.getItem(METRICS_STORAGE_KEY));
@@ -205,6 +247,14 @@ function buildPayload(options = {}) {
       ? currentReport.metrics.map((metric) => metric.ticker)
       : tickersInput.value,
     metrics: readSelectedMetrics(),
+  };
+}
+
+function buildNewsPayload() {
+  return {
+    tickers: tickersInput.value,
+    per_ticker: 5,
+    general_count: 8,
   };
 }
 
@@ -243,6 +293,33 @@ async function withBusyState(message, callback) {
   }
 }
 
+async function withNewsBusyState(message, callback) {
+  const tickers = tickersInput.value.trim();
+  if (!tickers) {
+    setNewsStatus("Enter at least one ticker symbol.", "error");
+    return;
+  }
+  setNewsStatus(message, "");
+  refreshNewsButton.disabled = true;
+  try {
+    await callback();
+  } catch (error) {
+    setNewsStatus(readableError(error), "error");
+  } finally {
+    refreshNewsButton.disabled = false;
+  }
+}
+
+async function loadNews() {
+  await withNewsBusyState("Loading market and watchlist news...", async () => {
+    const news = await postJson("/api/news", buildNewsPayload());
+    renderNews(news);
+    if (!news.warnings?.length) {
+      setNewsStatus("News refreshed.", "success");
+    }
+  });
+}
+
 function renderReport(report) {
   currentReport = {
     ...report,
@@ -262,6 +339,92 @@ function renderCurrentReport() {
   resultsEl.innerHTML = currentReport.metrics.map((metric, index) => renderMetricCard(metric, index)).join("");
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
   renderCharts();
+}
+
+function renderNews(news) {
+  currentNews = news;
+  newsGeneratedAtEl.textContent = `News refreshed ${new Date(news.generated_at).toLocaleString()}`;
+  renderWarningStatus(news.warnings || []);
+  renderMarketNews(news.general_market || []);
+  renderWatchlistNews(news.ticker_news || []);
+}
+
+function renderNewsEmptyState() {
+  if (currentNews) return;
+  newsGeneratedAtEl.textContent = "Use the shared watchlist to pull ticker-specific headlines plus broad US market news.";
+  marketNewsEl.className = "news-list empty";
+  marketNewsEl.textContent = "Open the News view or refresh to load market headlines.";
+  watchlistNewsEl.className = "ticker-news-grid empty";
+  watchlistNewsEl.textContent = "Enter tickers and refresh news.";
+  setNewsStatus("", "");
+}
+
+function renderWarningStatus(warnings) {
+  if (!warnings.length) return;
+  setNewsStatus(warnings.join(" "), "error");
+}
+
+function renderMarketNews(articles) {
+  if (!articles.length) {
+    marketNewsEl.className = "news-list empty";
+    marketNewsEl.textContent = "No general market headlines were returned.";
+    return;
+  }
+  marketNewsEl.className = "news-list";
+  marketNewsEl.innerHTML = articles.map((article) => renderArticleCard(article, { compact: false })).join("");
+}
+
+function renderWatchlistNews(tickerNews) {
+  if (!tickerNews.length) {
+    watchlistNewsEl.className = "ticker-news-grid empty";
+    watchlistNewsEl.textContent = "No watchlist news was returned.";
+    return;
+  }
+  watchlistNewsEl.className = "ticker-news-grid";
+  watchlistNewsEl.innerHTML = tickerNews.map(renderTickerNews).join("");
+}
+
+function renderTickerNews(tickerGroup) {
+  const articles = tickerGroup.articles || [];
+  const warnings = tickerGroup.warnings || [];
+  return `
+    <article class="ticker-news-card">
+      <div class="ticker-news-header">
+        <h4>${escapeHtml(tickerGroup.ticker)}</h4>
+        <span>${articles.length} headline${articles.length === 1 ? "" : "s"}</span>
+      </div>
+      ${warnings.length ? `<div class="inline-warning">${warnings.map(escapeHtml).join(" ")}</div>` : ""}
+      ${articles.length ? `<div class="ticker-articles">${articles.map((article) => renderArticleCard(article, { compact: true })).join("")}</div>` : `<p class="news-empty">No recent headlines returned.</p>`}
+    </article>
+  `;
+}
+
+function renderArticleCard(article, options = {}) {
+  const published = article.published_at ? new Date(article.published_at).toLocaleString() : "";
+  const related = article.related_tickers?.length
+    ? `<div class="related-tickers">${article.related_tickers.slice(0, 6).map((ticker) => `<span>${escapeHtml(ticker)}</span>`).join("")}</div>`
+    : "";
+  const image = article.thumbnail_url && !options.compact
+    ? `<img src="${escapeHtml(article.thumbnail_url)}" alt="" loading="lazy" />`
+    : "";
+  const title = article.url
+    ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
+    : `<span>${escapeHtml(article.title)}</span>`;
+
+  return `
+    <article class="news-card ${options.compact ? "compact" : ""}">
+      ${image}
+      <div class="news-card-body">
+        <h4>${title}</h4>
+        <div class="news-meta">
+          ${article.publisher ? `<span>${escapeHtml(article.publisher)}</span>` : ""}
+          ${published ? `<time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time>` : ""}
+        </div>
+        ${article.summary && !options.compact ? `<p>${escapeHtml(article.summary)}</p>` : ""}
+        ${related}
+      </div>
+    </article>
+  `;
 }
 
 function renderMetricCard(metric, index) {
@@ -313,12 +476,12 @@ function renderMetricCard(metric, index) {
     <article class="card" draggable="true" data-ticker="${escapeHtml(metric.ticker)}">
       <div class="card-header">
         <div>
-          <span class="drag-handle" aria-hidden="true">⋮⋮</span>
+          <span class="drag-handle" aria-hidden="true">&vellip;&vellip;</span>
           <h3>${escapeHtml(metric.ticker)}</h3>
         </div>
         <div class="card-actions" aria-label="Reorder ${escapeHtml(metric.ticker)} card">
-          <button type="button" data-move="up" data-ticker="${escapeHtml(metric.ticker)}" ${index === 0 ? "disabled" : ""}>↑</button>
-          <button type="button" data-move="down" data-ticker="${escapeHtml(metric.ticker)}" ${index === currentReport.metrics.length - 1 ? "disabled" : ""}>↓</button>
+          <button type="button" data-move="up" data-ticker="${escapeHtml(metric.ticker)}" ${index === 0 ? "disabled" : ""} aria-label="Move ${escapeHtml(metric.ticker)} up">&uarr;</button>
+          <button type="button" data-move="down" data-ticker="${escapeHtml(metric.ticker)}" ${index === currentReport.metrics.length - 1 ? "disabled" : ""} aria-label="Move ${escapeHtml(metric.ticker)} down">&darr;</button>
         </div>
       </div>
       <div class="card-body">
@@ -479,7 +642,7 @@ function buildChartSvg(history, levels, showClose = true) {
 
   return `
     <svg class="price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily close chart with marked price levels">
-      <rect class="chart-bg" x="0" y="0" width="${width}" height="${height}" rx="18"></rect>
+      <rect class="chart-bg" x="0" y="0" width="${width}" height="${height}" rx="8"></rect>
       ${gridValues.map((value) => {
         const y = yFor(value).toFixed(2);
         return `<line class="chart-grid-line" x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}"></line><text class="chart-axis-label" x="12" y="${Number(y) + 4}">${formatValue(value)}</text>`;
@@ -767,7 +930,7 @@ function sortLevels(levels, direction) {
 }
 
 function formatValue(value) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "&mdash;";
   if (typeof value === "string") return escapeHtml(value);
   return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -780,6 +943,11 @@ function formatDate(value) {
 function setStatus(message, type) {
   statusEl.textContent = message;
   statusEl.className = `status ${type}`.trim();
+}
+
+function setNewsStatus(message, type) {
+  newsStatusEl.textContent = message;
+  newsStatusEl.className = `status ${type}`.trim();
 }
 
 function filenameFromDisposition(header) {

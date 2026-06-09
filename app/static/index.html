@@ -8,57 +8,98 @@
   </head>
   <body>
     <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">Daily price levels</p>
-        <h1>Equity Levels Dashboard</h1>
-        <p>
-          Enter one ticker or a comma-separated watchlist, choose the metric groups you care about, and generate
-          organized cards that you can rearrange for your trading workflow.
-        </p>
-      </section>
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Investment workspace</p>
+          <h1>Equity Levels Dashboard</h1>
+        </div>
+        <nav class="view-nav" aria-label="Main views">
+          <button id="levels-nav" class="view-tab active" type="button" data-view="levels" aria-pressed="true">
+            Levels
+          </button>
+          <button id="news-nav" class="view-tab" type="button" data-view="news" aria-pressed="false">
+            News
+          </button>
+        </nav>
+      </header>
 
       <section class="panel" aria-labelledby="watchlist-heading">
         <div class="panel-header">
           <div>
             <h2 id="watchlist-heading">Watchlist</h2>
-            <p>Your input is persisted in this browser so you can return later.</p>
+            <p>One shared list drives both price levels and relevant ticker news.</p>
           </div>
           <span id="save-state" class="save-state">Saved locally</span>
         </div>
 
         <label for="tickers">Ticker symbols</label>
         <textarea id="tickers" rows="4" placeholder="AAPL, MSFT, NVDA"></textarea>
-
-        <div class="field-group" aria-labelledby="metrics-heading">
-          <div class="field-heading">
-            <h3 id="metrics-heading">Financial metrics to calculate</h3>
-            <p>Selections are saved in this browser and sent with both web and PDF reports.</p>
-          </div>
-          <div id="metric-selector" class="metric-picker"></div>
-        </div>
-
-        <div class="actions">
-          <button id="generate" class="primary" type="button">Generate Levels</button>
-        </div>
-        <p id="status" class="status" role="status" aria-live="polite"></p>
       </section>
 
-      <section class="panel results-panel" aria-labelledby="results-heading">
-        <div class="panel-header report-ribbon">
-          <div>
-            <h2 id="results-heading">Report</h2>
-            <p id="generated-at">No report generated yet. Cards can be dragged after a report is generated.</p>
-          </div>
-          <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
-        </div>
-        <div id="results" class="results empty">Enter tickers and click Generate Levels.</div>
-        <section id="charts-section" class="charts-section empty" aria-live="polite">
-          <div class="charts-header">
-            <div>
-              <h3>Charts</h3>
-              <p>Generate a report to view 365-day close charts with selected price levels.</p>
+      <section id="view-levels" class="view-panel active" aria-labelledby="levels-heading">
+        <section class="panel">
+          <div class="field-group" aria-labelledby="metrics-heading">
+            <div class="field-heading">
+              <div>
+                <h2 id="levels-heading">Investment Trading Levels</h2>
+                <p>Choose metric groups, generate report cards, and keep charts aligned to the watchlist order.</p>
+              </div>
             </div>
+            <div id="metric-selector" class="metric-picker"></div>
           </div>
+
+          <div class="actions">
+            <button id="generate" class="primary" type="button">Generate Levels</button>
+          </div>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="panel results-panel" aria-labelledby="results-heading">
+          <div class="panel-header report-ribbon">
+            <div>
+              <h2 id="results-heading">Report</h2>
+              <p id="generated-at">No report generated yet. Cards can be dragged after a report is generated.</p>
+            </div>
+            <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
+          </div>
+          <div id="results" class="results empty">Enter tickers and click Generate Levels.</div>
+          <section id="charts-section" class="charts-section empty" aria-live="polite">
+            <div class="charts-header">
+              <div>
+                <h3>Charts</h3>
+                <p>Generate a report to view 365-day close charts with selected price levels.</p>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section id="view-news" class="view-panel" aria-labelledby="news-heading" hidden>
+        <section class="panel news-panel">
+          <div class="panel-header report-ribbon">
+            <div>
+              <h2 id="news-heading">Stock News</h2>
+              <p id="news-generated-at">Use the shared watchlist to pull ticker-specific headlines plus broad US market news.</p>
+            </div>
+            <button id="refresh-news" class="primary" type="button">Refresh News</button>
+          </div>
+          <p id="news-status" class="status" role="status" aria-live="polite"></p>
+
+          <section class="news-section" aria-labelledby="market-news-heading">
+            <div class="section-heading">
+              <h3 id="market-news-heading">General Market News</h3>
+              <p>Major headlines related to the US stock market.</p>
+            </div>
+            <div id="market-news" class="news-list empty">Open the News view or refresh to load market headlines.</div>
+          </section>
+
+          <section class="news-section" aria-labelledby="watchlist-news-heading">
+            <div class="section-heading">
+              <h3 id="watchlist-news-heading">Watchlist News</h3>
+              <p>Headlines grouped by ticker from the same list used for levels.</p>
+            </div>
+            <div id="watchlist-news" class="ticker-news-grid empty">Enter tickers and refresh news.</div>
+          </section>
         </section>
       </section>
     </main>

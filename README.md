@@ -5,7 +5,10 @@ A simple web application that pulls free market data with `yfinance`, calculates
 ## Features
 
 - Browser-persisted ticker/watchlist input and metric selections using `localStorage`.
+- Two main app views: investment trading levels and stock news.
+- Shared watchlist input that drives both generated price-level reports and ticker-specific news.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
+- `Refresh News` button that retrieves watchlist headlines and general US stock market news.
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
 - Organized metric sections for session levels, ranges, technical indicators, and events.
@@ -16,6 +19,7 @@ A simple web application that pulls free market data with `yfinance`, calculates
 
 - Python 3.10 or newer.
 - A terminal opened at the repository root, which is the folder containing `pyproject.toml`.
+- Optional: a Finnhub API key in `FINNHUB_API_KEY` to use Finnhub for news before falling back to Yahoo Finance.
 
 If you already activated a virtual environment, do not run `python -m venv .venv` again inside that active environment. Create the virtual environment once, then activate it whenever you return to the project.
 
@@ -198,6 +202,16 @@ curl -X POST http://127.0.0.1:8000/api/levels \
 
 Omit `metrics` to calculate every available metric. Supported metric IDs are `previous_day`, `premarket`, `previous_session_vwap_5m`, `fifty_two_week`, `earnings_gap`, `first_five_minutes`, `swing_levels`, and `bollinger_bands`.
 
+Generate watchlist and market news:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/news \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":"AAPL, MSFT, NVDA","per_ticker":5,"general_count":8}'
+```
+
+The news endpoint works without extra configuration through Yahoo Finance data. If `FINNHUB_API_KEY` is set in the environment, the app tries Finnhub first for general market news and watchlist company news, then falls back to Yahoo Finance when Finnhub is unavailable or returns no articles.
+
 Download a PDF report:
 
 ```bash
@@ -245,7 +259,7 @@ The previous development extra included `httpx`, but the current test suite does
 
 ## Data source notes
 
-The starter implementation uses `yfinance` because it is free and quick to integrate. Free data sources can be delayed, rate-limited, unavailable for some symbols, or limited in extended-hours coverage. One-minute extended-hours data, earnings calendars, and current-day opening ranges can be especially inconsistent outside active market hours or for thinly traded symbols. The market data implementation is isolated in `app/services/market_data.py` so a future provider can be added without changing the API or frontend.
+The starter implementation uses `yfinance` because it is free and quick to integrate. News retrieval supports Yahoo Finance by default and can use Finnhub when `FINNHUB_API_KEY` is configured. Free data sources can be delayed, rate-limited, unavailable for some symbols, or limited in extended-hours coverage. One-minute extended-hours data, earnings calendars, current-day opening ranges, and free news endpoints can be especially inconsistent outside active market hours or for thinly traded symbols. Provider-specific code is isolated in `app/services/market_data.py` and `app/services/news.py` so future providers can be added without changing routes or frontend code.
 
 ## Architecture
 
@@ -255,6 +269,7 @@ app/
   models.py                Request/response schemas
   services/
     market_data.py         Data retrieval and financial calculations
+    news.py                Watchlist and general market news retrieval
     pdf_report.py          PDF rendering
   static/
     index.html             Single-page frontend
