@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 from typing import Any
 
 import pandas as pd
@@ -97,18 +98,55 @@ def render_app_chrome() -> str:
     st.markdown(
         """
         <style>
-          .block-container { padding-top: 1.25rem; }
+          :root {
+            color-scheme: light;
+          }
+          .stApp {
+            background: #eef2f1;
+            color: #111827;
+          }
+          header[data-testid="stHeader"] {
+            background: rgba(255, 255, 255, 0.96);
+            border-bottom: 1px solid #d5ddd9;
+          }
+          .block-container {
+            max-width: 1220px;
+            padding-top: 2.75rem;
+          }
           [data-testid="stSidebar"] {
+            background: #ffffff;
             border-right: 1px solid #d5ddd9;
             box-shadow: 10px 0 28px rgba(17, 24, 39, 0.08);
           }
-          .app-ribbon {
+          [data-testid="stSidebar"] * {
+            color: #111827;
+          }
+          [data-testid="stSidebar"] textarea {
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.5rem;
+            color: #111827;
+          }
+          [data-testid="stSidebar"] [data-baseweb="select"] > div {
+            background: #ffffff;
+            border-color: #cbd5e1;
+            border-radius: 0.5rem;
+          }
+          .streamlit-ribbon {
             align-items: center;
+            background: rgba(255, 255, 255, 0.96);
             border-bottom: 1px solid #d5ddd9;
-            display: flex;
-            gap: 0.75rem;
-            margin: -0.5rem 0 1rem;
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: 1fr 1.4fr;
+            margin: -1rem 0 1rem;
             padding: 0 0 1rem;
+          }
+          .streamlit-brand {
+            align-items: center;
+            display: inline-flex;
+            gap: 0.75rem;
+            min-height: 2.8rem;
           }
           .brand-mark {
             align-items: center;
@@ -136,18 +174,210 @@ def render_app_chrome() -> str:
             margin: 0 0 0.2rem;
             text-transform: uppercase;
           }
+          .streamlit-ribbon div[data-testid="stHorizontalBlock"] {
+            align-items: center;
+          }
+          div[data-testid="stHorizontalBlock"] button {
+            border-radius: 0.5rem;
+            font-weight: 800;
+          }
+          div[data-testid="stButton"] button[kind="primary"],
+          div[data-testid="stDownloadButton"] button[kind="primary"] {
+            background: #0f766e;
+            border: 1px solid #0f766e;
+            box-shadow: 0 10px 20px rgba(15, 118, 110, 0.18);
+            color: #ffffff;
+          }
+          div[data-testid="stButton"] button[kind="secondary"],
+          div[data-testid="stDownloadButton"] button[kind="secondary"] {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            color: #334155;
+          }
+          div[data-testid="stButton"] button:hover,
+          div[data-testid="stDownloadButton"] button:hover {
+            border-color: #0f766e;
+            transform: translateY(-1px);
+          }
+          .subapp-panel {
+            align-items: center;
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: 1.8fr 1fr;
+            margin: 1rem 0;
+            padding: 1.5rem;
+          }
+          .subapp-panel h1 {
+            color: #111827;
+            font-size: clamp(2rem, 5vw, 3.8rem);
+            line-height: 1.05;
+            margin: 0;
+          }
+          .subapp-panel p {
+            color: #334155;
+            font-size: 1rem;
+            margin: 0.8rem 0 0;
+          }
+          .streamlit-status {
+            color: #047857;
+            font-size: 1.1rem;
+            font-weight: 900;
+            line-height: 1.45;
+          }
+          .report-panel {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+            margin: 1rem 0;
+            padding: 1.5rem;
+          }
+          .report-header {
+            align-items: center;
+            display: flex;
+            gap: 1rem;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+          }
+          .report-header h2 {
+            color: #111827;
+            margin: 0 0 0.35rem;
+          }
+          .report-header p {
+            color: #334155;
+            margin: 0;
+          }
+          .metric-card {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+            margin-bottom: 1rem;
+            overflow: hidden;
+          }
+          .metric-card-header {
+            align-items: center;
+            background: #12312f;
+            color: #ffffff;
+            display: flex;
+            gap: 0.6rem;
+            justify-content: space-between;
+            padding: 0.95rem 1.1rem;
+          }
+          .metric-card-header h3 {
+            color: #ffffff;
+            letter-spacing: 0.06em;
+            margin: 0;
+          }
+          .drag-glyph {
+            color: #bfdbfe;
+            font-weight: 900;
+          }
+          .metric-card-body {
+            padding: 1rem;
+          }
+          .metric-section {
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            margin-bottom: 0.85rem;
+            overflow: hidden;
+          }
+          .metric-section-title {
+            background: #f1f5f9;
+            color: #334155;
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            padding: 0.7rem 0.85rem;
+            text-transform: uppercase;
+          }
+          .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .metric-cell {
+            border-top: 1px solid #e2e8f0;
+            padding: 0.8rem 0.95rem;
+          }
+          .metric-cell:nth-child(odd) {
+            border-right: 1px solid #e2e8f0;
+          }
+          .metric-label {
+            color: #64748b;
+            display: block;
+            font-size: 0.76rem;
+            font-weight: 800;
+            text-transform: uppercase;
+          }
+          .metric-value {
+            color: #020617;
+            display: block;
+            font-size: 1.12rem;
+            font-weight: 900;
+            margin-top: 0.2rem;
+          }
+          .news-shell {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+            margin: 1rem 0;
+            padding: 1.25rem;
+          }
+          .news-shell h2,
+          .news-shell h3,
+          .news-shell h4 {
+            color: #111827;
+          }
+          [data-testid="stVerticalBlockBorderWrapper"] {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+          }
+          div[data-testid="stVerticalBlock"]:has(.subapp-eyebrow):has(button):not(:has(.streamlit-brand)) {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+            margin: 1rem 0;
+            padding: 1.5rem;
+          }
+          @media (max-width: 760px) {
+            .subapp-panel {
+              grid-template-columns: 1fr;
+            }
+            .report-header {
+              align-items: stretch;
+              display: grid;
+            }
+            .metric-grid {
+              grid-template-columns: 1fr;
+            }
+            .metric-cell:nth-child(odd) {
+              border-right: 0;
+            }
+          }
         </style>
-        <div class="app-ribbon">
-          <span class="brand-mark">IT</span>
-          <span class="brand-name">Investment Trading</span>
-        </div>
         """,
         unsafe_allow_html=True,
     )
 
-    label_col, levels_col, news_col = st.columns([1.5, 1, 1], vertical_alignment="center")
-    with label_col:
-        st.caption("Subapps")
+    brand_col, levels_col, news_col = st.columns([2.2, 1, 1], vertical_alignment="center")
+    with brand_col:
+        st.markdown(
+            """
+            <div class="streamlit-brand">
+          <span class="brand-mark">IT</span>
+          <span class="brand-name">Investment Trading</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     with levels_col:
         st.button(
             "Trading Levels",
@@ -239,6 +469,115 @@ def metric_rows(metric: EquityMetrics) -> list[dict[str, str]]:
     return [{"Metric": label, "Value": fmt(value)} for label, value in rows]
 
 
+def metric_sections(metric: EquityMetrics) -> list[dict[str, list[tuple[str, Any]]]]:
+    """Group selected metrics into card sections that mirror the static app."""
+    selected = set(metric.selected_metrics)
+    sections: list[dict[str, list[tuple[str, Any]]]] = []
+
+    session_rows: list[tuple[str, Any]] = []
+    if "previous_day" in selected:
+        session_rows.extend(
+            [
+                ("Prev Open", metric.previous_day.open),
+                ("Prev High", metric.previous_day.high),
+                ("Prev Low", metric.previous_day.low),
+                ("Prev Close", metric.previous_day.close),
+            ]
+        )
+    if "premarket" in selected:
+        session_rows.extend(
+            [
+                ("Premarket High", metric.premarket.high),
+                ("Premarket Low", metric.premarket.low),
+            ]
+        )
+    if "first_five_minutes" in selected:
+        session_rows.extend(
+            [
+                ("First 5m High", metric.first_five_minutes.high),
+                ("First 5m Low", metric.first_five_minutes.low),
+            ]
+        )
+    if session_rows:
+        sections.append({"Session Levels": session_rows})
+
+    level_rows: list[tuple[str, Any]] = []
+    if "previous_session_vwap_5m" in selected:
+        level_rows.append(("VWAP 5m", metric.previous_session_vwap_5m))
+    if "fifty_two_week" in selected:
+        level_rows.extend(
+            [
+                ("52W High", metric.fifty_two_week.high),
+                ("52W Low", metric.fifty_two_week.low),
+            ]
+        )
+    if "swing_levels" in selected:
+        level_rows.extend(
+            [
+                ("Swing Highs", ", ".join(fmt(level) for level in sorted(metric.swing_levels.highs))),
+                ("Swing Lows", ", ".join(fmt(level) for level in sorted(metric.swing_levels.lows, reverse=True))),
+            ]
+        )
+    if level_rows:
+        sections.append({"Range & Levels": level_rows})
+
+    indicator_rows: list[tuple[str, Any]] = []
+    if "bollinger_bands" in selected:
+        indicator_rows.extend(
+            [
+                ("BB Upper", metric.bollinger_bands.upper),
+                ("BB Middle", metric.bollinger_bands.middle),
+                ("BB Lower", metric.bollinger_bands.lower),
+            ]
+        )
+    if "earnings_gap" in selected:
+        indicator_rows.extend(
+            [
+                ("Earnings Date", metric.earnings_gap.date.isoformat() if metric.earnings_gap.date else None),
+                ("Earnings Gap", metric.earnings_gap.gap),
+                ("Earnings Gap %", metric.earnings_gap.gap_percent),
+            ]
+        )
+    if indicator_rows:
+        sections.append({"Indicators & Events": indicator_rows})
+
+    return sections
+
+
+def render_metric_card(metric: EquityMetrics) -> None:
+    """Render one ticker card styled like the static app."""
+    section_html = []
+    for section in metric_sections(metric):
+        [(title, rows)] = section.items()
+        cells = "".join(
+            (
+                '<div class="metric-cell">'
+                f'<span class="metric-label">{escape(label)}</span>'
+                f'<span class="metric-value">{escape(fmt(value))}</span>'
+                "</div>"
+            )
+            for label, value in rows
+        )
+        section_html.append(
+            '<section class="metric-section">'
+            f'<div class="metric-section-title">{escape(title)}</div>'
+            f'<div class="metric-grid">{cells}</div>'
+            "</section>"
+        )
+
+    st.markdown(
+        (
+            '<article class="metric-card">'
+            '<div class="metric-card-header">'
+            f'<div><span class="drag-glyph">&vellip;</span> <h3 style="display:inline">{escape(metric.ticker)}</h3></div>'
+            "</div>"
+            f'<div class="metric-card-body">{"".join(section_html)}</div>'
+            "</article>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def chart_frame(metric: EquityMetrics) -> pd.DataFrame:
     """Build a daily close chart frame for Streamlit."""
     return pd.DataFrame(
@@ -248,23 +587,13 @@ def chart_frame(metric: EquityMetrics) -> pd.DataFrame:
 
 def render_metric(metric: EquityMetrics) -> None:
     """Render one ticker report section."""
-    st.subheader(metric.ticker)
-    rows = metric_rows(metric)
-    table_col, chart_col = st.columns([0.95, 1.25], gap="large")
-
-    with table_col:
-        if rows:
-            st.dataframe(rows, hide_index=True, use_container_width=True)
-        else:
-            st.info("No metric rows were calculated for this ticker.")
-
-    with chart_col:
-        history = chart_frame(metric)
-        if history.empty:
-            st.info("No daily close history was returned for this ticker.")
-        else:
+    render_metric_card(metric)
+    history = chart_frame(metric)
+    if history.empty:
+        st.info(f"No daily close history was returned for {metric.ticker}.")
+    else:
+        with st.expander(f"{metric.ticker} chart", expanded=False):
             st.line_chart(history, x="date", y="close", use_container_width=True)
-
     if metric.warnings:
         with st.expander(f"{len(metric.warnings)} data warning(s)"):
             for warning in metric.warnings:
@@ -339,24 +668,31 @@ def main() -> None:
         st.session_state.report = None
     if "news" not in st.session_state:
         st.session_state.news = None
+    if "levels_status" not in st.session_state:
+        st.session_state.levels_status = ""
 
     if view == LEVELS_VIEW:
-        heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
-        with heading_col:
-            st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
-            st.title("Investment Trading Levels")
-            st.caption("Generate price-level reports from the shared watchlist.")
-        with action_col:
-            generate = st.button("Generate Levels", type="primary", use_container_width=True)
+        with st.container():
+            heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
+            with heading_col:
+                st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
+                st.title("Investment Trading Levels")
+                st.caption("Generate price-level reports from the shared watchlist.")
+            with action_col:
+                generate = st.button("Generate Levels", type="primary", use_container_width=True)
+            levels_status_slot = st.empty()
+            if st.session_state.levels_status:
+                levels_status_slot.success(st.session_state.levels_status)
         refresh_news = False
     else:
-        heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
-        with heading_col:
-            st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
-            st.title("Stock News")
-            st.caption("Use the shared watchlist to pull ticker-specific headlines plus broad US market news.")
-        with action_col:
-            refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
+        with st.container():
+            heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
+            with heading_col:
+                st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
+                st.title("Stock News")
+                st.caption("Use the shared watchlist to pull ticker-specific headlines plus broad US market news.")
+            with action_col:
+                refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
         generate = False
 
     if generate:
@@ -368,6 +704,8 @@ def main() -> None:
 
         with st.spinner("Generating levels..."):
             st.session_state.report = build_report(tuple(request.tickers), tuple(request.metrics))
+        st.session_state.levels_status = "Report generated successfully."
+        levels_status_slot.success(st.session_state.levels_status)
 
     if refresh_news:
         try:
@@ -392,15 +730,21 @@ def main() -> None:
         st.info("Enter tickers and generate levels to view a report.")
         return
 
-    st.caption(f"Generated at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-    pdf = pdf_report_service().build_pdf(report)
-    st.download_button(
-        "Download PDF Report",
-        data=pdf,
-        file_name=f"equity-levels-{report.generated_at.strftime('%Y%m%d-%H%M%S')}.pdf",
-        mime="application/pdf",
-    )
+    with st.container(border=True):
+        header_col, download_col = st.columns([2.2, 1], vertical_alignment="center")
+        with header_col:
+            st.header("Report")
+            st.caption(f"Generated at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        with download_col:
+            pdf = pdf_report_service().build_pdf(report)
+            st.download_button(
+                "Download PDF Report",
+                data=pdf,
+                file_name=f"equity-levels-{report.generated_at.strftime('%Y%m%d-%H%M%S')}.pdf",
+                mime="application/pdf",
+                type="secondary",
+                use_container_width=True,
+            )
 
     for metric in report.metrics:
         render_metric(metric)
