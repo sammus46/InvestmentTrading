@@ -19,16 +19,19 @@
           <span class="brand-mark" aria-hidden="true">IT</span>
           <span>Investment Trading</span>
         </div>
-        <nav class="site-nav" aria-label="Subapps">
-          <button id="levels-nav" class="nav-link active" type="button" data-view="levels" aria-current="page">
-            Trading Levels
-          </button>
-          <button id="news-nav" class="nav-link" type="button" data-view="news">
-            Stock News
-          </button>
-        </nav>
       </div>
     </header>
+
+    <nav class="view-nav-ribbon" aria-label="Primary views">
+      <div class="view-nav-inner site-nav">
+        <button id="levels-nav" class="nav-link active" type="button" data-view="levels" aria-current="page">
+          Trading Levels
+        </button>
+        <button id="news-nav" class="nav-link" type="button" data-view="news">
+          Stock News
+        </button>
+      </div>
+    </nav>
 
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
     <aside id="controls-drawer" class="controls-drawer" aria-labelledby="controls-heading" aria-hidden="true">
@@ -60,9 +63,8 @@
     <main class="shell">
 
       <section id="view-levels" class="view-panel active" aria-labelledby="levels-heading">
-        <section class="panel subapp-hero">
+        <section class="panel view-hero">
           <div>
-            <p class="eyebrow">Subapp</p>
             <h1 id="levels-heading">Investment Trading Levels</h1>
             <p>Generate price-level reports from the shared watchlist.</p>
           </div>
@@ -96,7 +98,6 @@
         <section class="panel news-panel">
           <div class="panel-header report-ribbon">
             <div>
-              <p class="eyebrow">Subapp</p>
               <h1 id="news-heading">Stock News</h1>
               <p id="news-generated-at">Use the shared watchlist to pull ticker-specific headlines plus broad US market news.</p>
             </div>
