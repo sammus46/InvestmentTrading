@@ -8,8 +8,9 @@ from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.models import GenerateRequest, GenerateResponse
+from app.models import GenerateRequest, GenerateResponse, NewsRequest, NewsResponse
 from app.services.market_data import MarketDataService
+from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 
 app = FastAPI(
@@ -18,6 +19,7 @@ app = FastAPI(
     version="0.1.0",
 )
 market_data = MarketDataService()
+news_service = NewsService()
 pdf_reports = PdfReportService()
 
 
@@ -33,6 +35,16 @@ def generate_levels(request: GenerateRequest) -> GenerateResponse:
     return GenerateResponse(
         generated_at=datetime.now(timezone.utc),
         metrics=market_data.build_metrics(request.tickers, request.metrics),
+    )
+
+
+@app.post("/api/news", response_model=NewsResponse)
+def generate_news(request: NewsRequest) -> NewsResponse:
+    """Generate watchlist and general market news."""
+    return news_service.build_news(
+        request.tickers,
+        per_ticker=request.per_ticker,
+        general_count=request.general_count,
     )
 
 

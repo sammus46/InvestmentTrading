@@ -5,7 +5,10 @@ A simple web application that pulls free market data with `yfinance`, calculates
 ## Features
 
 - Browser-persisted ticker/watchlist input and metric selections using `localStorage`.
+- Two main app views: investment trading levels and stock news.
+- Shared watchlist input that drives both generated price-level reports and ticker-specific news.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
+- `Refresh News` button that retrieves watchlist headlines and general US stock market news.
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
 - Organized metric sections for session levels, ranges, technical indicators, and events.
@@ -198,6 +201,14 @@ curl -X POST http://127.0.0.1:8000/api/levels \
 
 Omit `metrics` to calculate every available metric. Supported metric IDs are `previous_day`, `premarket`, `previous_session_vwap_5m`, `fifty_two_week`, `earnings_gap`, `first_five_minutes`, `swing_levels`, and `bollinger_bands`.
 
+Generate watchlist and market news:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/news \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":"AAPL, MSFT, NVDA","per_ticker":5,"general_count":8}'
+```
+
 Download a PDF report:
 
 ```bash
@@ -255,6 +266,7 @@ app/
   models.py                Request/response schemas
   services/
     market_data.py         Data retrieval and financial calculations
+    news.py                Watchlist and general market news retrieval
     pdf_report.py          PDF rendering
   static/
     index.html             Single-page frontend
