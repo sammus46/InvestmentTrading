@@ -105,13 +105,31 @@ def render_app_chrome() -> str:
             background: #eef2f1;
             color: #111827;
           }
+          .stApp,
+          .stApp p,
+          .stApp label,
+          .stApp li,
+          .stApp div[data-testid="stMarkdownContainer"] {
+            color: #111827;
+          }
+          .stApp a {
+            color: #0284c7;
+            font-weight: 800;
+          }
+          .stApp a:hover {
+            color: #0f766e;
+          }
+          div[data-testid="stCaptionContainer"],
+          div[data-testid="stCaptionContainer"] * {
+            color: #64748b !important;
+          }
           header[data-testid="stHeader"] {
             background: rgba(255, 255, 255, 0.96);
             border-bottom: 1px solid #d5ddd9;
           }
           .block-container {
             max-width: 1220px;
-            padding-top: 2.75rem;
+            padding-top: 2rem;
           }
           [data-testid="stSidebar"] {
             background: #ffffff;
@@ -132,15 +150,46 @@ def render_app_chrome() -> str:
             border-color: #cbd5e1;
             border-radius: 0.5rem;
           }
-          .streamlit-ribbon {
+          [data-testid="stSidebarCollapseButton"],
+          [data-testid="stSidebarCollapsedControl"],
+          [data-testid="stSidebarCollapseButton"] button,
+          [data-testid="stSidebarCollapsedControl"] button {
+            background: #ffffff !important;
+            border: 1px solid #d5ddd9 !important;
+            border-radius: 0.5rem !important;
+            box-shadow: 0 6px 16px rgba(17, 24, 39, 0.12) !important;
+            color: #111827 !important;
+            opacity: 1 !important;
+          }
+          [data-testid="stSidebarCollapseButton"] svg,
+          [data-testid="stSidebarCollapsedControl"] svg,
+          [data-testid="stSidebarCollapseButton"] svg *,
+          [data-testid="stSidebarCollapsedControl"] svg * {
+            color: #111827 !important;
+            fill: #111827 !important;
+            stroke: #111827 !important;
+          }
+          [data-testid="stSidebarCollapseButton"]:hover,
+          [data-testid="stSidebarCollapsedControl"]:hover {
+            background: #f0fdfa !important;
+            border-color: #99f6e4 !important;
+          }
+          .streamlit-brand-ribbon {
             align-items: center;
             background: rgba(255, 255, 255, 0.96);
             border-bottom: 1px solid #d5ddd9;
-            display: grid;
-            gap: 1rem;
-            grid-template-columns: 1fr 1.4fr;
+            display: flex;
             margin: -1rem 0 1rem;
-            padding: 0 0 1rem;
+            min-height: 4.25rem;
+            padding: 0;
+          }
+          div[data-testid="stHorizontalBlock"]:has(.streamlit-nav-marker) {
+            align-items: center;
+            background: rgba(255, 255, 255, 0.94);
+            border-bottom: 1px solid #d5ddd9;
+            margin: -1rem 0 1rem;
+            min-height: 3.25rem;
+            padding: 0;
           }
           .streamlit-brand {
             align-items: center;
@@ -153,7 +202,7 @@ def render_app_chrome() -> str:
             background: #ccfbf1;
             border: 1px solid #99f6e4;
             border-radius: 0.5rem;
-            color: #0f766e;
+            color: #0f766e !important;
             display: inline-flex;
             font-size: 0.78rem;
             font-weight: 900;
@@ -167,16 +216,6 @@ def render_app_chrome() -> str:
             font-size: 1.25rem;
             font-weight: 900;
           }
-          .subapp-eyebrow {
-            color: #0f766e;
-            font-size: 0.78rem;
-            font-weight: 800;
-            margin: 0 0 0.2rem;
-            text-transform: uppercase;
-          }
-          .streamlit-ribbon div[data-testid="stHorizontalBlock"] {
-            align-items: center;
-          }
           div[data-testid="stHorizontalBlock"] button {
             border-radius: 0.5rem;
             font-weight: 800;
@@ -188,36 +227,40 @@ def render_app_chrome() -> str:
             box-shadow: 0 10px 20px rgba(15, 118, 110, 0.18);
             color: #ffffff;
           }
+          div[data-testid="stButton"] button[kind="primary"] *,
+          div[data-testid="stDownloadButton"] button[kind="primary"] * {
+            color: #ffffff !important;
+          }
           div[data-testid="stButton"] button[kind="secondary"],
           div[data-testid="stDownloadButton"] button[kind="secondary"] {
             background: #ffffff;
             border: 1px solid #d5ddd9;
             color: #334155;
           }
+          div[data-testid="stButton"] button[kind="secondary"] *,
+          div[data-testid="stDownloadButton"] button[kind="secondary"] * {
+            color: #334155 !important;
+          }
           div[data-testid="stButton"] button:hover,
           div[data-testid="stDownloadButton"] button:hover {
             border-color: #0f766e;
             transform: translateY(-1px);
           }
-          .subapp-panel {
-            align-items: center;
+          div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)) {
             background: #ffffff;
             border: 1px solid #d5ddd9;
             border-radius: 0.5rem;
             box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
-            display: grid;
-            gap: 1rem;
-            grid-template-columns: 1.8fr 1fr;
             margin: 1rem 0;
             padding: 1.5rem;
           }
-          .subapp-panel h1 {
+          div[data-testid="stVerticalBlock"]:has(.view-hero-marker) h1 {
             color: #111827;
             font-size: clamp(2rem, 5vw, 3.8rem);
             line-height: 1.05;
             margin: 0;
           }
-          .subapp-panel p {
+          div[data-testid="stVerticalBlock"]:has(.view-hero-marker) p {
             color: #334155;
             font-size: 1rem;
             margin: 0.8rem 0 0;
@@ -320,18 +363,85 @@ def render_app_chrome() -> str:
             font-weight: 900;
             margin-top: 0.2rem;
           }
-          .news-shell {
+          .streamlit-news-card {
             background: #ffffff;
-            border: 1px solid #d5ddd9;
+            border: 1px solid #dbe3ef;
             border-radius: 0.5rem;
-            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
-            margin: 1rem 0;
-            padding: 1.25rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+            display: grid;
+            gap: 0.65rem;
+            margin: 0 0 0.75rem;
+            overflow: hidden;
+            padding: 1rem;
           }
-          .news-shell h2,
-          .news-shell h3,
-          .news-shell h4 {
-            color: #111827;
+          .streamlit-news-card.with-image {
+            grid-template-columns: 9rem 1fr;
+          }
+          .streamlit-news-card img {
+            border-radius: 0.45rem;
+            height: 100%;
+            min-height: 7rem;
+            object-fit: cover;
+            width: 100%;
+          }
+          .streamlit-news-body {
+            display: grid;
+            gap: 0.45rem;
+          }
+          .streamlit-news-title {
+            color: #111827 !important;
+            font-size: 1rem;
+            font-weight: 900;
+            line-height: 1.35;
+            text-decoration: none;
+          }
+          .streamlit-news-title:hover {
+            color: #0f766e;
+            text-decoration: underline;
+          }
+          .streamlit-news-meta,
+          .streamlit-news-related {
+            color: #64748b !important;
+            font-size: 0.78rem;
+            font-weight: 800;
+          }
+          .streamlit-news-summary {
+            color: #334155 !important;
+            line-height: 1.55;
+            margin: 0;
+          }
+          .streamlit-related-tickers {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+          }
+          .streamlit-related-tickers span {
+            background: #fef3c7;
+            border: 1px solid #fde68a;
+            border-radius: 999px;
+            color: #92400e !important;
+            font-size: 0.72rem;
+            font-weight: 900;
+            padding: 0.25rem 0.45rem;
+          }
+          div[data-testid="stExpander"] details {
+            background: #ffffff !important;
+            border: 1px solid #dbe3ef !important;
+            border-radius: 0.5rem !important;
+            overflow: hidden;
+          }
+          div[data-testid="stExpander"] summary {
+            background: #f8fafc !important;
+            border-bottom: 1px solid #e2e8f0 !important;
+            color: #111827 !important;
+            font-weight: 900 !important;
+          }
+          div[data-testid="stExpander"] summary * {
+            color: #111827 !important;
+          }
+          div[data-testid="stAlert"] *,
+          div[data-testid="stAlert"] p {
+            color: inherit !important;
           }
           [data-testid="stVerticalBlockBorderWrapper"] {
             background: #ffffff;
@@ -339,16 +449,8 @@ def render_app_chrome() -> str:
             border-radius: 0.5rem;
             box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
           }
-          div[data-testid="stVerticalBlock"]:has(.subapp-eyebrow):has(button):not(:has(.streamlit-brand)) {
-            background: #ffffff;
-            border: 1px solid #d5ddd9;
-            border-radius: 0.5rem;
-            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
-            margin: 1rem 0;
-            padding: 1.5rem;
-          }
           @media (max-width: 760px) {
-            .subapp-panel {
+            .streamlit-news-card.with-image {
               grid-template-columns: 1fr;
             }
             .report-header {
@@ -367,17 +469,21 @@ def render_app_chrome() -> str:
         unsafe_allow_html=True,
     )
 
-    brand_col, levels_col, news_col = st.columns([2.2, 1, 1], vertical_alignment="center")
-    with brand_col:
-        st.markdown(
-            """
-            <div class="streamlit-brand">
-          <span class="brand-mark">IT</span>
-          <span class="brand-name">Investment Trading</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        """
+        <div class="streamlit-brand-ribbon">
+          <div class="streamlit-brand">
+            <span class="brand-mark">IT</span>
+            <span class="brand-name">Investment Trading</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    nav_spacer, levels_col, news_col = st.columns([2.2, 1, 1], vertical_alignment="center")
+    with nav_spacer:
+        st.markdown('<span class="streamlit-nav-marker"></span>', unsafe_allow_html=True)
     with levels_col:
         st.button(
             "Trading Levels",
@@ -399,7 +505,7 @@ def render_app_chrome() -> str:
 
 
 def set_active_view(view: str) -> None:
-    """Persist the active Streamlit subapp."""
+    """Persist the active Streamlit view."""
     st.session_state.active_view = view
 
 
@@ -601,19 +707,45 @@ def render_metric(metric: EquityMetrics) -> None:
 
 
 def render_article(article: NewsArticle) -> None:
-    """Render one normalized news article."""
+    """Render one normalized news article as a readable light-theme card."""
     published = article.published_at.astimezone().strftime("%Y-%m-%d %H:%M") if article.published_at else None
-    meta = " - ".join(item for item in [article.publisher, published] if item)
+    meta = " | ".join(item for item in [article.publisher, published] if item)
+    classes = "streamlit-news-card with-image" if article.thumbnail_url else "streamlit-news-card"
+    image_html = (
+        f'<img src="{escape(article.thumbnail_url)}" alt="" loading="lazy" />'
+        if article.thumbnail_url
+        else ""
+    )
     if article.url:
-        st.markdown(f"**[{article.title}]({article.url})**")
+        title_html = (
+            f'<a class="streamlit-news-title" href="{escape(article.url)}" '
+            f'target="_blank" rel="noopener noreferrer">{escape(article.title)}</a>'
+        )
     else:
-        st.markdown(f"**{article.title}**")
-    if meta:
-        st.caption(meta)
-    if article.summary:
-        st.write(article.summary)
+        title_html = f'<span class="streamlit-news-title">{escape(article.title)}</span>'
+    meta_html = f'<div class="streamlit-news-meta">{escape(meta)}</div>' if meta else ""
+    summary_html = f'<p class="streamlit-news-summary">{escape(article.summary)}</p>' if article.summary else ""
+    related_html = ""
     if article.related_tickers:
-        st.caption("Related: " + ", ".join(article.related_tickers[:8]))
+        ticker_spans = "".join(
+            f"<span>{escape(ticker)}</span>" for ticker in article.related_tickers[:8]
+        )
+        related_html = (
+            '<div class="streamlit-news-related">Related</div>'
+            f'<div class="streamlit-related-tickers">{ticker_spans}</div>'
+        )
+
+    st.markdown(
+        (
+            f'<article class="{classes}">'
+            f"{image_html}"
+            '<div class="streamlit-news-body">'
+            f"{title_html}{meta_html}{summary_html}{related_html}"
+            "</div>"
+            "</article>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_news(report: NewsResponse) -> None:
@@ -625,8 +757,7 @@ def render_news(report: NewsResponse) -> None:
     st.subheader("General Market News")
     if report.general_market:
         for article in report.general_market:
-            with st.container(border=True):
-                render_article(article)
+            render_article(article)
     else:
         st.info("No general market headlines were returned.")
 
@@ -638,7 +769,6 @@ def render_news(report: NewsResponse) -> None:
             if ticker_group.articles:
                 for article in ticker_group.articles:
                     render_article(article)
-                    st.divider()
             else:
                 st.info("No recent headlines returned.")
 
@@ -675,7 +805,7 @@ def main() -> None:
         with st.container():
             heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
             with heading_col:
-                st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
+                st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Investment Trading Levels")
                 st.caption("Generate price-level reports from the shared watchlist.")
             with action_col:
@@ -688,7 +818,7 @@ def main() -> None:
         with st.container():
             heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
             with heading_col:
-                st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
+                st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Stock News")
                 st.caption("Use the shared watchlist to pull ticker-specific headlines plus broad US market news.")
             with action_col:
