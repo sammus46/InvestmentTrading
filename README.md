@@ -1,6 +1,6 @@
 # Investment Trading Levels
 
-A simple FastAPI application that pulls free market data with `yfinance`, calculates daily equity price levels, and serves a lightweight browser UI for watchlist-based reports.
+A simple web application that pulls free market data with `yfinance`, calculates daily equity price levels, and serves watchlist-based reports. It includes the original FastAPI/static UI plus a Streamlit UI that is easy to run on a remote server or Streamlit hosting.
 
 ## Features
 
@@ -10,6 +10,7 @@ A simple FastAPI application that pulls free market data with `yfinance`, calcul
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
 - Organized metric sections for session levels, ranges, technical indicators, and events.
 - Metrics currently include previous-session OHLC, premarket and opening ranges, previous-session VWAP, 52-week range, earnings gap, swing highs/lows, and Bollinger Bands.
+- Streamlit app entry point for remote-friendly deployment and browser access.
 
 ## Requirements
 
@@ -44,6 +45,14 @@ python -m uvicorn app.main:app --reload
 
 Open <http://127.0.0.1:8000> in your browser.
 
+To run the Streamlit app instead:
+
+```bat
+python -m streamlit run app/streamlit_app.py
+```
+
+Open <http://localhost:8501> in your browser.
+
 ## Quickstart on Windows PowerShell
 
 Run these commands one line at a time from the repository root:
@@ -69,6 +78,14 @@ python -m uvicorn app.main:app --reload
 ```
 
 Open <http://127.0.0.1:8000> in your browser.
+
+To run the Streamlit app instead:
+
+```powershell
+python -m streamlit run app/streamlit_app.py
+```
+
+Open <http://localhost:8501> in your browser.
 
 ## Quickstart on macOS and Linux
 
@@ -96,6 +113,14 @@ python -m uvicorn app.main:app --reload
 
 Open <http://127.0.0.1:8000> in your browser. The first install can take a while because `pandas`, `yfinance`, and `reportlab` include compiled wheels or sizable transitive dependencies. Subsequent installs should be faster because pip reuses its local download cache.
 
+To run the Streamlit app instead:
+
+```bash
+python -m streamlit run app/streamlit_app.py
+```
+
+Open <http://localhost:8501> in your browser.
+
 If pip reports `Package 'investment-trading' requires a different Python`, check the virtual environment's interpreter with `python --version` and recreate it with Python 3.10 or newer before reinstalling.
 
 For test/development tools, install the optional development extra after activating the virtual environment:
@@ -116,6 +141,34 @@ python -m pip install -e ".[dev]"
 - `'source' is not recognized` means you are in Windows Command Prompt. Use `.venv\Scripts\activate.bat` instead. In PowerShell, use `.\.venv\Scripts\Activate.ps1`.
 - `requires a different Python` means the Python used to create `.venv` is outside the supported version range. This project supports Python 3.10 or newer. Check with `python --version` after activation.
 - `'uvicorn' is not recognized` usually means installation did not finish successfully. Rerun `python -m pip install -e .`, then start the app with `python -m uvicorn app.main:app --reload`.
+- `No module named streamlit` means the active virtual environment does not have the project dependencies installed. With `.venv` activated, rerun `python -m pip install -e .`, then start the Streamlit UI with `python -m streamlit run app/streamlit_app.py`.
+
+## Remote access
+
+You now have two web app entry points:
+
+- Streamlit UI: `app/streamlit_app.py`
+- FastAPI/static UI and JSON/PDF API: `app.main:app`
+
+For a private server, VM, or home machine where you can open a firewall port, run Streamlit on all network interfaces:
+
+```bash
+python -m streamlit run app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+```
+
+Then browse to `http://YOUR_SERVER_IP:8501`.
+
+You can also expose the existing FastAPI app remotely:
+
+```bash
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Then browse to `http://YOUR_SERVER_IP:8000`.
+
+For public internet access, put the app behind authentication or a private tunnel such as a VPN, Tailscale, Cloudflare Tunnel, or a reverse proxy with login. The app pulls market data and has no built-in user accounts, so avoid exposing it as an unauthenticated public service.
+
+For Streamlit Community Cloud, push this repository to GitHub, choose `app/streamlit_app.py` as the main file, and let the platform install dependencies from `pyproject.toml`.
 
 
 ## Generated metrics
@@ -185,6 +238,7 @@ The runtime dependency list is intentionally small and maps to imports used by t
 | `lxml` | Provides the optional HTML/XML parser used by yfinance earnings-calendar lookups. |
 | `reportlab` | Builds the downloadable PDF report. |
 | `pydantic` | Provides the request/response schemas and ticker normalization validators. |
+| `streamlit` | Serves the remote-friendly interactive web app. |
 | `pytest` (`dev` extra only) | Runs the unit tests; it is not required to launch the web app. |
 
 The previous development extra included `httpx`, but the current test suite does not import it, so it was removed to avoid installing an unused package.
