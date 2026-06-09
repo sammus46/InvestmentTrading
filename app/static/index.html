@@ -74,6 +74,27 @@
           <p id="status" class="status" role="status" aria-live="polite"></p>
         </section>
 
+        <section class="panel scanner-panel" aria-labelledby="scanner-heading">
+          <div class="panel-header report-ribbon">
+            <div>
+              <h2 id="scanner-heading">Scanner</h2>
+              <p id="scanner-generated-at">Run the setup scanner and intraday pattern analysis for the shared watchlist.</p>
+            </div>
+            <button id="run-scanner" class="primary" type="button">Run Scanner</button>
+          </div>
+          <p id="scanner-status" class="status" role="status" aria-live="polite"></p>
+          <div class="scanner-tabs" role="tablist" aria-label="Scanner sections">
+            <button id="scanner-tab-setup" class="scanner-tab active" type="button" data-scanner-tab="setup" role="tab" aria-controls="scanner-setup" aria-selected="true">Setup Scanner</button>
+            <button id="scanner-tab-patterns" class="scanner-tab" type="button" data-scanner-tab="patterns" role="tab" aria-controls="scanner-patterns" aria-selected="false">Intraday Pattern Analysis</button>
+          </div>
+          <section id="scanner-setup" class="scanner-section active" role="tabpanel" aria-labelledby="scanner-tab-setup">
+            <div id="scanner-setup-results" class="scanner-empty">Run the scanner to view setup scores, support/resistance zones, and risk/reward.</div>
+          </section>
+          <section id="scanner-patterns" class="scanner-section" role="tabpanel" aria-labelledby="scanner-tab-patterns" hidden>
+            <div id="scanner-pattern-results" class="scanner-empty">Run the scanner to view recurring intraday dip patterns.</div>
+          </section>
+        </section>
+
         <section class="panel results-panel" aria-labelledby="results-heading">
           <div class="panel-header report-ribbon">
             <div>

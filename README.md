@@ -9,6 +9,7 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Shared watchlist input that drives both generated price-level reports and ticker-specific news.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
 - `Refresh News` button that retrieves watchlist headlines and general US stock market news.
+- `Run Scanner` button that manually scans the shared watchlist for setup scores, support/resistance zones, risk/reward, and recurring intraday dip patterns.
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
 - Organized metric sections for session levels, ranges, technical indicators, and events.
@@ -187,6 +188,7 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Latest available session first five-minute regular-session high and low.
 - Major daily swing highs and lows, with nearby levels merged, prioritized by distance from the latest completed close, and displayed in numerical order.
 - Daily Bollinger Bands.
+- Scanner-only calculations include latest price, today VWAP, 1-month high/low, SMA/EMA levels, classic pivots, Fibonacci retracements, VWAP extension, relative strength versus SPY/sector ETF, support/resistance confidence zones, reclaim/rejection signals, and intraday pattern summaries.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
 - Web and PDF charts showing up to the latest 365 completed daily closes per ticker, with selected price levels overlaid using a consistent clickable color legend. The web charts include a dual-handle x-axis zoom slider, hover tooltips for close points, preset range buttons, and follow the same ticker order as the draggable metric cards.
 
@@ -211,6 +213,16 @@ curl -X POST http://127.0.0.1:8000/api/news \
 ```
 
 The news endpoint works without extra configuration through Yahoo Finance data. If `FINNHUB_API_KEY` is set in the environment, the app tries Finnhub first for general market news and watchlist company news, then falls back to Yahoo Finance when Finnhub is unavailable or returns no articles.
+
+Run the scanner:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/scanner \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":"AAPL, MSFT, NVDA","include_setup":true,"include_patterns":true}'
+```
+
+The scanner uses the same watchlist input as the levels and news views. It runs only when requested because free intraday data can be rate-limited and the full pattern analysis fetches multiple weeks of 5-minute bars.
 
 Download a PDF report:
 
