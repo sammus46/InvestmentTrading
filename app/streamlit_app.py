@@ -36,7 +36,15 @@ METRIC_OPTIONS: dict[MetricName, str] = {
 }
 
 
-st.set_page_config(page_title="Investment Trading Levels", layout="wide")
+LEVELS_VIEW = "Investment Trading Levels"
+NEWS_VIEW = "Stock News"
+
+
+st.set_page_config(
+    page_title="Investment Trading",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
 @st.cache_resource
@@ -79,6 +87,90 @@ def fmt(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:,.2f}"
     return str(value)
+
+
+def render_app_chrome() -> str:
+    """Render app-level brand/navigation and return the active view."""
+    if "active_view" not in st.session_state:
+        st.session_state.active_view = LEVELS_VIEW
+
+    st.markdown(
+        """
+        <style>
+          .block-container { padding-top: 1.25rem; }
+          [data-testid="stSidebar"] {
+            border-right: 1px solid #d5ddd9;
+            box-shadow: 10px 0 28px rgba(17, 24, 39, 0.08);
+          }
+          .app-ribbon {
+            align-items: center;
+            border-bottom: 1px solid #d5ddd9;
+            display: flex;
+            gap: 0.75rem;
+            margin: -0.5rem 0 1rem;
+            padding: 0 0 1rem;
+          }
+          .brand-mark {
+            align-items: center;
+            background: #ccfbf1;
+            border: 1px solid #99f6e4;
+            border-radius: 0.5rem;
+            color: #0f766e;
+            display: inline-flex;
+            font-size: 0.78rem;
+            font-weight: 900;
+            height: 2.25rem;
+            justify-content: center;
+            letter-spacing: 0.05em;
+            width: 2.25rem;
+          }
+          .brand-name {
+            color: inherit;
+            font-size: 1.25rem;
+            font-weight: 900;
+          }
+          .subapp-eyebrow {
+            color: #0f766e;
+            font-size: 0.78rem;
+            font-weight: 800;
+            margin: 0 0 0.2rem;
+            text-transform: uppercase;
+          }
+        </style>
+        <div class="app-ribbon">
+          <span class="brand-mark">IT</span>
+          <span class="brand-name">Investment Trading</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    label_col, levels_col, news_col = st.columns([1.5, 1, 1], vertical_alignment="center")
+    with label_col:
+        st.caption("Subapps")
+    with levels_col:
+        st.button(
+            "Trading Levels",
+            type="primary" if st.session_state.active_view == LEVELS_VIEW else "secondary",
+            use_container_width=True,
+            on_click=set_active_view,
+            args=(LEVELS_VIEW,),
+        )
+    with news_col:
+        st.button(
+            "Stock News",
+            type="primary" if st.session_state.active_view == NEWS_VIEW else "secondary",
+            use_container_width=True,
+            on_click=set_active_view,
+            args=(NEWS_VIEW,),
+        )
+
+    return str(st.session_state.active_view)
+
+
+def set_active_view(view: str) -> None:
+    """Persist the active Streamlit subapp."""
+    st.session_state.active_view = view
 
 
 def metric_rows(metric: EquityMetrics) -> list[dict[str, str]]:
@@ -182,7 +274,7 @@ def render_metric(metric: EquityMetrics) -> None:
 def render_article(article: NewsArticle) -> None:
     """Render one normalized news article."""
     published = article.published_at.astimezone().strftime("%Y-%m-%d %H:%M") if article.published_at else None
-    meta = " · ".join(item for item in [article.publisher, published] if item)
+    meta = " - ".join(item for item in [article.publisher, published] if item)
     if article.url:
         st.markdown(f"**[{article.title}]({article.url})**")
     else:
@@ -211,7 +303,7 @@ def render_news(report: NewsResponse) -> None:
 
     st.subheader("Watchlist News")
     for ticker_group in report.ticker_news:
-        with st.expander(f"{ticker_group.ticker} · {len(ticker_group.articles)} headline(s)", expanded=True):
+        with st.expander(f"{ticker_group.ticker} - {len(ticker_group.articles)} headline(s)", expanded=True):
             for warning in ticker_group.warnings:
                 st.warning(warning)
             if ticker_group.articles:
@@ -230,28 +322,42 @@ def selected_metric_ids(labels: list[str]) -> list[MetricName]:
 
 def main() -> None:
     """Run the Streamlit application."""
-    st.title("Investment Trading Workspace")
+    view = render_app_chrome()
 
     with st.sidebar:
-        view = st.radio("View", ["Investment Trading Levels", "Stock News"])
+        st.header("Controls")
         ticker_text = st.text_area("Tickers", value="AAPL, MSFT, NVDA", height=110)
         selected_labels: list[str] = []
-        generate = False
-        refresh_news = False
-        if view == "Investment Trading Levels":
+        if view == LEVELS_VIEW:
             selected_labels = st.multiselect(
                 "Metrics",
                 options=list(METRIC_OPTIONS.values()),
                 default=[METRIC_OPTIONS[metric_id] for metric_id in DEFAULT_METRICS],
             )
-            generate = st.button("Generate Levels", type="primary", use_container_width=True)
-        else:
-            refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
 
     if "report" not in st.session_state:
         st.session_state.report = None
     if "news" not in st.session_state:
         st.session_state.news = None
+
+    if view == LEVELS_VIEW:
+        heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
+        with heading_col:
+            st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
+            st.title("Investment Trading Levels")
+            st.caption("Generate price-level reports from the shared watchlist.")
+        with action_col:
+            generate = st.button("Generate Levels", type="primary", use_container_width=True)
+        refresh_news = False
+    else:
+        heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
+        with heading_col:
+            st.markdown('<p class="subapp-eyebrow">Subapp</p>', unsafe_allow_html=True)
+            st.title("Stock News")
+            st.caption("Use the shared watchlist to pull ticker-specific headlines plus broad US market news.")
+        with action_col:
+            refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
+        generate = False
 
     if generate:
         try:
@@ -273,7 +379,7 @@ def main() -> None:
         with st.spinner("Loading news..."):
             st.session_state.news = build_news(tuple(request.tickers))
 
-    if view == "Stock News":
+    if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
         if news is None:
             st.info("Enter tickers and refresh news.")
