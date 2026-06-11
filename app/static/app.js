@@ -1,8 +1,7 @@
 const STORAGE_KEY = "equity-levels-watchlist";
-const METRICS_STORAGE_KEY = "equity-levels-selected-metrics";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
-const DEFAULT_CHART_WINDOW_POINTS = 365;
+const CHART_SETTINGS_STORAGE_KEY = "equity-levels-chart-settings";
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
@@ -14,16 +13,46 @@ const NEWS_CATEGORY_LABELS = {
   general: "General News",
 };
 
-const LEVEL_STYLES = {
-  previous: { color: "#2563eb", width: 1.35, dash: "6 5", legend: "Previous session" },
-  premarket: { color: "#ea580c", width: 1.35, dash: "4 4", legend: "Premarket" },
-  opening: { color: "#7c3aed", width: 1.35, dash: "3 5", legend: "First 5m" },
-  vwap: { color: "#0891b2", width: 1.75, dash: "", legend: "VWAP" },
-  fiftyTwo: { color: "#b91c1c", width: 2, dash: "", legend: "52-week high/low" },
-  swingHigh: { color: "#16a34a", width: 1.35, dash: "8 4", legend: "Swing highs" },
-  swingLow: { color: "#ca8a04", width: 1.35, dash: "8 4", legend: "Swing lows" },
-  bollinger: { color: "#64748b", width: 1.2, dash: "2 4", legend: "Bollinger Bands" },
+const CHART_TYPES = ["line", "candles"];
+const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
+const RANGE_INTERVALS = {
+  "1D": ["1m", "2m", "5m", "15m", "30m", "1h"],
+  "WTD": ["1m", "2m", "5m", "15m", "30m", "1h"],
+  "5D": ["1m", "2m", "5m", "15m", "30m", "1h"],
+  "MTD": ["5m", "15m", "30m", "1h", "1d"],
+  "1M": ["5m", "15m", "30m", "1h", "1d"],
+  "QTD": ["1h", "1d", "1wk"],
+  "3M": ["1h", "1d", "1wk"],
+  "6M": ["1h", "1d", "1wk"],
+  "YTD": ["1d", "1wk", "1mo"],
+  "1Y": ["1d", "1wk", "1mo"],
+  "2Y": ["1d", "1wk", "1mo"],
+  "5Y": ["1d", "1wk", "1mo"],
 };
+const RANGE_DEFAULT_INTERVAL = {
+  "1D": "5m",
+  "WTD": "5m",
+  "5D": "5m",
+  "MTD": "15m",
+  "1M": "15m",
+  "QTD": "1h",
+  "3M": "1h",
+  "6M": "1d",
+  "YTD": "1d",
+  "1Y": "1d",
+  "2Y": "1wk",
+  "5Y": "1mo",
+};
+const EASTERN_CHART_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
 
 const METRIC_DEFINITIONS = [
   { id: "previous_day", label: "Previous day OHLC", group: "Session" },
@@ -37,7 +66,8 @@ const METRIC_DEFINITIONS = [
 ];
 
 const tickersInput = document.querySelector("#tickers");
-const metricSelectorEl = document.querySelector("#metric-selector");
+const watchlistFormEl = document.querySelector("#watchlist-form");
+const watchlistListEl = document.querySelector("#watchlist-list");
 const generateButton = document.querySelector("#generate");
 const pdfButton = document.querySelector("#download-pdf");
 const statusEl = document.querySelector("#status");
@@ -69,20 +99,25 @@ const menuToggleButton = document.querySelector("#menu-toggle");
 const controlsDrawerEl = document.querySelector("#controls-drawer");
 const drawerBackdropEl = document.querySelector("#drawer-backdrop");
 const drawerCloseButton = document.querySelector("#drawer-close");
-const metricsControlsEl = document.querySelector("#metrics-controls");
 
 let currentReport = null;
 let currentNews = null;
 let currentScanner = null;
 let currentMarketSnapshot = null;
+let currentChartHistory = null;
+let watchlistTickers = loadStoredWatchlist();
 let scannerSort = { key: "score", direction: "desc" };
 let draggedTicker = null;
 let expandedNewsTickers = new Set();
-const chartWindows = {};
-const hiddenChartGroups = {};
+let chartSettings = loadStoredChartSettings();
+let watchlistRefreshTimer = null;
+const chartOverrides = {};
+const chartDataCache = new Map();
+const chartInstances = new Map();
+const chartResizeObservers = new Map();
+const statusTimers = new WeakMap();
 
-tickersInput.value = localStorage.getItem(STORAGE_KEY) || "";
-renderMetricSelector();
+renderWatchlistControls();
 switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false, loadSnapshot: false });
 updateNewsInfoTooltips();
 autoloadSavedWatchlist();
@@ -107,21 +142,22 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-metricSelectorEl.addEventListener("change", () => {
-  persistSelectedMetrics();
-  saveStateEl.textContent = "Saved locally";
+watchlistFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addTickersFromInput();
 });
 
-tickersInput.addEventListener("input", () => {
-  localStorage.setItem(STORAGE_KEY, tickersInput.value);
-  saveStateEl.textContent = "Saved locally";
-  currentNews = null;
-  currentScanner = null;
-  currentMarketSnapshot = null;
-  expandedNewsTickers.clear();
-  renderNewsEmptyState();
-  renderMarketSnapshotEmptyState();
-  renderScannerEmptyState();
+watchlistListEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-watchlist-action]");
+  if (!button) return;
+  const ticker = button.dataset.ticker;
+  if (button.dataset.watchlistAction === "remove") {
+    removeWatchlistTicker(ticker);
+  } else if (button.dataset.watchlistAction === "up") {
+    moveWatchlistTicker(ticker, -1);
+  } else if (button.dataset.watchlistAction === "down") {
+    moveWatchlistTicker(ticker, 1);
+  }
 });
 
 generateButton.addEventListener("click", async () => {
@@ -186,36 +222,27 @@ scannerSetupEl.addEventListener("click", (event) => {
   renderScannerSetup(currentScanner.setup_rows || []);
 });
 
-chartsSectionEl.addEventListener("input", (event) => {
-  const slider = event.target.closest("[data-window-bound]");
-  if (!slider) return;
-  updateChartWindowBound(slider.dataset.ticker, slider.dataset.windowBound, Number(slider.value));
-  syncChartZoomControl(slider.dataset.ticker);
-});
-
 chartsSectionEl.addEventListener("change", (event) => {
-  const slider = event.target.closest("[data-window-bound]");
-  if (!slider) return;
-  renderTickerChartByTicker(slider.dataset.ticker);
-});
-
-chartsSectionEl.addEventListener("pointerdown", (event) => {
-  const rangeSlider = event.target.closest(".range-slider");
-  if (!rangeSlider || event.target.closest("input")) return;
-  event.preventDefault();
-  startChartWindowTrackDrag(rangeSlider, event);
-});
-
-chartsSectionEl.addEventListener("click", (event) => {
-  const legendButton = event.target.closest("[data-chart-group]");
-  if (legendButton) {
-    toggleChartGroup(legendButton.dataset.ticker, legendButton.dataset.chartGroup);
+  const globalControl = event.target.closest("[data-chart-global]");
+  if (globalControl) {
+    updateGlobalChartSetting(globalControl.dataset.chartGlobal, globalControl.value);
     return;
   }
 
-  const presetButton = event.target.closest("[data-window-preset]");
-  if (presetButton) {
-    applyChartWindowPreset(presetButton.dataset.ticker, presetButton.dataset.windowPreset);
+  const overrideControl = event.target.closest("[data-chart-override]");
+  if (overrideControl) {
+    updateChartOverride(
+      overrideControl.dataset.ticker,
+      overrideControl.dataset.chartOverride,
+      overrideControl.value,
+    );
+  }
+});
+
+chartsSectionEl.addEventListener("click", (event) => {
+  const resetButton = event.target.closest("[data-chart-reset]");
+  if (resetButton) {
+    resetChartOverride(resetButton.dataset.chartReset);
   }
 });
 
@@ -258,27 +285,6 @@ resultsEl.addEventListener("dragend", () => {
   document.querySelectorAll(".dragging, .drag-over").forEach((el) => el.classList.remove("dragging", "drag-over"));
 });
 
-function renderMetricSelector() {
-  const selected = getSelectedMetrics();
-  const grouped = METRIC_DEFINITIONS.reduce((groups, metric) => {
-    groups[metric.group] = groups[metric.group] || [];
-    groups[metric.group].push(metric);
-    return groups;
-  }, {});
-
-  metricSelectorEl.innerHTML = Object.entries(grouped).map(([group, metrics]) => `
-    <fieldset class="metric-picker-group">
-      <legend>${escapeHtml(group)}</legend>
-      ${metrics.map((metric) => `
-        <label class="checkbox-card">
-          <input type="checkbox" value="${escapeHtml(metric.id)}" ${selected.includes(metric.id) ? "checked" : ""} />
-          <span>${escapeHtml(metric.label)}</span>
-        </label>
-      `).join("")}
-    </fieldset>
-  `).join("");
-}
-
 function switchView(view, options = {}) {
   const nextView = viewPanels[view] ? view : "levels";
   localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, nextView);
@@ -296,7 +302,6 @@ function switchView(view, options = {}) {
     panel.classList.toggle("active", active);
     panel.hidden = !active;
   });
-  metricsControlsEl.hidden = nextView !== "levels";
 
   if (nextView === "news") {
     loadXTimeline();
@@ -323,40 +328,190 @@ function closeControlsDrawer() {
   drawerBackdropEl.hidden = true;
 }
 
-function getSelectedMetrics() {
+function loadStoredWatchlist() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) return [];
   try {
-    const stored = JSON.parse(localStorage.getItem(METRICS_STORAGE_KEY));
-    const allowed = METRIC_DEFINITIONS.map((metric) => metric.id);
-    const valid = Array.isArray(stored) ? stored.filter((metric) => allowed.includes(metric)) : [];
-    if (valid.length) return [...new Set(valid)];
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed)) return normalizeTickers(parsed);
   } catch (_) {
-    // Fall back to all metrics if localStorage was edited manually.
+    // Older versions stored a delimited textarea string.
   }
-  return METRIC_DEFINITIONS.map((metric) => metric.id);
+  return normalizeTickers(stored);
+}
+
+function normalizeTickers(value) {
+  const candidates = Array.isArray(value) ? value : String(value || "").replace(/,/g, " ").split(/\s+/);
+  const cleaned = [];
+  candidates.forEach((candidate) => {
+    const ticker = String(candidate).trim().toUpperCase();
+    if (ticker && !cleaned.includes(ticker)) cleaned.push(ticker);
+  });
+  return cleaned;
+}
+
+function persistWatchlist() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlistTickers));
+  saveStateEl.textContent = "Saved locally";
+}
+
+function renderWatchlistControls() {
+  watchlistListEl.innerHTML = watchlistTickers.length
+    ? watchlistTickers.map((ticker, index) => `
+      <li class="watchlist-item">
+        <strong>${escapeHtml(ticker)}</strong>
+        <div class="watchlist-actions" aria-label="Manage ${escapeHtml(ticker)}">
+          <button type="button" data-watchlist-action="up" data-ticker="${escapeHtml(ticker)}" ${index === 0 ? "disabled" : ""} aria-label="Move ${escapeHtml(ticker)} up">&uarr;</button>
+          <button type="button" data-watchlist-action="down" data-ticker="${escapeHtml(ticker)}" ${index === watchlistTickers.length - 1 ? "disabled" : ""} aria-label="Move ${escapeHtml(ticker)} down">&darr;</button>
+          <button type="button" data-watchlist-action="remove" data-ticker="${escapeHtml(ticker)}" aria-label="Remove ${escapeHtml(ticker)}">&times;</button>
+        </div>
+      </li>
+    `).join("")
+    : '<li class="watchlist-empty">No tickers saved.</li>';
+}
+
+function addTickersFromInput() {
+  const nextTickers = normalizeTickers(tickersInput.value);
+  if (!nextTickers.length) return;
+  const beforeLength = watchlistTickers.length;
+  nextTickers.forEach((ticker) => {
+    if (!watchlistTickers.includes(ticker)) watchlistTickers.push(ticker);
+  });
+  tickersInput.value = "";
+  if (watchlistTickers.length !== beforeLength) {
+    persistWatchlist();
+    renderWatchlistControls();
+    scheduleWatchlistRefresh();
+  }
+}
+
+function removeWatchlistTicker(ticker) {
+  const nextTickers = watchlistTickers.filter((item) => item !== ticker);
+  if (nextTickers.length === watchlistTickers.length) return;
+  watchlistTickers = nextTickers;
+  delete chartOverrides[ticker];
+  removeCachedTickerCharts(ticker);
+  persistWatchlist();
+  renderWatchlistControls();
+  filterCurrentDataToWatchlist();
+  scheduleWatchlistRefresh();
+}
+
+function moveWatchlistTicker(ticker, direction) {
+  const currentIndex = watchlistTickers.indexOf(ticker);
+  const nextIndex = currentIndex + direction;
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= watchlistTickers.length) return;
+  const [item] = watchlistTickers.splice(currentIndex, 1);
+  watchlistTickers.splice(nextIndex, 0, item);
+  persistWatchlist();
+  renderWatchlistControls();
+  reorderCurrentDataToWatchlist();
+}
+
+function scheduleWatchlistRefresh() {
+  clearTimeout(watchlistRefreshTimer);
+  if (!watchlistTickers.length) {
+    clearLoadedData();
+    return;
+  }
+  setStatus("Updating...", "");
+  watchlistRefreshTimer = setTimeout(() => {
+    autoloadSavedWatchlist();
+  }, 450);
+}
+
+function clearLoadedData() {
+  currentReport = null;
+  currentNews = null;
+  currentScanner = null;
+  currentMarketSnapshot = null;
+  currentChartHistory = null;
+  chartDataCache.clear();
+  Object.keys(chartOverrides).forEach((ticker) => delete chartOverrides[ticker]);
+  disposeCharts();
+  expandedNewsTickers.clear();
+  generatedAtEl.textContent = "";
+  resultsEl.className = "results empty";
+  resultsEl.textContent = "";
+  renderCharts();
+  renderNewsEmptyState();
+  renderMarketSnapshotEmptyState();
+  renderScannerEmptyState();
+  setStatus("", "");
+}
+
+function filterCurrentDataToWatchlist() {
+  if (currentReport?.metrics) {
+    currentReport.metrics = currentReport.metrics.filter((metric) => watchlistTickers.includes(metric.ticker));
+    renderCurrentReport();
+  }
+  if (currentScanner?.setup_rows) {
+    currentScanner.setup_rows = currentScanner.setup_rows.filter((row) => watchlistTickers.includes(row.ticker));
+    renderScanner(currentScanner);
+  }
+  if (currentNews?.ticker_news) {
+    currentNews.ticker_news = currentNews.ticker_news.filter((group) => watchlistTickers.includes(group.ticker));
+    renderWatchlistNews(currentNews.ticker_news);
+  }
+  if (currentMarketSnapshot?.watchlist) {
+    currentMarketSnapshot.watchlist = currentMarketSnapshot.watchlist.filter((row) => watchlistTickers.includes(row.symbol));
+    renderWatchlistPerformance(currentMarketSnapshot.watchlist);
+  }
+}
+
+function reorderCurrentDataToWatchlist() {
+  const byTickerOrder = (left, right) => watchlistTickers.indexOf(left.ticker || left.symbol) - watchlistTickers.indexOf(right.ticker || right.symbol);
+  if (currentReport?.metrics) {
+    currentReport.metrics.sort(byTickerOrder);
+    renderCurrentReport();
+  }
+  if (currentNews?.ticker_news) {
+    currentNews.ticker_news.sort(byTickerOrder);
+    renderWatchlistNews(currentNews.ticker_news);
+  }
+  if (currentMarketSnapshot?.watchlist) {
+    currentMarketSnapshot.watchlist.sort(byTickerOrder);
+    renderWatchlistPerformance(currentMarketSnapshot.watchlist);
+  }
+}
+
+function removeCachedTickerCharts(ticker) {
+  [...chartDataCache.keys()].forEach((key) => {
+    if (key.startsWith(`${ticker}|`)) chartDataCache.delete(key);
+  });
+  const instance = chartInstances.get(ticker);
+  if (instance) {
+    instance.remove();
+    chartInstances.delete(ticker);
+  }
+  const observer = chartResizeObservers.get(ticker);
+  if (observer) {
+    observer.disconnect();
+    chartResizeObservers.delete(ticker);
+  }
+}
+
+function orderedPayloadTickers(options = {}) {
+  if (options.useCurrentReportOrder && currentReport?.metrics?.length) {
+    return currentReport.metrics.map((metric) => metric.ticker);
+  }
+  return [...watchlistTickers];
 }
 
 function readSelectedMetrics() {
-  const selected = [...metricSelectorEl.querySelectorAll("input:checked")].map((input) => input.value);
-  return selected.length ? selected : METRIC_DEFINITIONS.map((metric) => metric.id);
-}
-
-function persistSelectedMetrics() {
-  localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(readSelectedMetrics()));
+  return METRIC_DEFINITIONS.map((metric) => metric.id);
 }
 
 function buildPayload(options = {}) {
-  persistSelectedMetrics();
   return {
-    tickers: options.useCurrentReportOrder && currentReport?.metrics?.length
-      ? currentReport.metrics.map((metric) => metric.ticker)
-      : tickersInput.value,
+    tickers: orderedPayloadTickers(options),
     metrics: readSelectedMetrics(),
   };
 }
 
 function buildNewsPayload() {
   return {
-    tickers: tickersInput.value,
+    tickers: [...watchlistTickers],
     per_ticker: Math.min(NEWS_EXPANDED_HEADLINE_COUNT, NEWS_MAX_HEADLINE_COUNT),
     general_count: 8,
   };
@@ -364,7 +519,7 @@ function buildNewsPayload() {
 
 function buildScannerPayload() {
   return {
-    tickers: tickersInput.value,
+    tickers: [...watchlistTickers],
     include_setup: true,
     include_patterns: true,
     pattern_lookback_days: 30,
@@ -373,7 +528,15 @@ function buildScannerPayload() {
 
 function buildMarketSnapshotPayload() {
   return {
-    tickers: tickersInput.value,
+    tickers: [...watchlistTickers],
+  };
+}
+
+function buildChartHistoryPayload(settings = chartSettings, tickers = orderedPayloadTickers({ useCurrentReportOrder: true })) {
+  return {
+    tickers,
+    range: settings.range,
+    interval: settings.interval,
   };
 }
 
@@ -390,13 +553,8 @@ async function postJson(url, payload) {
 }
 
 async function withBusyState(message, callback) {
-  const tickers = tickersInput.value.trim();
-  if (!tickers) {
+  if (!watchlistTickers.length) {
     setStatus("Enter at least one ticker symbol.", "error");
-    return;
-  }
-  if (!readSelectedMetrics().length) {
-    setStatus("Select at least one metric to calculate.", "error");
     return;
   }
   setStatus(message, "");
@@ -413,8 +571,7 @@ async function withBusyState(message, callback) {
 }
 
 async function withNewsBusyState(message, callback) {
-  const tickers = tickersInput.value.trim();
-  if (!tickers) {
+  if (!watchlistTickers.length) {
     setNewsStatus("Enter at least one ticker symbol.", "error");
     return;
   }
@@ -430,8 +587,7 @@ async function withNewsBusyState(message, callback) {
 }
 
 async function withScannerBusyState(message, callback) {
-  const tickers = tickersInput.value.trim();
-  if (!tickers) {
+  if (!watchlistTickers.length) {
     setScannerStatus("Enter at least one ticker symbol.", "error");
     return;
   }
@@ -451,7 +607,7 @@ async function loadNews() {
     const news = await postJson("/api/news", buildNewsPayload());
     renderNews(news);
     if (!news.warnings?.length) {
-      setNewsStatus("News refreshed.", "success");
+      setNewsStatus("", "");
     }
   });
 }
@@ -460,7 +616,8 @@ async function loadLevels() {
   await withBusyState("Generating levels...", async () => {
     const report = await postJson("/api/levels", buildPayload());
     renderReport(report);
-    setStatus("Report generated successfully. Drag cards or use the arrow buttons to reorder them.", "success");
+    await loadChartHistory();
+    setStatus("", "");
   });
 }
 
@@ -468,13 +625,12 @@ async function loadScanner() {
   await withScannerBusyState("Running scanner for the shared watchlist...", async () => {
     const scanner = await postJson("/api/scanner", buildScannerPayload());
     renderScanner(scanner);
-    setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "Scanner completed.", scanner.warnings?.length ? "error" : "success");
+    setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "", scanner.warnings?.length ? "error" : "");
   });
 }
 
 async function loadMarketSnapshot() {
-  const tickers = tickersInput.value.trim();
-  if (!tickers) {
+  if (!watchlistTickers.length) {
     renderMarketSnapshotEmptyState();
     return;
   }
@@ -492,7 +648,7 @@ async function loadMarketSnapshot() {
 }
 
 function autoloadSavedWatchlist() {
-  if (!tickersInput.value.trim()) return;
+  if (!watchlistTickers.length) return;
   setStatus("Loading saved levels...", "");
   setScannerStatus("Loading saved scanner...", "");
   setNewsStatus("Loading saved news and market snapshot...", "");
@@ -514,7 +670,8 @@ function renderReport(report) {
 function renderCurrentReport() {
   if (!currentReport?.metrics?.length) {
     resultsEl.className = "results empty";
-    resultsEl.textContent = "No metrics were returned.";
+    resultsEl.textContent = "";
+    renderCharts();
     return;
   }
   resultsEl.className = "results";
@@ -535,21 +692,21 @@ function renderNews(news) {
 
 function renderNewsEmptyState() {
   if (currentNews) return;
-  newsGeneratedAtEl.textContent = "Use the shared watchlist to pull ticker-specific headlines plus broad US market news.";
+  newsGeneratedAtEl.textContent = "";
   updateNewsInfoTooltips();
   marketNewsEl.className = "news-list empty";
-  marketNewsEl.textContent = "Open the News view or refresh to load market headlines.";
+  marketNewsEl.textContent = "";
   watchlistNewsEl.className = "ticker-news-grid empty";
-  watchlistNewsEl.textContent = "Enter tickers and refresh news.";
+  watchlistNewsEl.textContent = "";
   setNewsStatus("", "");
 }
 
 function renderMarketSnapshotEmptyState() {
   if (currentMarketSnapshot) return;
   marketSnapshotEl.className = "market-strip empty";
-  marketSnapshotEl.textContent = "Open the News view or refresh to load market performance.";
+  marketSnapshotEl.textContent = "";
   watchlistPerformanceEl.className = "performance-grid empty";
-  watchlistPerformanceEl.textContent = "Open the News view or refresh to load watchlist performance.";
+  watchlistPerformanceEl.textContent = "";
 }
 
 function renderMarketSnapshotLoadingState() {
@@ -561,11 +718,11 @@ function renderMarketSnapshotLoadingState() {
 
 function renderScannerEmptyState() {
   if (currentScanner) return;
-  scannerGeneratedAtEl.textContent = "Run the setup scanner and intraday pattern analysis for the shared watchlist.";
+  scannerGeneratedAtEl.textContent = "";
   scannerSetupEl.className = "scanner-empty";
-  scannerSetupEl.textContent = "Run the scanner to view setup scores, support/resistance zones, and risk/reward.";
+  scannerSetupEl.textContent = "";
   scannerPatternEl.className = "scanner-empty";
-  scannerPatternEl.textContent = "Run the scanner to view recurring intraday dip patterns.";
+  scannerPatternEl.textContent = "";
   setScannerStatus("", "");
 }
 
@@ -593,7 +750,7 @@ function switchScannerTab(tab) {
 function renderScannerSetup(rows) {
   if (!rows.length) {
     scannerSetupEl.className = "scanner-empty";
-    scannerSetupEl.textContent = "Run the scanner to view setup scores, support/resistance zones, and risk/reward.";
+    scannerSetupEl.textContent = "";
     return;
   }
   const sorted = [...rows].sort((left, right) => compareScannerRows(left, right, scannerSort.key, scannerSort.direction));
@@ -641,10 +798,10 @@ function renderScannerSetup(rows) {
             <td>${row.risk_reward ? `${formatValue(row.risk_reward)}R` : "&mdash;"}</td>
             <td>${formatScannerText(row.setup_level)}</td>
             <td>${formatPercent(row.setup_distance_percent)}</td>
-            <td>${row.lows_held ? `${row.lows_held}x` : "&mdash;"}</td>
+            <td>${renderLowsHeld(row.lows_held)}</td>
             <td>${formatScannerText(row.range_compression)}</td>
             <td>${formatPercent(row.off_high_percent)}</td>
-            <td>${formatScannerText(row.momentum)}</td>
+            <td>${renderMomentum(row.momentum)}</td>
           </tr>
           ${row.warnings?.length ? `<tr class="scanner-warning-row"><td colspan="${columns.length}">${row.warnings.map(escapeHtml).join(" ")}</td></tr>` : ""}
         `).join("")}
@@ -1121,344 +1278,325 @@ function renderLevelList(label, levels) {
 
 function renderCharts() {
   if (!currentReport?.metrics?.length) {
+    disposeCharts();
+    chartsSectionEl.hidden = true;
     chartsSectionEl.className = "charts-section empty";
-    chartsSectionEl.innerHTML = `
-      <div class="charts-header">
-        <div>
-          <h3>Charts</h3>
-          <p>Generate a report to view latest-session 5-minute charts with selected price levels.</p>
-        </div>
-      </div>
-    `;
+    chartsSectionEl.innerHTML = "";
     return;
   }
 
+  chartsSectionEl.hidden = false;
   chartsSectionEl.className = "charts-section";
   chartsSectionEl.innerHTML = `
     <div class="charts-header">
-      <div>
-        <h3>Charts</h3>
-        <p>5-minute charts stay in the same order as the report cards. Drag either end of a chart range slider to zoom the x-axis.</p>
-      </div>
+      <h3>Charts</h3>
+      ${renderGlobalChartToolbar()}
     </div>
     <div class="charts-grid">
       ${currentReport.metrics.map(renderTickerChart).join("")}
     </div>
+    <p class="chart-attribution">Charts use Lightweight Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
   `;
+  window.requestAnimationFrame(hydrateAllCharts);
 }
 
 function renderTickerChart(metric) {
-  const history = metric.intraday_history || [];
-  if (!history.length) {
-    return `
-      <article class="chart-card" data-chart-ticker="${escapeHtml(metric.ticker)}">
-        <div class="chart-card-header"><h4>${escapeHtml(metric.ticker)}</h4></div>
-        <p class="chart-empty">No 5-minute intraday history was returned for this ticker.</p>
-      </article>
-    `;
-  }
-
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, history.length);
-  const range = normalizeChartWindow(metric.ticker, maxWindow);
-  const selectedWindow = chartWindowLength(range);
-  const visibleHistory = history.slice(range.start - 1, range.end);
-  const levels = getChartLevels(metric);
-  const hiddenGroups = getHiddenChartGroups(metric.ticker);
-  const visibleLevels = levels.filter((level) => !hiddenGroups.has(level.group));
-  const showClose = !hiddenGroups.has("close");
+  const settings = getEffectiveChartSettings(metric.ticker);
+  const chart = getCachedChart(metric.ticker, settings);
+  const warnings = chart?.warnings?.length
+    ? `<details class="chart-warning"><summary>${chart.warnings.length} note${chart.warnings.length === 1 ? "" : "s"}</summary><ul>${chart.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></details>`
+    : "";
+  const empty = chart && !chart.points?.length
+    ? '<p class="chart-empty">No chart data returned.</p>'
+    : '<p class="chart-empty">Loading chart...</p>';
 
   return `
     <article class="chart-card" data-chart-ticker="${escapeHtml(metric.ticker)}">
       <div class="chart-card-header">
-        <div>
-          <h4>${escapeHtml(metric.ticker)}</h4>
-        </div>
+        <h4>${escapeHtml(metric.ticker)}</h4>
+        ${chartOverrides[metric.ticker] ? `<button class="chart-reset" type="button" data-chart-reset="${escapeHtml(metric.ticker)}">Reset</button>` : ""}
       </div>
-      ${renderChartLegend(metric.ticker, levels, hiddenGroups)}
-      ${buildChartSvg(visibleHistory, visibleLevels, showClose)}
-      ${renderChartZoomControls(metric.ticker, range, selectedWindow, maxWindow)}
+      ${renderChartOverrideControls(metric.ticker, settings)}
+      <div class="broker-chart" data-chart-canvas="${escapeHtml(metric.ticker)}">${chart?.points?.length ? "" : empty}</div>
+      ${warnings}
     </article>
   `;
 }
 
-function getChartLevels(metric) {
-  const selected = metric.selected_metrics || readSelectedMetrics();
-  const levels = [];
-  const add = (label, value, group) => {
-    if (Number.isFinite(Number(value))) levels.push({ label, value: Number(value), group, ...LEVEL_STYLES[group] });
-  };
-
-  if (selected.includes("previous_day")) {
-    add("Prev High", metric.previous_day.high, "previous");
-    add("Prev Low", metric.previous_day.low, "previous");
-    add("Prev Close", metric.previous_day.close, "previous");
-  }
-  if (selected.includes("premarket")) {
-    add("Premarket High", metric.premarket.high, "premarket");
-    add("Premarket Low", metric.premarket.low, "premarket");
-  }
-  if (selected.includes("first_five_minutes")) {
-    add("First 5m High", metric.first_five_minutes.high, "opening");
-    add("First 5m Low", metric.first_five_minutes.low, "opening");
-  }
-  if (selected.includes("previous_session_vwap_5m")) add("VWAP 5m", metric.previous_session_vwap_5m, "vwap");
-  if (selected.includes("fifty_two_week")) {
-    add("52W High", metric.fifty_two_week.high, "fiftyTwo");
-    add("52W Low", metric.fifty_two_week.low, "fiftyTwo");
-  }
-  if (selected.includes("swing_levels")) {
-    sortLevels(metric.swing_levels.highs, "asc").forEach((value, index) => add(`Swing High ${index + 1}`, value, "swingHigh"));
-    sortLevels(metric.swing_levels.lows, "desc").forEach((value, index) => add(`Swing Low ${index + 1}`, value, "swingLow"));
-  }
-  if (selected.includes("bollinger_bands")) {
-    add("BB Upper", metric.bollinger_bands.upper, "bollinger");
-    add("BB Middle", metric.bollinger_bands.middle, "bollinger");
-    add("BB Lower", metric.bollinger_bands.lower, "bollinger");
-  }
-  return levels;
-}
-
-function buildChartSvg(history, levels, showClose = true) {
-  const width = 860;
-  const height = 430;
-  const margin = { top: 24, right: 88, bottom: 50, left: 58 };
-  const plotWidth = width - margin.left - margin.right;
-  const plotHeight = height - margin.top - margin.bottom;
-  const closes = showClose ? history.map((point) => Number(point.close)) : [];
-  const levelValues = levels.map((level) => level.value);
-  const chartValues = closes.length || levelValues.length ? [...closes, ...levelValues] : history.map((point) => Number(point.close));
-  let minValue = Math.min(...chartValues);
-  let maxValue = Math.max(...chartValues);
-  if (minValue === maxValue) {
-    minValue -= 1;
-    maxValue += 1;
-  }
-  const padding = (maxValue - minValue) * 0.08;
-  minValue -= padding;
-  maxValue += padding;
-
-  const xFor = (index) => margin.left + (history.length === 1 ? plotWidth / 2 : (index / (history.length - 1)) * plotWidth);
-  const yFor = (value) => margin.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
-  const closePoints = history.map((point, index) => `${xFor(index).toFixed(2)},${yFor(Number(point.close)).toFixed(2)}`).join(" ");
-  const first = history[0];
-  const last = history[history.length - 1];
-  const gridValues = [0, 0.25, 0.5, 0.75, 1].map((ratio) => maxValue - (maxValue - minValue) * ratio);
-
+function renderGlobalChartToolbar() {
   return `
-    <svg class="price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="5-minute close chart with marked price levels">
-      <rect class="chart-bg" x="0" y="0" width="${width}" height="${height}" rx="8"></rect>
-      ${gridValues.map((value) => {
-        const y = yFor(value).toFixed(2);
-        return `<line class="chart-grid-line" x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}"></line><text class="chart-axis-label" x="12" y="${Number(y) + 4}">${formatValue(value)}</text>`;
-      }).join("")}
-      ${levels.map((level) => {
-        const y = yFor(level.value).toFixed(2);
-        return `<line class="chart-level-line" x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}" stroke="${level.color}" stroke-width="${level.width}" stroke-dasharray="${level.dash}"></line><text class="chart-level-label" x="${width - margin.right + 8}" y="${Number(y) + 4}" fill="${level.color}">${escapeHtml(level.label)}</text>`;
-      }).join("")}
-      ${showClose ? `<polyline class="chart-close-line" points="${closePoints}"></polyline>` : ""}
-      ${showClose ? history.map((point, index) => `<circle class="chart-close-point" cx="${xFor(index).toFixed(2)}" cy="${yFor(Number(point.close)).toFixed(2)}" r="${history.length > 80 ? 2 : 3}"><title>${escapeHtml(buildPointTooltip(point, levels))}</title></circle>`).join("") : ""}
-      <line class="chart-axis" x1="${margin.left}" x2="${width - margin.right}" y1="${height - margin.bottom}" y2="${height - margin.bottom}"></line>
-      <text class="chart-axis-label" x="${margin.left}" y="${height - 14}">${formatChartTimestamp(first.timestamp)}</text>
-      <text class="chart-axis-label" x="${width - margin.right - 92}" y="${height - 14}">${formatChartTimestamp(last.timestamp)}</text>
-    </svg>
-  `;
-}
-
-function renderChartLegend(ticker, levels, hiddenGroups) {
-  const groups = [...new Map(levels.map((level) => [level.group, level])).values()];
-  const button = (group, label, swatchHtml) => `
-    <button class="chart-legend-toggle ${hiddenGroups.has(group) ? "is-hidden" : ""}" type="button" data-ticker="${escapeHtml(ticker)}" data-chart-group="${escapeHtml(group)}" aria-pressed="${hiddenGroups.has(group) ? "false" : "true"}">
-      ${swatchHtml}${escapeHtml(label)}
-    </button>`;
-
-  return `
-    <div class="chart-legend" aria-label="Chart line visibility controls">
-      ${button("close", "5-minute close", `<i class="legend-close"></i>`)}
-      ${groups.map((level) => button(level.group, level.legend, `<i style="background:${level.color}; height:${Math.max(3, level.width)}px"></i>`)).join("")}
+    <div class="chart-toolbar" aria-label="Chart defaults">
+      ${renderChartSelect("Type", "type", chartSettings.type, CHART_TYPES, { global: true })}
+      ${renderChartSelect("Range", "range", chartSettings.range, Object.keys(RANGE_INTERVALS), { global: true })}
+      ${renderChartSelect("Interval", "interval", chartSettings.interval, RANGE_INTERVALS[chartSettings.range], { global: true })}
     </div>
   `;
 }
 
-function renderChartZoomControls(ticker, range, selectedWindow, maxWindow) {
-  const presets = [
-    ["1h", "Last 1 hour"],
-    ["2h", "Last 2 hours"],
-    ["4h", "Last 4 hours"],
-    ["full", "Full session"],
-  ];
-
+function renderChartOverrideControls(ticker, settings) {
   return `
-    <div class="chart-zoom-panel">
-      <div class="zoom-control" aria-label="X-axis zoom">
-        <span>X-axis zoom</span>
-        <div class="zoom-row range-zoom-row">
-          <div class="range-slider" data-ticker="${escapeHtml(ticker)}" data-max-window="${maxWindow}" style="--range-start:${chartWindowPercent(range.start, maxWindow)}%; --range-end:${chartWindowPercent(range.end, maxWindow)}%">
-            <input class="chart-window chart-window-start" data-ticker="${escapeHtml(ticker)}" data-window-bound="start" type="range" min="1" max="${maxWindow}" value="${range.start}" aria-label="First visible 5-minute point" />
-            <input class="chart-window chart-window-end" data-ticker="${escapeHtml(ticker)}" data-window-bound="end" type="range" min="1" max="${maxWindow}" value="${range.end}" aria-label="Last visible 5-minute point" />
-          </div>
-          <output>${formatChartWindowLength(selectedWindow)}</output>
-        </div>
-      </div>
-      <div class="chart-range-buttons" aria-label="Quick x-axis ranges">
-        ${presets.map(([preset, label]) => `<button type="button" data-ticker="${escapeHtml(ticker)}" data-window-preset="${preset}">${escapeHtml(label)}</button>`).join("")}
-      </div>
+    <div class="chart-card-controls" aria-label="${escapeHtml(ticker)} chart controls">
+      ${renderChartSelect("Type", "type", settings.type, CHART_TYPES, { ticker })}
+      ${renderChartSelect("Range", "range", settings.range, Object.keys(RANGE_INTERVALS), { ticker })}
+      ${renderChartSelect("Interval", "interval", settings.interval, RANGE_INTERVALS[settings.range], { ticker })}
     </div>
   `;
 }
 
-function formatChartTimestamp(value) {
-  return new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+function renderChartSelect(label, key, value, options, context) {
+  const attribute = context.global
+    ? `data-chart-global="${escapeHtml(key)}"`
+    : `data-chart-override="${escapeHtml(key)}" data-ticker="${escapeHtml(context.ticker)}"`;
+  return `
+    <label class="chart-select">
+      <span>${escapeHtml(label)}</span>
+      <select ${attribute}>
+        ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(formatChartOption(option))}</option>`).join("")}
+      </select>
+    </label>
+  `;
 }
 
-function getHiddenChartGroups(ticker) {
-  hiddenChartGroups[ticker] = hiddenChartGroups[ticker] || new Set();
-  return hiddenChartGroups[ticker];
-}
-
-function normalizeChartWindow(ticker, maxWindow) {
-  const saved = chartWindows[ticker];
-  let range = typeof saved === "object" && saved !== null
-    ? { start: Number(saved.start), end: Number(saved.end) }
-    : { start: Math.max(1, maxWindow - Number(saved || maxWindow) + 1), end: maxWindow };
-
-  range.start = Math.min(Math.max(Number.isFinite(range.start) ? Math.round(range.start) : 1, 1), maxWindow);
-  range.end = Math.min(Math.max(Number.isFinite(range.end) ? Math.round(range.end) : maxWindow, 1), maxWindow);
-  if (range.start > range.end) {
-    [range.start, range.end] = [range.end, range.start];
+async function loadChartHistory(settings = chartSettings, tickers = orderedPayloadTickers({ useCurrentReportOrder: true })) {
+  if (!tickers.length) {
+    currentChartHistory = null;
+    renderCharts();
+    return;
   }
-  chartWindows[ticker] = range;
-  return range;
+  const response = await postJson("/api/chart-history", buildChartHistoryPayload(settings, tickers));
+  currentChartHistory = response;
+  cacheChartResponse(response);
+  renderCharts();
 }
 
-function updateChartWindowBound(ticker, bound, value) {
-  const metric = findMetric(ticker);
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, metric?.intraday_history?.length || 1);
-  const range = normalizeChartWindow(ticker, maxWindow);
-  if (bound === "start") {
-    range.start = Math.min(Math.max(Math.round(value), 1), range.end);
-  } else {
-    range.end = Math.max(Math.min(Math.round(value), maxWindow), range.start);
+async function loadTickerChartHistory(ticker, settings) {
+  const key = chartCacheKey(ticker, settings);
+  if (chartDataCache.has(key)) return;
+  const response = await postJson("/api/chart-history", buildChartHistoryPayload(settings, [ticker]));
+  cacheChartResponse(response);
+  renderCharts();
+}
+
+function cacheChartResponse(response) {
+  (response.charts || []).forEach((chart) => {
+    chartDataCache.set(chartCacheKey(chart.ticker, chart), chart);
+  });
+}
+
+function chartCacheKey(ticker, settings) {
+  return `${ticker}|${settings.range}|${settings.interval}`;
+}
+
+function getCachedChart(ticker, settings) {
+  return chartDataCache.get(chartCacheKey(ticker, settings));
+}
+
+function getEffectiveChartSettings(ticker) {
+  return chartOverrides[ticker] || chartSettings;
+}
+
+function loadStoredChartSettings() {
+  try {
+    return normalizeChartSettings(JSON.parse(localStorage.getItem(CHART_SETTINGS_STORAGE_KEY)));
+  } catch (_) {
+    return { ...DEFAULT_CHART_SETTINGS };
   }
-  chartWindows[ticker] = range;
-  return range;
 }
 
-function renderTickerChartByTicker(ticker) {
-  const metric = findMetric(ticker);
-  const chartCard = findTickerChartCard(ticker);
-  if (!metric || !chartCard) return;
-  chartCard.outerHTML = renderTickerChart(metric);
+function normalizeChartSettings(candidate = {}) {
+  const type = CHART_TYPES.includes(candidate.type) ? candidate.type : DEFAULT_CHART_SETTINGS.type;
+  const range = RANGE_INTERVALS[candidate.range] ? candidate.range : DEFAULT_CHART_SETTINGS.range;
+  const supportedIntervals = RANGE_INTERVALS[range];
+  const interval = supportedIntervals.includes(candidate.interval) ? candidate.interval : RANGE_DEFAULT_INTERVAL[range];
+  return { type, range, interval };
 }
 
-function syncChartZoomControl(ticker) {
-  const metric = findMetric(ticker);
-  const chartCard = findTickerChartCard(ticker);
-  if (!metric || !chartCard) return;
+function persistChartSettings() {
+  localStorage.setItem(CHART_SETTINGS_STORAGE_KEY, JSON.stringify(chartSettings));
+}
 
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, metric.intraday_history?.length || 1);
-  const range = normalizeChartWindow(ticker, maxWindow);
-  const rangeSlider = chartCard.querySelector(".range-slider");
-  const startInput = chartCard.querySelector("[data-window-bound='start']");
-  const endInput = chartCard.querySelector("[data-window-bound='end']");
-  const output = chartCard.querySelector(".range-zoom-row output");
-
-  if (rangeSlider) {
-    rangeSlider.style.setProperty("--range-start", `${chartWindowPercent(range.start, maxWindow)}%`);
-    rangeSlider.style.setProperty("--range-end", `${chartWindowPercent(range.end, maxWindow)}%`);
+async function updateGlobalChartSetting(key, value) {
+  chartSettings = normalizeChartSettings({ ...chartSettings, [key]: value });
+  persistChartSettings();
+  renderCharts();
+  try {
+    await loadChartHistory(chartSettings);
+    setStatus("", "");
+  } catch (error) {
+    setStatus(readableError(error), "error");
   }
-  if (startInput) startInput.value = range.start;
-  if (endInput) endInput.value = range.end;
-  if (output) output.textContent = formatChartWindowLength(chartWindowLength(range));
 }
 
-function startChartWindowTrackDrag(rangeSlider, event) {
-  const ticker = rangeSlider.dataset.ticker;
-  const maxWindow = Number(rangeSlider.dataset.maxWindow) || 1;
-  if (!ticker) return;
-
-  const initialValue = chartWindowValueFromPointer(rangeSlider, event.clientX, maxWindow);
-  const initialRange = normalizeChartWindow(ticker, maxWindow);
-  const startDistance = Math.abs(initialValue - initialRange.start);
-  const endDistance = Math.abs(initialValue - initialRange.end);
-  const activeBound = startDistance <= endDistance ? "start" : "end";
-
-  const updateFromPointer = (pointerEvent) => {
-    const value = chartWindowValueFromPointer(rangeSlider, pointerEvent.clientX, maxWindow);
-    updateChartWindowBound(ticker, activeBound, value);
-    syncChartZoomControl(ticker);
-  };
-
-  const stopDrag = (pointerEvent) => {
-    updateFromPointer(pointerEvent);
-    window.removeEventListener("pointermove", updateFromPointer);
-    window.removeEventListener("pointerup", stopDrag);
-    renderTickerChartByTicker(ticker);
-  };
-
-  updateFromPointer(event);
-  window.addEventListener("pointermove", updateFromPointer);
-  window.addEventListener("pointerup", stopDrag, { once: true });
-}
-
-function chartWindowValueFromPointer(rangeSlider, clientX, maxWindow) {
-  const rect = rangeSlider.getBoundingClientRect();
-  const ratio = rect.width ? (clientX - rect.left) / rect.width : 0;
-  const clampedRatio = Math.min(Math.max(ratio, 0), 1);
-  return Math.round(1 + clampedRatio * (maxWindow - 1));
-}
-
-function chartWindowLength(range) {
-  return range.end - range.start + 1;
-}
-
-function formatChartWindowLength(selectedWindow) {
-  return `${selectedWindow} point${selectedWindow === 1 ? "" : "s"}`;
-}
-
-function chartWindowPercent(value, maxWindow) {
-  return ((value - 1) / Math.max(1, maxWindow - 1)) * 100;
-}
-
-function findMetric(ticker) {
-  return currentReport?.metrics?.find((item) => item.ticker === ticker);
-}
-
-function findTickerChartCard(ticker) {
-  return [...chartsSectionEl.querySelectorAll("[data-chart-ticker]")].find((card) => card.dataset.chartTicker === ticker);
-}
-
-function buildPointTooltip(point, levels) {
-  const levelLines = levels.length
-    ? levels.map((level) => `${level.label}: ${formatValue(level.value)}`).join("\n")
-    : "No visible price levels";
-  return `${new Date(point.timestamp).toLocaleString()} close: ${formatValue(point.close)}\n${levelLines}`;
-}
-
-function toggleChartGroup(ticker, group) {
-  const groups = getHiddenChartGroups(ticker);
-  if (groups.has(group)) {
-    groups.delete(group);
-  } else {
-    groups.add(group);
+async function updateChartOverride(ticker, key, value) {
+  chartOverrides[ticker] = normalizeChartSettings({ ...(chartOverrides[ticker] || chartSettings), [key]: value });
+  renderCharts();
+  try {
+    await loadTickerChartHistory(ticker, chartOverrides[ticker]);
+    setStatus("", "");
+  } catch (error) {
+    setStatus(readableError(error), "error");
   }
-  renderTickerChartByTicker(ticker);
 }
 
-function applyChartWindowPreset(ticker, preset) {
-  const metric = findMetric(ticker);
-  if (!metric?.intraday_history?.length) return;
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, metric.intraday_history.length);
-  const windowSize = getPresetWindow(metric.intraday_history, preset);
-  chartWindows[ticker] = { start: maxWindow - windowSize + 1, end: maxWindow };
-  renderTickerChartByTicker(ticker);
+function resetChartOverride(ticker) {
+  delete chartOverrides[ticker];
+  renderCharts();
 }
 
-function getPresetWindow(history, preset) {
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, history.length);
-  if (preset === "1h") return Math.min(12, maxWindow);
-  if (preset === "2h") return Math.min(24, maxWindow);
-  if (preset === "4h") return Math.min(48, maxWindow);
-  return maxWindow;
+function hydrateAllCharts() {
+  disposeCharts();
+  if (!window.LightweightCharts) {
+    chartsSectionEl.querySelectorAll(".broker-chart").forEach((container) => {
+      container.textContent = "Chart library could not be loaded.";
+    });
+    return;
+  }
+  currentReport?.metrics?.forEach((metric) => hydrateTickerChart(metric.ticker));
+}
+
+function hydrateTickerChart(ticker) {
+  const settings = getEffectiveChartSettings(ticker);
+  const chart = getCachedChart(ticker, settings);
+  const container = chartsSectionEl.querySelector(`[data-chart-canvas="${cssEscape(ticker)}"]`);
+  if (!container || !chart?.points?.length) return;
+  container.textContent = "";
+  const seriesData = formatChartSeriesData(chart.points, settings.type, settings.interval);
+  const barSpacing = chartBarSpacing(container, seriesData.length);
+
+  const api = LightweightCharts.createChart(container, {
+    width: container.clientWidth || 360,
+    height: 238,
+    layout: {
+      background: { type: "solid", color: "#ffffff" },
+      textColor: "#475569",
+      fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+    },
+    grid: {
+      vertLines: { color: "#eef2f7" },
+      horzLines: { color: "#eef2f7" },
+    },
+    rightPriceScale: { borderColor: "#e2e8f0" },
+    timeScale: {
+      barSpacing,
+      borderColor: "#e2e8f0",
+      fixLeftEdge: true,
+      fixRightEdge: true,
+      minBarSpacing: 0.5,
+      rightOffset: 0,
+      timeVisible: isIntradayChartInterval(settings.interval),
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: "#94a3b8" },
+      horzLine: { color: "#94a3b8" },
+    },
+  });
+  const series = settings.type === "candles"
+    ? api.addSeries(LightweightCharts.CandlestickSeries, {
+      upColor: "#059669",
+      downColor: "#dc2626",
+      borderVisible: false,
+      wickUpColor: "#059669",
+      wickDownColor: "#dc2626",
+    })
+    : api.addSeries(LightweightCharts.LineSeries, {
+      color: "#0f766e",
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: true,
+    });
+
+  series.setData(seriesData);
+  api.timeScale().fitContent();
+  window.requestAnimationFrame(() => {
+    api.applyOptions({ width: container.clientWidth || 360, height: 238 });
+    api.timeScale().applyOptions({ barSpacing: chartBarSpacing(container, seriesData.length), rightOffset: 0 });
+    api.timeScale().fitContent();
+  });
+  chartInstances.set(ticker, api);
+
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(() => {
+      api.applyOptions({ width: container.clientWidth || 360, height: 238 });
+      api.timeScale().applyOptions({ barSpacing: chartBarSpacing(container, seriesData.length), rightOffset: 0 });
+      api.timeScale().fitContent();
+    });
+    observer.observe(container);
+    chartResizeObservers.set(ticker, observer);
+  }
+}
+
+function disposeCharts() {
+  chartResizeObservers.forEach((observer) => observer.disconnect());
+  chartResizeObservers.clear();
+  chartInstances.forEach((chart) => chart.remove());
+  chartInstances.clear();
+}
+
+function formatChartSeriesData(points, type, interval) {
+  const data = points
+    .map((point) => ({
+      time: chartTimeFromTimestamp(point.timestamp, interval),
+      open: Number(point.open),
+      high: Number(point.high),
+      low: Number(point.low),
+      close: Number(point.close),
+    }))
+    .filter((point) => isValidChartTime(point.time) && Number.isFinite(point.close))
+    .sort(compareChartTimes);
+  if (type === "candles") return data;
+  return data.map((point) => ({ time: point.time, value: point.close }));
+}
+
+function chartTimeFromTimestamp(timestamp, interval) {
+  if (!isIntradayChartInterval(interval)) {
+    return String(timestamp || "").slice(0, 10);
+  }
+  const parts = Object.fromEntries(
+    EASTERN_CHART_TIME_FORMATTER
+      .formatToParts(new Date(timestamp))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return Math.floor(Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  ) / 1000);
+}
+
+function isIntradayChartInterval(interval) {
+  return !["1d", "1wk", "1mo"].includes(interval);
+}
+
+function isValidChartTime(value) {
+  return Number.isFinite(value) || /^\d{4}-\d{2}-\d{2}$/.test(String(value));
+}
+
+function compareChartTimes(left, right) {
+  if (typeof left.time === "number" && typeof right.time === "number") {
+    return left.time - right.time;
+  }
+  return String(left.time).localeCompare(String(right.time));
+}
+
+function chartBarSpacing(container, pointCount) {
+  const width = container.clientWidth || 360;
+  return Math.max(0.8, Math.min(24, (width - 24) / Math.max(pointCount, 1)));
+}
+
+function formatChartOption(option) {
+  if (option === "line") return "Line";
+  if (option === "candles") return "Candles";
+  if (option === "1Y") return "1YR";
+  return option;
+}
+
+function cssEscape(value) {
+  return window.CSS?.escape ? window.CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
 }
 
 function moveMetric(ticker, direction) {
@@ -1521,8 +1659,30 @@ function compareScannerRows(left, right, key, direction) {
 }
 
 function renderScore(score) {
-  if (score === null || score === undefined) return "&mdash;";
-  return `<span class="scanner-score">${Number(score)}/8</span>`;
+  if (score === null || score === undefined) return '<span class="scanner-pill neutral">&mdash;</span>';
+  const number = Number(score);
+  let tone = "danger";
+  if (number >= 7) tone = "strong";
+  else if (number >= 5) tone = "good";
+  else if (number >= 3) tone = "watch";
+  return `<span class="scanner-pill ${tone}">${number}/8</span>`;
+}
+
+function renderLowsHeld(lowsHeld) {
+  if (!lowsHeld) return '<span class="scanner-pill neutral">&mdash;</span>';
+  const number = Number(lowsHeld);
+  const tone = number >= 3 ? "strong" : number >= 2 ? "good" : "watch";
+  return `<span class="scanner-pill ${tone}">${number}x</span>`;
+}
+
+function renderMomentum(momentum) {
+  if (!momentum) return '<span class="scanner-pill neutral">&mdash;</span>';
+  const normalized = String(momentum).toLowerCase();
+  let tone = "neutral";
+  if (normalized === "turning up") tone = "strong";
+  else if (normalized === "ticking up") tone = "good";
+  else if (normalized === "still falling") tone = "danger";
+  return `<span class="scanner-pill ${tone}">${escapeHtml(momentum)}</span>`;
 }
 
 function formatScannerText(value) {
@@ -1574,18 +1734,30 @@ function formatDate(value) {
 }
 
 function setStatus(message, type) {
-  statusEl.textContent = message;
-  statusEl.className = `status ${type}`.trim();
+  setTimedStatus(statusEl, message, type);
 }
 
 function setNewsStatus(message, type) {
-  newsStatusEl.textContent = message;
-  newsStatusEl.className = `status ${type}`.trim();
+  setTimedStatus(newsStatusEl, message, type);
 }
 
 function setScannerStatus(message, type) {
-  scannerStatusEl.textContent = message;
-  scannerStatusEl.className = `status ${type}`.trim();
+  setTimedStatus(scannerStatusEl, message, type);
+}
+
+function setTimedStatus(element, message, type) {
+  const existingTimer = statusTimers.get(element);
+  if (existingTimer) window.clearTimeout(existingTimer);
+  element.textContent = message;
+  element.className = `status ${type}`.trim();
+  if (message && type === "success") {
+    statusTimers.set(element, window.setTimeout(() => {
+      if (element.textContent === message) {
+        element.textContent = "";
+        element.className = "status";
+      }
+    }, 3200));
+  }
 }
 
 function filenameFromDisposition(header) {

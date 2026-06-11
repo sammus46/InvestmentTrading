@@ -13,7 +13,7 @@
           <span aria-hidden="true"></span>
           <span aria-hidden="true"></span>
           <span aria-hidden="true"></span>
-          <span class="sr-only">Open watchlist and metric controls</span>
+          <span class="sr-only">Open watchlist controls</span>
         </button>
         <div class="app-brand" aria-label="Investment Trading">
           <span class="brand-mark" aria-hidden="true">IT</span>
@@ -48,15 +48,14 @@
           <h3 id="watchlist-heading">Tickers</h3>
           <span id="save-state" class="save-state">Saved locally</span>
         </div>
-        <label for="tickers">Ticker symbols</label>
-        <textarea id="tickers" rows="5" placeholder="AAPL, MSFT, NVDA"></textarea>
-      </div>
-
-      <div id="metrics-controls" class="drawer-section" aria-labelledby="metrics-heading">
-        <div class="drawer-section-header">
-          <h3 id="metrics-heading">Metrics</h3>
-        </div>
-        <div id="metric-selector" class="metric-picker"></div>
+        <form id="watchlist-form" class="watchlist-form">
+          <label for="tickers">Ticker symbol</label>
+          <div class="watchlist-add-row">
+            <input id="tickers" type="text" placeholder="AAPL, MSFT, NVDA" autocomplete="off" />
+            <button id="add-ticker" class="primary icon-button" type="submit" aria-label="Add ticker">+</button>
+          </div>
+        </form>
+        <ul id="watchlist-list" class="watchlist-list" aria-label="Saved ticker watchlist"></ul>
       </div>
     </aside>
 
@@ -66,7 +65,6 @@
         <section class="panel view-hero">
           <div>
             <h1 id="levels-heading">Investment Trading Levels</h1>
-            <p>Generate price-level reports from the shared watchlist.</p>
           </div>
           <div class="actions">
             <button id="generate" class="primary" type="button">Generate Levels</button>
@@ -78,7 +76,7 @@
           <div class="panel-header report-ribbon">
             <div>
               <h2 id="scanner-heading">Scanner</h2>
-              <p id="scanner-generated-at">Run the setup scanner and intraday pattern analysis for the shared watchlist.</p>
+              <p id="scanner-generated-at" class="sr-only"></p>
             </div>
             <button id="run-scanner" class="primary" type="button">Run Scanner</button>
           </div>
@@ -88,10 +86,10 @@
             <button id="scanner-tab-patterns" class="scanner-tab" type="button" data-scanner-tab="patterns" role="tab" aria-controls="scanner-patterns" aria-selected="false">Intraday Pattern Analysis</button>
           </div>
           <section id="scanner-setup" class="scanner-section active" role="tabpanel" aria-labelledby="scanner-tab-setup">
-            <div id="scanner-setup-results" class="scanner-empty">Run the scanner to view setup scores, support/resistance zones, and risk/reward.</div>
+            <div id="scanner-setup-results" class="scanner-empty"></div>
           </section>
           <section id="scanner-patterns" class="scanner-section" role="tabpanel" aria-labelledby="scanner-tab-patterns" hidden>
-            <div id="scanner-pattern-results" class="scanner-empty">Run the scanner to view recurring intraday dip patterns.</div>
+            <div id="scanner-pattern-results" class="scanner-empty"></div>
           </section>
         </section>
 
@@ -99,19 +97,12 @@
           <div class="panel-header report-ribbon">
             <div>
               <h2 id="results-heading">Report</h2>
-              <p id="generated-at">No report generated yet. Cards can be dragged after a report is generated.</p>
+              <p id="generated-at" class="sr-only"></p>
             </div>
             <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
           </div>
-          <div id="results" class="results empty">Enter tickers and click Generate Levels.</div>
-          <section id="charts-section" class="charts-section empty" aria-live="polite">
-            <div class="charts-header">
-              <div>
-                <h3>Charts</h3>
-                <p>Generate a report to view latest-session 5-minute charts with selected price levels.</p>
-              </div>
-            </div>
-          </section>
+          <div id="results" class="results empty"></div>
+          <section id="charts-section" class="charts-section empty" aria-live="polite" hidden></section>
         </section>
       </section>
 
@@ -135,8 +126,8 @@
                 <span class="info-tooltip" role="tooltip">Major market instruments and saved watchlist day-to-date performance.</span>
               </button>
             </div>
-            <div id="market-snapshot" class="market-strip empty">Open the News view or refresh to load market performance.</div>
-            <div id="watchlist-performance" class="performance-grid empty">Open the News view or refresh to load watchlist performance.</div>
+            <div id="market-snapshot" class="market-strip empty"></div>
+            <div id="watchlist-performance" class="performance-grid empty"></div>
           </section>
 
           <section class="news-section" aria-labelledby="market-news-heading">
@@ -148,7 +139,7 @@
                 <span class="info-tooltip" role="tooltip">Major headlines related to the US stock market.</span>
               </button>
             </div>
-            <div id="market-news" class="news-list empty">Open the News view or refresh to load market headlines.</div>
+            <div id="market-news" class="news-list empty"></div>
           </section>
 
           <section class="news-section" aria-labelledby="watchlist-news-heading">
@@ -160,7 +151,7 @@
                 <span class="info-tooltip" role="tooltip">Headlines grouped by ticker from the same list used for levels.</span>
               </button>
             </div>
-            <div id="watchlist-news" class="ticker-news-grid empty">Enter tickers and refresh news.</div>
+            <div id="watchlist-news" class="ticker-news-grid empty"></div>
           </section>
 
           <section class="news-section" aria-labelledby="x-news-heading">
@@ -179,6 +170,7 @@
         </section>
       </section>
     </main>
+    <script src="/vendor/lightweight-charts/lightweight-charts.standalone.production.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

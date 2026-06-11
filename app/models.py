@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date as Date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 MetricName = Literal[
     "previous_day",
@@ -18,6 +18,38 @@ MetricName = Literal[
     "bollinger_bands",
 ]
 NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
+ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
+ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
+
+CHART_INTERVALS_BY_RANGE: dict[ChartRange, tuple[ChartInterval, ...]] = {
+    "1D": ("1m", "2m", "5m", "15m", "30m", "1h"),
+    "WTD": ("1m", "2m", "5m", "15m", "30m", "1h"),
+    "5D": ("1m", "2m", "5m", "15m", "30m", "1h"),
+    "MTD": ("5m", "15m", "30m", "1h", "1d"),
+    "1M": ("5m", "15m", "30m", "1h", "1d"),
+    "QTD": ("1h", "1d", "1wk"),
+    "3M": ("1h", "1d", "1wk"),
+    "6M": ("1h", "1d", "1wk"),
+    "YTD": ("1d", "1wk", "1mo"),
+    "1Y": ("1d", "1wk", "1mo"),
+    "2Y": ("1d", "1wk", "1mo"),
+    "5Y": ("1d", "1wk", "1mo"),
+}
+
+CHART_DEFAULT_INTERVAL_BY_RANGE: dict[ChartRange, ChartInterval] = {
+    "1D": "5m",
+    "WTD": "5m",
+    "5D": "5m",
+    "MTD": "15m",
+    "1M": "15m",
+    "QTD": "1h",
+    "3M": "1h",
+    "6M": "1d",
+    "YTD": "1d",
+    "1Y": "1d",
+    "2Y": "1wk",
+    "5Y": "1mo",
+}
 
 DEFAULT_METRICS: tuple[MetricName, ...] = (
     "previous_day",
@@ -151,6 +183,16 @@ class IntradayPricePoint(BaseModel):
     """Intraday close used by web charts and market snapshot sparklines."""
 
     timestamp: datetime
+    close: float
+
+
+class ChartOhlcPoint(BaseModel):
+    """OHLC bar used by broker-style web charts."""
+
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
     close: float
 
 
@@ -353,4 +395,46 @@ class MarketSnapshotResponse(BaseModel):
     generated_at: datetime
     market: list[MarketSnapshotRow] = Field(default_factory=list)
     watchlist: list[MarketSnapshotRow] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ChartHistoryRequest(BaseModel):
+    """Request payload for broker-style OHLC chart history."""
+
+    tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+    range: ChartRange = "1D"
+    interval: ChartInterval = "5m"
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def split_ticker_input(cls, value: object) -> list[str]:
+        """Accept either a list or comma/space/newline separated ticker text."""
+        return GenerateRequest.split_ticker_input(value)
+
+    @model_validator(mode="after")
+    def validate_range_interval(self) -> "ChartHistoryRequest":
+        """Reject range/interval combinations that yfinance does not reliably support."""
+        if self.interval not in CHART_INTERVALS_BY_RANGE[self.range]:
+            supported = ", ".join(CHART_INTERVALS_BY_RANGE[self.range])
+            raise ValueError(f"unsupported interval {self.interval} for range {self.range}; use one of: {supported}")
+        return self
+
+
+class TickerChartHistory(BaseModel):
+    """OHLC chart history for one ticker."""
+
+    ticker: str
+    range: ChartRange
+    interval: ChartInterval
+    points: list[ChartOhlcPoint] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ChartHistoryResponse(BaseModel):
+    """Broker-style chart history response."""
+
+    generated_at: datetime
+    range: ChartRange
+    interval: ChartInterval
+    charts: list[TickerChartHistory] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

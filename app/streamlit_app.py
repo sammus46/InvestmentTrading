@@ -12,6 +12,11 @@ import streamlit.components.v1 as components
 from pydantic import ValidationError
 
 from app.models import (
+    CHART_DEFAULT_INTERVAL_BY_RANGE,
+    CHART_INTERVALS_BY_RANGE,
+    ChartHistoryResponse,
+    ChartInterval,
+    ChartRange,
     DEFAULT_METRICS,
     EquityMetrics,
     GenerateRequest,
@@ -24,23 +29,13 @@ from app.models import (
     NewsResponse,
     ScannerRequest,
     ScannerResponse,
+    TickerChartHistory,
 )
 from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 from app.services.scanner import ScannerService
 
-
-METRIC_OPTIONS: dict[MetricName, str] = {
-    "previous_day": "Previous day OHLC",
-    "premarket": "Premarket range",
-    "first_five_minutes": "Opening range",
-    "previous_session_vwap_5m": "Previous session VWAP",
-    "fifty_two_week": "52-week range",
-    "swing_levels": "Swing highs/lows",
-    "bollinger_bands": "Bollinger Bands",
-    "earnings_gap": "Earnings gap",
-}
 
 NEWS_COLLAPSED_HEADLINE_COUNT = 5
 NEWS_EXPANDED_HEADLINE_COUNT = 10
@@ -50,6 +45,9 @@ NEWS_CATEGORY_LABELS = {
     "earnings": "Earnings Reports",
     "general": "General News",
 }
+CHART_TYPE_OPTIONS = ("Line", "Candles")
+CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
+CHART_RANGE_LABELS = {"1Y": "1YR"}
 
 
 LEVELS_VIEW = "Investment Trading Levels"
@@ -112,6 +110,12 @@ def build_market_snapshot(tickers: tuple[str, ...]) -> MarketSnapshotResponse:
 def build_scanner(tickers: tuple[str, ...]) -> ScannerResponse:
     """Run setup scanner and intraday pattern analysis."""
     return scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=True)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def build_chart_history(tickers: tuple[str, ...], chart_range: ChartRange, interval: ChartInterval) -> ChartHistoryResponse:
+    """Fetch OHLC chart history for line and candlestick charts."""
+    return market_data_service().build_chart_history(list(tickers), chart_range, interval)
 
 
 def fmt(value: Any) -> str:
@@ -830,26 +834,120 @@ def render_metric_card(metric: EquityMetrics) -> None:
     )
 
 
-def chart_frame(metric: EquityMetrics) -> pd.DataFrame:
-    """Build a 5-minute close chart frame for Streamlit."""
-    return pd.DataFrame(
-        [{"timestamp": point.timestamp, "close": point.close} for point in metric.intraday_history]
-    )
-
-
 def render_metric(metric: EquityMetrics) -> None:
     """Render one ticker report section."""
     render_metric_card(metric)
-    history = chart_frame(metric)
-    if history.empty:
-        st.info(f"No 5-minute intraday history was returned for {metric.ticker}.")
-    else:
-        with st.expander(f"{metric.ticker} 5-minute chart", expanded=False):
-            st.line_chart(history, x="timestamp", y="close", use_container_width=True)
     if metric.warnings:
         with st.expander(f"{len(metric.warnings)} data warning(s)"):
             for warning in metric.warnings:
                 st.warning(warning)
+
+
+def chart_history_frame(chart: TickerChartHistory) -> pd.DataFrame:
+    """Build a DataFrame from backend OHLC chart points."""
+    return pd.DataFrame(
+        [
+            {
+                "timestamp": point.timestamp,
+                "open": point.open,
+                "high": point.high,
+                "low": point.low,
+                "close": point.close,
+            }
+            for point in chart.points
+        ]
+    )
+
+
+def render_chart_history(report: GenerateResponse, chart_range: ChartRange, interval: ChartInterval, chart_type: str) -> None:
+    """Render compact line/candlestick charts in report order."""
+    tickers = tuple(metric.ticker for metric in report.metrics)
+    if not tickers:
+        return
+    response = build_chart_history(tickers, chart_range, interval)
+    charts_by_ticker = {chart.ticker: chart for chart in response.charts}
+    st.subheader("Charts")
+    columns = st.columns(2)
+    for index, ticker in enumerate(tickers):
+        chart = charts_by_ticker.get(ticker)
+        with columns[index % len(columns)]:
+            with st.container(border=True):
+                st.markdown(f"**{escape(ticker)}**")
+                override_range, override_interval, override_type = chart_range, interval, chart_type
+                with st.expander("Chart settings", expanded=False):
+                    override_type = st.radio(
+                        "Type",
+                        CHART_TYPE_OPTIONS,
+                        horizontal=True,
+                        key=f"chart-type-{ticker}",
+                        index=CHART_TYPE_OPTIONS.index(chart_type),
+                    )
+                    override_range = st.selectbox(
+                        "Range",
+                        CHART_RANGE_OPTIONS,
+                        key=f"chart-range-{ticker}",
+                        index=CHART_RANGE_OPTIONS.index(chart_range),
+                        format_func=format_chart_option,
+                    )
+                    interval_options = CHART_INTERVALS_BY_RANGE[override_range]
+                    default_interval = interval if interval in interval_options else CHART_DEFAULT_INTERVAL_BY_RANGE[override_range]
+                    override_interval = st.selectbox(
+                        "Interval",
+                        interval_options,
+                        key=f"chart-interval-{ticker}",
+                        index=interval_options.index(default_interval),
+                    )
+                if (override_range, override_interval) != (chart_range, interval):
+                    chart = build_chart_history((ticker,), override_range, override_interval).charts[0]
+                if chart is None or not chart.points:
+                    st.caption("No chart data returned.")
+                    continue
+                render_single_chart(chart, override_type)
+                for warning in chart.warnings:
+                    st.caption(warning)
+
+
+def render_single_chart(chart: TickerChartHistory, chart_type: str) -> None:
+    """Render one Streamlit chart using Vega-Lite."""
+    frame = chart_history_frame(chart)
+    if frame.empty:
+        st.caption("No chart data returned.")
+        return
+    if chart_type == "Line":
+        st.line_chart(frame, x="timestamp", y="close", use_container_width=True, height=240)
+        return
+
+    spec = {
+        "height": 240,
+        "transform": [{"calculate": "datum.close >= datum.open", "as": "isUp"}],
+        "layer": [
+            {
+                "mark": "rule",
+                "encoding": {
+                    "x": {"field": "timestamp", "type": "temporal"},
+                    "y": {"field": "low", "type": "quantitative", "scale": {"zero": False}},
+                    "y2": {"field": "high"},
+                    "color": {"condition": {"test": "datum.isUp", "value": "#059669"}, "value": "#dc2626"},
+                },
+            },
+            {
+                "mark": {"type": "bar", "size": 7},
+                "encoding": {
+                    "x": {"field": "timestamp", "type": "temporal"},
+                    "y": {"field": "open", "type": "quantitative", "scale": {"zero": False}},
+                    "y2": {"field": "close"},
+                    "color": {"condition": {"test": "datum.isUp", "value": "#059669"}, "value": "#dc2626"},
+                },
+            },
+        ],
+        "config": {"view": {"stroke": "transparent"}, "axis": {"gridColor": "#eef2f7"}},
+    }
+    st.vega_lite_chart(frame, spec, use_container_width=True)
+
+
+def format_chart_option(option: str) -> str:
+    """Return user-facing chart control labels without changing API values."""
+    return CHART_RANGE_LABELS.get(option, option)
 
 
 def render_article(article: NewsArticle) -> None:
@@ -996,7 +1094,6 @@ def render_performance_rows(rows: list[Any], major: bool) -> None:
 
 def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = None) -> None:
     """Render watchlist and general market news."""
-    st.caption(f"Refreshed at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     for warning in report.warnings:
         st.warning(warning)
 
@@ -1029,7 +1126,6 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
 
 def render_scanner(report: ScannerResponse) -> None:
     """Render setup scanner and intraday pattern analysis."""
-    st.caption(f"Scanner generated at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     for warning in report.warnings:
         st.warning(warning)
 
@@ -1038,7 +1134,7 @@ def render_scanner(report: ScannerResponse) -> None:
         if not report.setup_rows:
             st.info("No setup scanner rows were returned.")
         else:
-            st.dataframe(scanner_setup_frame(report), use_container_width=True, hide_index=True)
+            st.dataframe(styled_scanner_setup_frame(report), use_container_width=True, hide_index=True)
             warned = [row for row in report.setup_rows if row.warnings]
             for row in warned:
                 st.warning(f"{row.ticker}: {' '.join(row.warnings)}")
@@ -1099,6 +1195,50 @@ def scanner_setup_frame(report: ScannerResponse) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def scanner_cell_style(value: str) -> str:
+    """Return Streamlit dataframe CSS for scanner signal cells."""
+    text = str(value)
+    if text.endswith("/8"):
+        try:
+            score = int(text.split("/", 1)[0])
+        except ValueError:
+            score = -1
+        if score >= 7:
+            return "background-color:#dcfce7;color:#166534;font-weight:800"
+        if score >= 5:
+            return "background-color:#ccfbf1;color:#0f766e;font-weight:800"
+        if score >= 3:
+            return "background-color:#fef3c7;color:#92400e;font-weight:800"
+        if score >= 0:
+            return "background-color:#fee2e2;color:#991b1b;font-weight:800"
+    if text.endswith("x"):
+        try:
+            lows = int(text[:-1])
+        except ValueError:
+            lows = 0
+        if lows >= 3:
+            return "background-color:#dcfce7;color:#166534;font-weight:800"
+        if lows == 2:
+            return "background-color:#ccfbf1;color:#0f766e;font-weight:800"
+        if lows == 1:
+            return "background-color:#fef3c7;color:#92400e;font-weight:800"
+    if text == "Turning Up":
+        return "background-color:#dcfce7;color:#166534;font-weight:800"
+    if text == "Ticking Up":
+        return "background-color:#ccfbf1;color:#0f766e;font-weight:800"
+    if text == "Still Falling":
+        return "background-color:#fee2e2;color:#991b1b;font-weight:800"
+    return "background-color:#f1f5f9;color:#64748b;font-weight:700" if text == "-" or text == "Flat" else ""
+
+
+def styled_scanner_setup_frame(report: ScannerResponse):
+    """Build a styled setup scanner frame with color-coded signal columns."""
+    frame = scanner_setup_frame(report)
+    if frame.empty:
+        return frame
+    return frame.style.map(scanner_cell_style, subset=["Score", "Lows Held", "Momentum"])
+
+
 def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
     """Build a display frame for pattern summary rows."""
     return pd.DataFrame(
@@ -1149,10 +1289,80 @@ def pattern_detail_frame(details: list[Any]) -> pd.DataFrame:
     )
 
 
-def selected_metric_ids(labels: list[str]) -> list[MetricName]:
-    """Translate selected labels back to metric ids."""
-    label_to_id = {label: metric_id for metric_id, label in METRIC_OPTIONS.items()}
-    return [label_to_id[label] for label in labels]
+def normalize_ticker_list(value: str | list[str]) -> list[str]:
+    """Normalize delimited ticker text or a ticker list while preserving order."""
+    candidates = value if isinstance(value, list) else value.replace(",", " ").split()
+    cleaned: list[str] = []
+    for candidate in candidates:
+        ticker = str(candidate).strip().upper()
+        if ticker and ticker not in cleaned:
+            cleaned.append(ticker)
+    return cleaned
+
+
+def ensure_streamlit_watchlist() -> None:
+    """Initialize Streamlit session watchlist state."""
+    if "watchlist_tickers" not in st.session_state:
+        st.session_state.watchlist_tickers = normalize_ticker_list("AAPL, MSFT, NVDA")
+
+
+def render_streamlit_watchlist_controls() -> tuple[str, ...]:
+    """Render add/remove/reorder controls and return the current watchlist."""
+    ensure_streamlit_watchlist()
+    with st.form("ticker-add-form", clear_on_submit=True):
+        add_text = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, NVDA")
+        submitted = st.form_submit_button("Add", type="primary", use_container_width=True)
+    if submitted:
+        added = False
+        for ticker in normalize_ticker_list(add_text):
+            if ticker not in st.session_state.watchlist_tickers:
+                st.session_state.watchlist_tickers.append(ticker)
+                added = True
+        if added:
+            st.rerun()
+
+    for index, ticker in enumerate(list(st.session_state.watchlist_tickers)):
+        cols = st.columns([3, 1, 1, 1], vertical_alignment="center")
+        cols[0].markdown(f"**{escape(ticker)}**")
+        if cols[1].button("↑", key=f"watch-up-{ticker}", disabled=index == 0):
+            st.session_state.watchlist_tickers[index - 1], st.session_state.watchlist_tickers[index] = (
+                st.session_state.watchlist_tickers[index],
+                st.session_state.watchlist_tickers[index - 1],
+            )
+            st.rerun()
+        if cols[2].button("↓", key=f"watch-down-{ticker}", disabled=index == len(st.session_state.watchlist_tickers) - 1):
+            st.session_state.watchlist_tickers[index + 1], st.session_state.watchlist_tickers[index] = (
+                st.session_state.watchlist_tickers[index],
+                st.session_state.watchlist_tickers[index + 1],
+            )
+            st.rerun()
+        if cols[3].button("×", key=f"watch-remove-{ticker}"):
+            st.session_state.watchlist_tickers.remove(ticker)
+            st.rerun()
+    if not st.session_state.watchlist_tickers:
+        st.caption("No tickers saved.")
+    return tuple(st.session_state.watchlist_tickers)
+
+
+def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
+    """Render global Streamlit chart controls."""
+    if "chart_range" not in st.session_state:
+        st.session_state.chart_range = "1D"
+    if "chart_interval" not in st.session_state:
+        st.session_state.chart_interval = "5m"
+    if st.session_state.chart_interval not in CHART_INTERVALS_BY_RANGE[st.session_state.chart_range]:
+        st.session_state.chart_interval = CHART_DEFAULT_INTERVAL_BY_RANGE[st.session_state.chart_range]
+
+    type_col, range_col, interval_col = st.columns(3)
+    with type_col:
+        chart_type = st.radio("Chart type", CHART_TYPE_OPTIONS, horizontal=True, key="global-chart-type")
+    with range_col:
+        chart_range = st.selectbox("Range", CHART_RANGE_OPTIONS, key="chart_range", format_func=format_chart_option)
+    if st.session_state.chart_interval not in CHART_INTERVALS_BY_RANGE[chart_range]:
+        st.session_state.chart_interval = CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]
+    with interval_col:
+        chart_interval = st.selectbox("Interval", CHART_INTERVALS_BY_RANGE[chart_range], key="chart_interval")
+    return chart_type, chart_range, chart_interval
 
 
 def main() -> None:
@@ -1161,14 +1371,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Controls")
-        ticker_text = st.text_area("Tickers", value="AAPL, MSFT, NVDA", height=110)
-        selected_labels: list[str] = []
-        if view == LEVELS_VIEW:
-            selected_labels = st.multiselect(
-                "Metrics",
-                options=list(METRIC_OPTIONS.values()),
-                default=[METRIC_OPTIONS[metric_id] for metric_id in DEFAULT_METRICS],
-            )
+        tickers = render_streamlit_watchlist_controls()
 
     if "report" not in st.session_state:
         st.session_state.report = None
@@ -1183,9 +1386,9 @@ def main() -> None:
     if "autoload_key" not in st.session_state:
         st.session_state.autoload_key = None
 
-    autoload_metrics = tuple(selected_metric_ids(selected_labels) if selected_labels else list(DEFAULT_METRICS))
+    autoload_metrics = tuple(DEFAULT_METRICS)
     try:
-        autoload_request = GenerateRequest(tickers=ticker_text, metrics=list(autoload_metrics))
+        autoload_request = GenerateRequest(tickers=list(tickers), metrics=list(autoload_metrics))
     except ValidationError:
         autoload_request = None
     if autoload_request is not None:
@@ -1196,7 +1399,7 @@ def main() -> None:
                 st.session_state.scanner = build_scanner(tuple(autoload_request.tickers))
                 st.session_state.news = build_news(tuple(autoload_request.tickers), per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
                 st.session_state.market_snapshot = build_market_snapshot(tuple(autoload_request.tickers))
-            st.session_state.levels_status = "Saved watchlist loaded."
+            st.session_state.levels_status = ""
             st.session_state.autoload_key = autoload_key
 
     if view == LEVELS_VIEW:
@@ -1205,7 +1408,6 @@ def main() -> None:
             with heading_col:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Investment Trading Levels")
-                st.caption("Generate price-level reports from the shared watchlist.")
             with action_col:
                 generate = st.button("Generate Levels", type="primary", use_container_width=True)
             levels_status_slot = st.empty()
@@ -1215,7 +1417,6 @@ def main() -> None:
             scanner_text_col, scanner_action_col = st.columns([2.2, 1], vertical_alignment="center")
             with scanner_text_col:
                 st.subheader("Scanner")
-                st.caption("Run setup scoring and intraday pattern analysis for the shared watchlist.")
             with scanner_action_col:
                 run_scanner = st.button("Run Scanner", type="primary", use_container_width=True)
         refresh_news = False
@@ -1225,7 +1426,6 @@ def main() -> None:
             with heading_col:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Stock News")
-                st.caption("Use the shared watchlist to pull ticker-specific headlines plus broad US market news.")
             with action_col:
                 refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
         generate = False
@@ -1233,19 +1433,18 @@ def main() -> None:
 
     if generate:
         try:
-            request = GenerateRequest(tickers=ticker_text, metrics=selected_metric_ids(selected_labels))
+            request = GenerateRequest(tickers=list(tickers), metrics=list(DEFAULT_METRICS))
         except ValidationError as exc:
             st.error(exc.errors()[0]["msg"])
             return
 
         with st.spinner("Generating levels..."):
             st.session_state.report = build_report(tuple(request.tickers), tuple(request.metrics))
-        st.session_state.levels_status = "Report generated successfully."
-        levels_status_slot.success(st.session_state.levels_status)
+        st.session_state.levels_status = ""
 
     if run_scanner:
         try:
-            request = ScannerRequest(tickers=ticker_text)
+            request = ScannerRequest(tickers=list(tickers))
         except ValidationError as exc:
             st.error(exc.errors()[0]["msg"])
             return
@@ -1255,8 +1454,8 @@ def main() -> None:
 
     if refresh_news:
         try:
-            request = NewsRequest(tickers=ticker_text, per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
-            snapshot_request = MarketSnapshotRequest(tickers=ticker_text)
+            request = NewsRequest(tickers=list(tickers), per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
+            snapshot_request = MarketSnapshotRequest(tickers=list(tickers))
         except ValidationError as exc:
             st.error(exc.errors()[0]["msg"])
             return
@@ -1268,7 +1467,6 @@ def main() -> None:
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
         if news is None:
-            st.info("Enter tickers and refresh news.")
             return
         render_news(news, st.session_state.market_snapshot)
         return
@@ -1280,14 +1478,12 @@ def main() -> None:
 
     report: GenerateResponse | None = st.session_state.report
     if report is None:
-        st.info("Enter tickers and generate levels to view a report.")
         return
 
     with st.container(border=True):
         header_col, download_col = st.columns([2.2, 1], vertical_alignment="center")
         with header_col:
             st.header("Report")
-            st.caption(f"Generated at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
         with download_col:
             pdf = pdf_report_service().build_pdf(report)
             st.download_button(
@@ -1301,6 +1497,9 @@ def main() -> None:
 
     for metric in report.metrics:
         render_metric(metric)
+
+    chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
+    render_chart_history(report, chart_range, chart_interval, chart_type)
 
 
 if __name__ == "__main__":
