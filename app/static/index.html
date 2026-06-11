@@ -108,7 +108,7 @@
             <div class="charts-header">
               <div>
                 <h3>Charts</h3>
-                <p>Generate a report to view 365-day close charts with selected price levels.</p>
+                <p>Generate a report to view latest-session 5-minute charts with selected price levels.</p>
               </div>
             </div>
           </section>
@@ -125,6 +125,19 @@
             <button id="refresh-news" class="primary" type="button">Refresh News</button>
           </div>
           <p id="news-status" class="status" role="status" aria-live="polite"></p>
+
+          <section class="news-section" aria-labelledby="market-snapshot-heading">
+            <div class="section-heading">
+              <h3 id="market-snapshot-heading">US Markets</h3>
+              <button class="info-button" type="button" data-news-info="snapshot">
+                <span aria-hidden="true">i</span>
+                <span class="sr-only">Market snapshot information</span>
+                <span class="info-tooltip" role="tooltip">Major market instruments and saved watchlist day-to-date performance.</span>
+              </button>
+            </div>
+            <div id="market-snapshot" class="market-strip empty">Open the News view or refresh to load market performance.</div>
+            <div id="watchlist-performance" class="performance-grid empty">Open the News view or refresh to load watchlist performance.</div>
+          </section>
 
           <section class="news-section" aria-labelledby="market-news-heading">
             <div class="section-heading">

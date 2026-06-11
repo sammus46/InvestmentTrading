@@ -23,6 +23,9 @@ from app.models import (
     EarningsGap,
     EquityMetrics,
     FiftyTwoWeekRange,
+    IntradayPricePoint,
+    MarketSnapshotResponse,
+    MarketSnapshotRow,
     Ohlc,
     MetricName,
     PricePoint,
@@ -35,6 +38,17 @@ EASTERN = ZoneInfo("America/New_York")
 MARKET_OPEN = time(9, 30)
 MARKET_CLOSE = time(16, 0)
 PREMARKET_OPEN = time(4, 0)
+
+MARKET_SNAPSHOT_INSTRUMENTS: tuple[tuple[str, str], ...] = (
+    ("^GSPC", "S&P 500"),
+    ("^DJI", "Dow 30"),
+    ("^IXIC", "Nasdaq"),
+    ("^RUT", "Russell 2000"),
+    ("^VIX", "VIX"),
+    ("GC=F", "Gold"),
+    ("BTC-USD", "Bitcoin USD"),
+    ("BZ=F", "Brent Crude Oil"),
+)
 
 
 @dataclass(frozen=True)
@@ -68,12 +82,31 @@ class MarketDataService:
         selected = metrics or list(DEFAULT_METRICS)
         return [self._build_metric(ticker, selected) for ticker in tickers]
 
+    def build_market_snapshot(self, tickers: list[str]) -> MarketSnapshotResponse:
+        """Return major market and watchlist day-to-date performance."""
+        warnings: list[str] = []
+        market = [
+            self._snapshot_row(symbol=symbol, label=label, warnings=warnings)
+            for symbol, label in MARKET_SNAPSHOT_INSTRUMENTS
+        ]
+        watchlist = [
+            self._snapshot_row(symbol=ticker.upper().strip(), label=ticker.upper().strip(), warnings=warnings)
+            for ticker in tickers
+            if ticker.strip()
+        ]
+        return MarketSnapshotResponse(
+            generated_at=datetime.now(timezone.utc),
+            market=market,
+            watchlist=watchlist,
+            warnings=warnings,
+        )
+
     def _build_metric(self, ticker: str, selected_metrics: list[MetricName]) -> EquityMetrics:
         warnings: list[str] = []
         symbol = ticker.upper().strip()
 
         needs_daily = True
-        needs_intraday = "previous_session_vwap_5m" in selected_metrics
+        needs_intraday = True
         needs_opening_intraday = bool({"premarket", "first_five_minutes"} & set(selected_metrics))
 
         daily = (
@@ -126,6 +159,7 @@ class MarketDataService:
         vwap = self._vwap(previous_session, warnings) if "previous_session_vwap_5m" in selected_metrics else None
         swing_levels = self._swing_levels(daily, warnings) if "swing_levels" in selected_metrics else SwingLevels()
         price_history = self._price_history(daily, warnings)
+        intraday_history = self._intraday_price_history(intraday, warnings)
 
         if daily.empty and intraday.empty and opening_intraday.empty and any(
             [needs_daily, needs_intraday, needs_opening_intraday]
@@ -144,6 +178,7 @@ class MarketDataService:
             swing_levels=swing_levels,
             bollinger_bands=bollinger,
             price_history=price_history,
+            intraday_history=intraday_history,
             data_timestamp=datetime.now(timezone.utc),
             warnings=warnings,
         )
@@ -166,6 +201,42 @@ class MarketDataService:
         """Return 5-minute bars for setup and pattern scanning."""
         return self._download(symbol, period=period or self.settings.intraday_history_period, interval="5m", prepost=False)
 
+    def _snapshot_row(self, symbol: str, label: str, warnings: list[str]) -> MarketSnapshotRow:
+        row_warnings: list[str] = []
+        try:
+            intraday = self._download(symbol, period="1d", interval="5m", prepost=True)
+        except Exception as exc:
+            intraday = pd.DataFrame()
+            row_warnings.append(f"Intraday snapshot data was unavailable for {label}: {exc}")
+        try:
+            daily = self._download_daily_history(symbol, days=10)
+        except Exception as exc:
+            daily = pd.DataFrame()
+            row_warnings.append(f"Daily snapshot data was unavailable for {label}: {exc}")
+        sparkline = self._snapshot_sparkline(intraday)
+        price = sparkline[-1].close if sparkline else self._latest_close(intraday)
+        previous_close = self._previous_completed_close(daily)
+        change = round(price - previous_close, 2) if price is not None and previous_close not in (None, 0) else None
+        change_percent = self._pct_from(price, previous_close) if price is not None and previous_close not in (None, 0) else None
+
+        if price is None:
+            row_warnings.append(f"No latest price was returned for {label}.")
+        if previous_close is None:
+            row_warnings.append(f"No previous close was returned for {label}.")
+        if not sparkline:
+            row_warnings.append(f"No intraday sparkline data was returned for {label}.")
+        warnings.extend(row_warnings)
+        return MarketSnapshotRow(
+            symbol=symbol,
+            label=label,
+            price=price,
+            previous_close=previous_close,
+            change=change,
+            change_percent=change_percent,
+            sparkline=sparkline,
+            warnings=row_warnings,
+        )
+
     def _price_history(self, daily: pd.DataFrame, warnings: list[str]) -> list[PricePoint]:
         """Return recent completed daily closes for frontend and PDF charts."""
         if daily.empty:
@@ -187,6 +258,56 @@ class MarketDataService:
         for session_date, close in zip(index.date, recent["Close"].astype(float), strict=False):
             points.append(PricePoint(date=session_date, close=round(float(close), 2)))
         return points
+
+    def _intraday_price_history(self, intraday: pd.DataFrame, warnings: list[str]) -> list[IntradayPricePoint]:
+        """Return latest regular-session 5-minute closes for frontend charts."""
+        if intraday.empty:
+            warnings.append("Intraday data was unavailable for 5-minute chart history.")
+            return []
+
+        session = self._today_regular_session(intraday).dropna(subset=["Close"])
+        if session.empty:
+            warnings.append("Intraday data did not include regular-session bars for 5-minute chart history.")
+            return []
+        return self._intraday_points(session)
+
+    def _snapshot_sparkline(self, intraday: pd.DataFrame) -> list[IntradayPricePoint]:
+        if intraday.empty:
+            return []
+        localized = self._with_eastern_index(intraday)
+        latest = self._latest_session_bars(localized).dropna(subset=["Close"])
+        if latest.empty:
+            return []
+        return self._intraday_points(latest)
+
+    @staticmethod
+    def _intraday_points(frame: pd.DataFrame) -> list[IntradayPricePoint]:
+        index = pd.DatetimeIndex(frame.index)
+        if index.tz is None:
+            index = index.tz_localize(timezone.utc)
+        points: list[IntradayPricePoint] = []
+        for stamp, close in zip(index, frame["Close"].astype(float), strict=False):
+            points.append(IntradayPricePoint(timestamp=stamp.to_pydatetime(), close=round(float(close), 2)))
+        return points
+
+    @staticmethod
+    def _latest_close(frame: pd.DataFrame) -> float | None:
+        if frame.empty or "Close" not in frame.columns:
+            return None
+        closes = frame["Close"].dropna().astype(float)
+        return round(float(closes.iloc[-1]), 2) if not closes.empty else None
+
+    @staticmethod
+    def _previous_completed_close(daily: pd.DataFrame) -> float | None:
+        if daily.empty or "Close" not in daily.columns:
+            return None
+        completed = daily.dropna(subset=["Close"])
+        completed = MarketDataService._exclude_current_eastern_day(completed)
+        if completed.empty:
+            completed = daily.dropna(subset=["Close"])
+        if completed.empty:
+            return None
+        return round(float(completed["Close"].astype(float).iloc[-1]), 2)
 
     @staticmethod
     def _download(
@@ -504,11 +625,22 @@ class MarketDataService:
         return round(float(completed["Close"].astype(float).ewm(span=period, adjust=False).mean().iloc[-1]), 2)
 
     def _intraday_ema(self, intraday: pd.DataFrame, period: int, warnings: list[str]) -> float | None:
-        session = self._today_regular_session(intraday)
-        if session.empty or len(session.dropna(subset=["Close"])) < period:
+        if intraday.empty:
             warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
             return None
-        return round(float(session["Close"].dropna().astype(float).ewm(span=period, adjust=False).mean().iloc[-1]), 2)
+
+        localized = self._with_eastern_index(intraday)
+        regular = localized.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left").dropna(subset=["Close"])
+        if regular.empty:
+            warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
+            return None
+
+        latest = self._latest_session_bars(regular)
+        closes = latest["Close"].dropna().astype(float) if len(latest.dropna(subset=["Close"])) >= period else regular["Close"].dropna().astype(float)
+        if len(closes) < period:
+            warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
+            return None
+        return round(float(closes.ewm(span=period, adjust=False).mean().iloc[-1]), 2)
 
     @staticmethod
     def _pivot_points(previous_day: Ohlc) -> dict[str, float | None]:

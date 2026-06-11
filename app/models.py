@@ -147,6 +147,13 @@ class PricePoint(BaseModel):
     close: float
 
 
+class IntradayPricePoint(BaseModel):
+    """Intraday close used by web charts and market snapshot sparklines."""
+
+    timestamp: datetime
+    close: float
+
+
 class EquityMetrics(BaseModel):
     """Calculated metrics for a single equity."""
 
@@ -161,6 +168,7 @@ class EquityMetrics(BaseModel):
     swing_levels: SwingLevels
     bollinger_bands: BollingerLevels
     price_history: list[PricePoint] = Field(default_factory=list)
+    intraday_history: list[IntradayPricePoint] = Field(default_factory=list)
     data_timestamp: datetime
     warnings: list[str] = Field(default_factory=list)
 
@@ -215,6 +223,7 @@ class ScannerSetupRow(BaseModel):
     off_high_percent: float | None = None
     momentum: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    data_notes: list[str] = Field(default_factory=list)
 
 
 class PatternSummaryRow(BaseModel):
@@ -310,4 +319,38 @@ class NewsResponse(BaseModel):
     watchlist: list[str]
     general_market: list[NewsArticle] = Field(default_factory=list)
     ticker_news: list[TickerNews] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MarketSnapshotRequest(BaseModel):
+    """Request payload for major market and watchlist performance snapshots."""
+
+    tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def split_ticker_input(cls, value: object) -> list[str]:
+        """Accept either a list or comma/space/newline separated ticker text."""
+        return GenerateRequest.split_ticker_input(value)
+
+
+class MarketSnapshotRow(BaseModel):
+    """Latest day-to-date performance for one market instrument or ticker."""
+
+    symbol: str
+    label: str
+    price: float | None = None
+    previous_close: float | None = None
+    change: float | None = None
+    change_percent: float | None = None
+    sparkline: list[IntradayPricePoint] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MarketSnapshotResponse(BaseModel):
+    """Major market and watchlist day-to-date performance snapshot."""
+
+    generated_at: datetime
+    market: list[MarketSnapshotRow] = Field(default_factory=list)
+    watchlist: list[MarketSnapshotRow] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

@@ -282,6 +282,7 @@ class ScannerService:
         setup = data.get("setup") if isinstance(data.get("setup"), dict) else None
         sr = data.get("sr") if isinstance(data.get("sr"), dict) else {}
         signal = data.get("signal") if isinstance(data.get("signal"), str) else None
+        warnings, data_notes = self._split_scanner_messages(scan_data.warnings)
         return ScannerSetupRow(
             ticker=scan_data.symbol,
             price=self._float(data.get("price")),
@@ -307,8 +308,34 @@ class ScannerService:
             range_compression="Tight" if setup and setup["is_tight"] else "Wide" if setup else None,
             off_high_percent=self._float(setup.get("off_high_pct")) if setup else None,
             momentum=str(setup["momentum"]) if setup else None,
-            warnings=scan_data.warnings,
+            warnings=warnings,
+            data_notes=data_notes,
         )
+
+    @classmethod
+    def _split_scanner_messages(cls, warnings: list[str]) -> tuple[list[str], list[str]]:
+        visible: list[str] = []
+        notes: list[str] = []
+        for warning in warnings:
+            if cls._is_optional_data_note(warning):
+                notes.append(warning)
+            else:
+                visible.append(warning)
+        return visible, notes
+
+    @staticmethod
+    def _is_optional_data_note(message: str) -> bool:
+        optional_fragments = (
+            "completed daily closes are required",
+            "intraday closes are required",
+            "Daily data was unavailable for earnings gap calculations",
+            "Earnings dates were unavailable",
+            "No earnings dates were returned",
+            "No completed earnings dates were returned",
+            "was not present in daily bars",
+            "Earnings gap could not be calculated",
+        )
+        return any(fragment in message for fragment in optional_fragments)
 
     @staticmethod
     def _float(value: object) -> float | None:

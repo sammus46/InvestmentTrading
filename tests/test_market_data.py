@@ -1,8 +1,9 @@
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from app.services import market_data
 from app.services.market_data import MarketDataService, MarketDataSettings
 
 EASTERN = ZoneInfo("America/New_York")
@@ -259,6 +260,12 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
 
     def fake_download(symbol, period, interval, prepost, start=None, end=None):
         downloads.append((period, interval, prepost, start, end))
+        if interval == "5m":
+            today = datetime.now(EASTERN).date()
+            return pd.DataFrame(
+                {"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [11.5], "Volume": [100]},
+                index=pd.DatetimeIndex([datetime.combine(today, time(9, 30), tzinfo=EASTERN)]),
+            )
         return pd.DataFrame({"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [11.0]}, index=pd.DatetimeIndex(["2026-05-15"]))
 
     monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
@@ -267,12 +274,15 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
 
     assert metric.selected_metrics == ["previous_day"]
     assert metric.previous_day.close == 11.0
-    [(period, interval, prepost, start, end)] = downloads
-    assert (period, interval, prepost) == (None, "1d", False)
-    assert start is not None
-    assert end is not None
-    assert (end - start).days == 365
+    assert [(period, interval, prepost) for period, interval, prepost, _, _ in downloads] == [
+        (None, "1d", False),
+        ("5d", "5m", True),
+    ]
+    assert downloads[0][3] is not None
+    assert downloads[0][4] is not None
+    assert (downloads[0][4] - downloads[0][3]).days == 365
     assert [point.close for point in metric.price_history] == [11.0]
+    assert [point.close for point in metric.intraday_history] == [11.5]
 
 
 def test_price_history_uses_latest_completed_daily_closes():
@@ -289,3 +299,54 @@ def test_price_history_uses_latest_completed_daily_closes():
 
     assert [point.date for point in history] == [first, second]
     assert [point.close for point in history] == [10.12, 11.0]
+
+
+def test_intraday_price_history_uses_latest_regular_session():
+    today = datetime.now(EASTERN).date()
+    yesterday = today - timedelta(days=1)
+    index = pd.DatetimeIndex(
+        [
+            datetime.combine(yesterday, time(9, 30), tzinfo=EASTERN),
+            datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+            datetime.combine(today, time(9, 35), tzinfo=EASTERN),
+            datetime.combine(today, time(16, 5), tzinfo=EASTERN),
+        ]
+    )
+    intraday = pd.DataFrame({"Close": [98.0, 100.0, 101.5, 102.0]}, index=index)
+
+    history = MarketDataService()._intraday_price_history(intraday, [])
+
+    assert [point.close for point in history] == [100.0, 101.5]
+
+
+def test_market_snapshot_preserves_configured_order_and_calculates_change(monkeypatch):
+    monkeypatch.setattr(market_data, "MARKET_SNAPSHOT_INSTRUMENTS", (("SPY", "S&P 500"), ("QQQ", "Nasdaq")))
+    today = datetime.now(EASTERN).date()
+    yesterday = today - timedelta(days=1)
+
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        if interval == "1d":
+            return pd.DataFrame(
+                {"Close": [100.0, 110.0]},
+                index=pd.DatetimeIndex([yesterday, today]),
+            )
+        return pd.DataFrame(
+            {"Close": [110.0, 112.0]},
+            index=pd.DatetimeIndex(
+                [
+                    datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+                    datetime.combine(today, time(9, 35), tzinfo=EASTERN),
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+
+    snapshot = MarketDataService().build_market_snapshot(["aapl"])
+
+    assert [row.label for row in snapshot.market] == ["S&P 500", "Nasdaq"]
+    assert [row.symbol for row in snapshot.watchlist] == ["AAPL"]
+    assert snapshot.watchlist[0].price == 112.0
+    assert snapshot.watchlist[0].previous_close == 100.0
+    assert snapshot.watchlist[0].change == 12.0
+    assert snapshot.watchlist[0].change_percent == 12.0
