@@ -117,6 +117,9 @@ def render_app_chrome() -> str:
             color-scheme: light;
           }
           .stApp {
+            --page-gutter: clamp(0.75rem, 2vw, 2.75rem);
+            --content-max: 2600px;
+            --content-width: min(var(--content-max), calc(100vw - (var(--page-gutter) * 2)));
             background: #eef2f1;
             color: #111827;
           }
@@ -143,8 +146,24 @@ def render_app_chrome() -> str:
             border-bottom: 1px solid #d5ddd9;
           }
           .block-container {
-            max-width: 1220px;
+            max-width: var(--content-max);
+            padding-left: var(--page-gutter);
+            padding-right: var(--page-gutter);
             padding-top: 2rem;
+            width: 100%;
+          }
+          .stApp [data-testid="stDataFrame"],
+          .stApp [data-testid="stDataFrame"] > div,
+          .stApp [data-testid="stTable"],
+          .stApp [data-testid="stTable"] > div {
+            max-width: 100%;
+            min-width: 0;
+            overflow-x: auto !important;
+          }
+          .stApp [data-testid="stHorizontalBlock"],
+          .stApp [data-testid="stVerticalBlock"],
+          .stApp [data-testid="stVerticalBlockBorderWrapper"] {
+            min-width: 0;
           }
           [data-testid="stSidebar"] {
             background: #ffffff;
@@ -445,6 +464,8 @@ def render_app_chrome() -> str:
             border-radius: 0.5rem;
             box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
             margin: 1rem 0;
+            min-width: 0;
+            overflow: hidden;
             padding: 1.25rem;
           }
           .streamlit-scanner-card h2,
@@ -495,6 +516,13 @@ def render_app_chrome() -> str:
             box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
           }
           @media (max-width: 760px) {
+            .stApp {
+              --page-gutter: 0.5rem;
+            }
+            .block-container {
+              padding-left: 0.5rem;
+              padding-right: 0.5rem;
+            }
             .streamlit-news-card.with-image {
               grid-template-columns: 1fr;
             }
