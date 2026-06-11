@@ -1,4 +1,6 @@
-from app.models import GenerateRequest, NewsRequest
+from datetime import datetime, timezone
+
+from app.models import IntradayPricePoint, MarketSnapshotRequest, MarketSnapshotRow, NewsRequest, GenerateRequest
 
 
 def test_generate_request_accepts_delimited_tickers():
@@ -23,3 +25,16 @@ def test_news_request_accepts_expanded_headline_count():
     request = NewsRequest(tickers="aapl", per_ticker=20)
 
     assert request.per_ticker == 20
+
+
+def test_market_snapshot_request_reuses_watchlist_normalization():
+    request = MarketSnapshotRequest(tickers="spy, qqq\nSPY")
+
+    assert request.tickers == ["SPY", "QQQ"]
+
+
+def test_market_snapshot_row_accepts_intraday_sparkline_points():
+    point = IntradayPricePoint(timestamp=datetime(2026, 6, 11, 14, 30, tzinfo=timezone.utc), close=101.25)
+    row = MarketSnapshotRow(symbol="SPY", label="SPY", price=101.25, sparkline=[point])
+
+    assert row.sparkline[0].close == 101.25

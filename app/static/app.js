@@ -2,7 +2,7 @@ const STORAGE_KEY = "equity-levels-watchlist";
 const METRICS_STORAGE_KEY = "equity-levels-selected-metrics";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
-const DEFAULT_CHART_WINDOW_DAYS = 365;
+const DEFAULT_CHART_WINDOW_POINTS = 365;
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
@@ -61,6 +61,8 @@ const newsStatusEl = document.querySelector("#news-status");
 const newsGeneratedAtEl = document.querySelector("#news-generated-at");
 const marketNewsEl = document.querySelector("#market-news");
 const watchlistNewsEl = document.querySelector("#watchlist-news");
+const marketSnapshotEl = document.querySelector("#market-snapshot");
+const watchlistPerformanceEl = document.querySelector("#watchlist-performance");
 const xNewsEl = document.querySelector("#x-news");
 const newsInfoButtons = [...document.querySelectorAll("[data-news-info]")];
 const menuToggleButton = document.querySelector("#menu-toggle");
@@ -72,6 +74,7 @@ const metricsControlsEl = document.querySelector("#metrics-controls");
 let currentReport = null;
 let currentNews = null;
 let currentScanner = null;
+let currentMarketSnapshot = null;
 let scannerSort = { key: "score", direction: "desc" };
 let draggedTicker = null;
 let expandedNewsTickers = new Set();
@@ -80,8 +83,9 @@ const hiddenChartGroups = {};
 
 tickersInput.value = localStorage.getItem(STORAGE_KEY) || "";
 renderMetricSelector();
-switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false });
+switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false, loadSnapshot: false });
 updateNewsInfoTooltips();
+autoloadSavedWatchlist();
 
 viewNavButtons.forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.view));
@@ -113,17 +117,15 @@ tickersInput.addEventListener("input", () => {
   saveStateEl.textContent = "Saved locally";
   currentNews = null;
   currentScanner = null;
+  currentMarketSnapshot = null;
   expandedNewsTickers.clear();
   renderNewsEmptyState();
+  renderMarketSnapshotEmptyState();
   renderScannerEmptyState();
 });
 
 generateButton.addEventListener("click", async () => {
-  await withBusyState("Generating levels...", async () => {
-    const report = await postJson("/api/levels", buildPayload());
-    renderReport(report);
-    setStatus("Report generated successfully. Drag cards or use the arrow buttons to reorder them.", "success");
-  });
+  await loadLevels();
 });
 
 pdfButton.addEventListener("click", async () => {
@@ -150,7 +152,7 @@ pdfButton.addEventListener("click", async () => {
 });
 
 refreshNewsButton.addEventListener("click", async () => {
-  await loadNews();
+  await Promise.all([loadMarketSnapshot(), loadNews()]);
 });
 
 watchlistNewsEl.addEventListener("click", (event) => {
@@ -298,6 +300,9 @@ function switchView(view, options = {}) {
 
   if (nextView === "news") {
     loadXTimeline();
+    if (options.loadSnapshot !== false && !currentMarketSnapshot) {
+      loadMarketSnapshot();
+    }
     if (options.loadNews !== false && !currentNews) {
       loadNews();
     }
@@ -363,6 +368,12 @@ function buildScannerPayload() {
     include_setup: true,
     include_patterns: true,
     pattern_lookback_days: 30,
+  };
+}
+
+function buildMarketSnapshotPayload() {
+  return {
+    tickers: tickersInput.value,
   };
 }
 
@@ -445,12 +456,50 @@ async function loadNews() {
   });
 }
 
+async function loadLevels() {
+  await withBusyState("Generating levels...", async () => {
+    const report = await postJson("/api/levels", buildPayload());
+    renderReport(report);
+    setStatus("Report generated successfully. Drag cards or use the arrow buttons to reorder them.", "success");
+  });
+}
+
 async function loadScanner() {
   await withScannerBusyState("Running scanner for the shared watchlist...", async () => {
     const scanner = await postJson("/api/scanner", buildScannerPayload());
     renderScanner(scanner);
     setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "Scanner completed.", scanner.warnings?.length ? "error" : "success");
   });
+}
+
+async function loadMarketSnapshot() {
+  const tickers = tickersInput.value.trim();
+  if (!tickers) {
+    renderMarketSnapshotEmptyState();
+    return;
+  }
+  renderMarketSnapshotLoadingState();
+  try {
+    const snapshot = await postJson("/api/market-snapshot", buildMarketSnapshotPayload());
+    renderMarketSnapshot(snapshot);
+  } catch (error) {
+    currentMarketSnapshot = null;
+    marketSnapshotEl.className = "market-strip empty";
+    marketSnapshotEl.textContent = readableError(error);
+    watchlistPerformanceEl.className = "performance-grid empty";
+    watchlistPerformanceEl.textContent = "Watchlist performance could not be loaded.";
+  }
+}
+
+function autoloadSavedWatchlist() {
+  if (!tickersInput.value.trim()) return;
+  setStatus("Loading saved levels...", "");
+  setScannerStatus("Loading saved scanner...", "");
+  setNewsStatus("Loading saved news and market snapshot...", "");
+  loadLevels();
+  loadScanner();
+  loadNews();
+  loadMarketSnapshot();
 }
 
 function renderReport(report) {
@@ -493,6 +542,21 @@ function renderNewsEmptyState() {
   watchlistNewsEl.className = "ticker-news-grid empty";
   watchlistNewsEl.textContent = "Enter tickers and refresh news.";
   setNewsStatus("", "");
+}
+
+function renderMarketSnapshotEmptyState() {
+  if (currentMarketSnapshot) return;
+  marketSnapshotEl.className = "market-strip empty";
+  marketSnapshotEl.textContent = "Open the News view or refresh to load market performance.";
+  watchlistPerformanceEl.className = "performance-grid empty";
+  watchlistPerformanceEl.textContent = "Open the News view or refresh to load watchlist performance.";
+}
+
+function renderMarketSnapshotLoadingState() {
+  marketSnapshotEl.className = "market-strip empty";
+  marketSnapshotEl.textContent = "Loading market performance...";
+  watchlistPerformanceEl.className = "performance-grid empty";
+  watchlistPerformanceEl.textContent = "Loading watchlist performance...";
 }
 
 function renderScannerEmptyState() {
@@ -553,6 +617,7 @@ function renderScannerSetup(rows) {
     ["off_high_percent", "Off High"],
     ["momentum", "Momentum"],
   ];
+  const dataNotes = sorted.flatMap((row) => (row.data_notes || []).map((note) => ({ ticker: row.ticker, note })));
   scannerSetupEl.className = "scanner-table-wrap";
   scannerSetupEl.innerHTML = `
     <table class="scanner-table">
@@ -585,6 +650,19 @@ function renderScannerSetup(rows) {
         `).join("")}
       </tbody>
     </table>
+    ${renderScannerDataNotes(dataNotes)}
+  `;
+}
+
+function renderScannerDataNotes(notes) {
+  if (!notes.length) return "";
+  return `
+    <details class="scanner-data-notes">
+      <summary>${notes.length} scanner data note${notes.length === 1 ? "" : "s"}</summary>
+      <ul>
+        ${notes.map(({ ticker, note }) => `<li><strong>${escapeHtml(ticker)}:</strong> ${escapeHtml(note)}</li>`).join("")}
+      </ul>
+    </details>
   `;
 }
 
@@ -692,6 +770,73 @@ function renderWarningStatus(warnings) {
   setNewsStatus(warnings.join(" "), "error");
 }
 
+function renderMarketSnapshot(snapshot) {
+  currentMarketSnapshot = snapshot;
+  renderMarketPerformance(snapshot.market || []);
+  renderWatchlistPerformance(snapshot.watchlist || []);
+}
+
+function renderMarketPerformance(rows) {
+  if (!rows.length) {
+    marketSnapshotEl.className = "market-strip empty";
+    marketSnapshotEl.textContent = "No market performance was returned.";
+    return;
+  }
+  marketSnapshotEl.className = "market-strip";
+  marketSnapshotEl.innerHTML = rows.map((row) => renderPerformanceTile(row, { compact: true })).join("");
+}
+
+function renderWatchlistPerformance(rows) {
+  if (!rows.length) {
+    watchlistPerformanceEl.className = "performance-grid empty";
+    watchlistPerformanceEl.textContent = "No watchlist performance was returned.";
+    return;
+  }
+  watchlistPerformanceEl.className = "performance-grid";
+  watchlistPerformanceEl.innerHTML = rows.map((row) => renderPerformanceTile(row)).join("");
+}
+
+function renderPerformanceTile(row, options = {}) {
+  const changeClass = Number(row.change) < 0 || Number(row.change_percent) < 0 ? "negative" : "positive";
+  const hasChange = row.change !== null && row.change !== undefined && row.change_percent !== null && row.change_percent !== undefined;
+  const warnings = row.warnings?.length ? `<span class="performance-warning" title="${escapeHtml(row.warnings.join(" "))}">!</span>` : "";
+  return `
+    <article class="performance-tile ${options.compact ? "compact" : ""}">
+      <div>
+        <h4>${escapeHtml(row.label || row.symbol)}</h4>
+        <strong>${formatValue(row.price)}</strong>
+        <span class="performance-change ${hasChange ? changeClass : ""}">
+          ${hasChange ? `${formatSignedValue(row.change)} ${formatSignedPercent(row.change_percent)}` : "&mdash;"}
+        </span>
+      </div>
+      ${buildSparkline(row.sparkline || [], changeClass)}
+      ${warnings}
+    </article>
+  `;
+}
+
+function buildSparkline(points, changeClass) {
+  if (!points.length) return '<div class="sparkline empty"></div>';
+  const width = 116;
+  const height = 42;
+  const values = points.map((point) => Number(point.close)).filter(Number.isFinite);
+  if (!values.length) return '<div class="sparkline empty"></div>';
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  if (minValue === maxValue) {
+    minValue -= 1;
+    maxValue += 1;
+  }
+  const xFor = (index) => (points.length === 1 ? width / 2 : (index / (points.length - 1)) * width);
+  const yFor = (value) => height - ((value - minValue) / (maxValue - minValue)) * height;
+  const polyline = points.map((point, index) => `${xFor(index).toFixed(2)},${yFor(Number(point.close)).toFixed(2)}`).join(" ");
+  return `
+    <svg class="sparkline ${changeClass}" viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">
+      <polyline points="${polyline}"></polyline>
+    </svg>
+  `;
+}
+
 function renderMarketNews(articles) {
   if (!articles.length) {
     marketNewsEl.className = "news-list empty";
@@ -788,6 +933,7 @@ function updateNewsInfoTooltips(generatedAt = null) {
     ? `News refreshed ${new Date(generatedAt).toLocaleString()}.`
     : "News has not been refreshed yet.";
   const descriptions = {
+    snapshot: `${refreshed} Major market instruments and saved watchlist day-to-date performance.`,
     market: `${refreshed} Major headlines related to the US stock market.`,
     watchlist: `${refreshed} Headlines grouped by ticker from the same list used for levels.`,
     x: `${refreshed} Public @unusual_whales posts embedded from X.com.`,
@@ -980,7 +1126,7 @@ function renderCharts() {
       <div class="charts-header">
         <div>
           <h3>Charts</h3>
-          <p>Generate a report to view 365-day close charts with selected price levels.</p>
+          <p>Generate a report to view latest-session 5-minute charts with selected price levels.</p>
         </div>
       </div>
     `;
@@ -992,7 +1138,7 @@ function renderCharts() {
     <div class="charts-header">
       <div>
         <h3>Charts</h3>
-        <p>Charts stay in the same order as the report cards. Drag either end of a chart range slider to zoom the x-axis.</p>
+        <p>5-minute charts stay in the same order as the report cards. Drag either end of a chart range slider to zoom the x-axis.</p>
       </div>
     </div>
     <div class="charts-grid">
@@ -1002,17 +1148,17 @@ function renderCharts() {
 }
 
 function renderTickerChart(metric) {
-  const history = metric.price_history || [];
+  const history = metric.intraday_history || [];
   if (!history.length) {
     return `
       <article class="chart-card" data-chart-ticker="${escapeHtml(metric.ticker)}">
         <div class="chart-card-header"><h4>${escapeHtml(metric.ticker)}</h4></div>
-        <p class="chart-empty">No daily close history was returned for this ticker.</p>
+        <p class="chart-empty">No 5-minute intraday history was returned for this ticker.</p>
       </article>
     `;
   }
 
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, history.length);
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, history.length);
   const range = normalizeChartWindow(metric.ticker, maxWindow);
   const selectedWindow = chartWindowLength(range);
   const visibleHistory = history.slice(range.start - 1, range.end);
@@ -1099,7 +1245,7 @@ function buildChartSvg(history, levels, showClose = true) {
   const gridValues = [0, 0.25, 0.5, 0.75, 1].map((ratio) => maxValue - (maxValue - minValue) * ratio);
 
   return `
-    <svg class="price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily close chart with marked price levels">
+    <svg class="price-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="5-minute close chart with marked price levels">
       <rect class="chart-bg" x="0" y="0" width="${width}" height="${height}" rx="8"></rect>
       ${gridValues.map((value) => {
         const y = yFor(value).toFixed(2);
@@ -1112,8 +1258,8 @@ function buildChartSvg(history, levels, showClose = true) {
       ${showClose ? `<polyline class="chart-close-line" points="${closePoints}"></polyline>` : ""}
       ${showClose ? history.map((point, index) => `<circle class="chart-close-point" cx="${xFor(index).toFixed(2)}" cy="${yFor(Number(point.close)).toFixed(2)}" r="${history.length > 80 ? 2 : 3}"><title>${escapeHtml(buildPointTooltip(point, levels))}</title></circle>`).join("") : ""}
       <line class="chart-axis" x1="${margin.left}" x2="${width - margin.right}" y1="${height - margin.bottom}" y2="${height - margin.bottom}"></line>
-      <text class="chart-axis-label" x="${margin.left}" y="${height - 14}">${formatChartDate(first.date)}</text>
-      <text class="chart-axis-label" x="${width - margin.right - 80}" y="${height - 14}">${formatChartDate(last.date)}</text>
+      <text class="chart-axis-label" x="${margin.left}" y="${height - 14}">${formatChartTimestamp(first.timestamp)}</text>
+      <text class="chart-axis-label" x="${width - margin.right - 92}" y="${height - 14}">${formatChartTimestamp(last.timestamp)}</text>
     </svg>
   `;
 }
@@ -1127,7 +1273,7 @@ function renderChartLegend(ticker, levels, hiddenGroups) {
 
   return `
     <div class="chart-legend" aria-label="Chart line visibility controls">
-      ${button("close", "Daily close", `<i class="legend-close"></i>`)}
+      ${button("close", "5-minute close", `<i class="legend-close"></i>`)}
       ${groups.map((level) => button(level.group, level.legend, `<i style="background:${level.color}; height:${Math.max(3, level.width)}px"></i>`)).join("")}
     </div>
   `;
@@ -1135,13 +1281,10 @@ function renderChartLegend(ticker, levels, hiddenGroups) {
 
 function renderChartZoomControls(ticker, range, selectedWindow, maxWindow) {
   const presets = [
-    ["1d", "Last 1 day"],
-    ["3d", "Last 3 days"],
-    ["wtd", "Week to date"],
-    ["mtd", "Month to date"],
-    ["3mtd", "3 months to date"],
-    ["ytd", "Year to date"],
-    ["1y", "Last 1 year"],
+    ["1h", "Last 1 hour"],
+    ["2h", "Last 2 hours"],
+    ["4h", "Last 4 hours"],
+    ["full", "Full session"],
   ];
 
   return `
@@ -1150,8 +1293,8 @@ function renderChartZoomControls(ticker, range, selectedWindow, maxWindow) {
         <span>X-axis zoom</span>
         <div class="zoom-row range-zoom-row">
           <div class="range-slider" data-ticker="${escapeHtml(ticker)}" data-max-window="${maxWindow}" style="--range-start:${chartWindowPercent(range.start, maxWindow)}%; --range-end:${chartWindowPercent(range.end, maxWindow)}%">
-            <input class="chart-window chart-window-start" data-ticker="${escapeHtml(ticker)}" data-window-bound="start" type="range" min="1" max="${maxWindow}" value="${range.start}" aria-label="First visible session" />
-            <input class="chart-window chart-window-end" data-ticker="${escapeHtml(ticker)}" data-window-bound="end" type="range" min="1" max="${maxWindow}" value="${range.end}" aria-label="Last visible session" />
+            <input class="chart-window chart-window-start" data-ticker="${escapeHtml(ticker)}" data-window-bound="start" type="range" min="1" max="${maxWindow}" value="${range.start}" aria-label="First visible 5-minute point" />
+            <input class="chart-window chart-window-end" data-ticker="${escapeHtml(ticker)}" data-window-bound="end" type="range" min="1" max="${maxWindow}" value="${range.end}" aria-label="Last visible 5-minute point" />
           </div>
           <output>${formatChartWindowLength(selectedWindow)}</output>
         </div>
@@ -1163,8 +1306,8 @@ function renderChartZoomControls(ticker, range, selectedWindow, maxWindow) {
   `;
 }
 
-function formatChartDate(value) {
-  return parseChartDate(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function formatChartTimestamp(value) {
+  return new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 function getHiddenChartGroups(ticker) {
@@ -1189,7 +1332,7 @@ function normalizeChartWindow(ticker, maxWindow) {
 
 function updateChartWindowBound(ticker, bound, value) {
   const metric = findMetric(ticker);
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric?.price_history?.length || 1);
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, metric?.intraday_history?.length || 1);
   const range = normalizeChartWindow(ticker, maxWindow);
   if (bound === "start") {
     range.start = Math.min(Math.max(Math.round(value), 1), range.end);
@@ -1212,7 +1355,7 @@ function syncChartZoomControl(ticker) {
   const chartCard = findTickerChartCard(ticker);
   if (!metric || !chartCard) return;
 
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric.price_history?.length || 1);
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, metric.intraday_history?.length || 1);
   const range = normalizeChartWindow(ticker, maxWindow);
   const rangeSlider = chartCard.querySelector(".range-slider");
   const startInput = chartCard.querySelector("[data-window-bound='start']");
@@ -1269,7 +1412,7 @@ function chartWindowLength(range) {
 }
 
 function formatChartWindowLength(selectedWindow) {
-  return `${selectedWindow} session${selectedWindow === 1 ? "" : "s"}`;
+  return `${selectedWindow} point${selectedWindow === 1 ? "" : "s"}`;
 }
 
 function chartWindowPercent(value, maxWindow) {
@@ -1288,7 +1431,7 @@ function buildPointTooltip(point, levels) {
   const levelLines = levels.length
     ? levels.map((level) => `${level.label}: ${formatValue(level.value)}`).join("\n")
     : "No visible price levels";
-  return `${formatChartDate(point.date)} close: ${formatValue(point.close)}\n${levelLines}`;
+  return `${new Date(point.timestamp).toLocaleString()} close: ${formatValue(point.close)}\n${levelLines}`;
 }
 
 function toggleChartGroup(ticker, group) {
@@ -1303,39 +1446,19 @@ function toggleChartGroup(ticker, group) {
 
 function applyChartWindowPreset(ticker, preset) {
   const metric = findMetric(ticker);
-  if (!metric?.price_history?.length) return;
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, metric.price_history.length);
-  const windowSize = getPresetWindow(metric.price_history, preset);
+  if (!metric?.intraday_history?.length) return;
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, metric.intraday_history.length);
+  const windowSize = getPresetWindow(metric.intraday_history, preset);
   chartWindows[ticker] = { start: maxWindow - windowSize + 1, end: maxWindow };
   renderTickerChartByTicker(ticker);
 }
 
 function getPresetWindow(history, preset) {
-  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_DAYS, history.length);
-  if (preset === "1d") return Math.min(1, maxWindow);
-  if (preset === "3d") return Math.min(3, maxWindow);
-  if (preset === "1y") return maxWindow;
-
-  const latest = parseChartDate(history[history.length - 1].date);
-  let start = new Date(latest);
-  if (preset === "wtd") {
-    const day = latest.getDay();
-    const daysFromMonday = day === 0 ? 6 : day - 1;
-    start.setDate(latest.getDate() - daysFromMonday);
-  } else if (preset === "mtd") {
-    start = new Date(latest.getFullYear(), latest.getMonth(), 1);
-  } else if (preset === "3mtd") {
-    start = new Date(latest.getFullYear(), latest.getMonth() - 3, latest.getDate());
-  } else if (preset === "ytd") {
-    start = new Date(latest.getFullYear(), 0, 1);
-  }
-
-  const count = history.filter((point) => parseChartDate(point.date) >= start).length;
-  return Math.min(Math.max(count || 1, 1), maxWindow);
-}
-
-function parseChartDate(value) {
-  return new Date(`${value}T12:00:00`);
+  const maxWindow = Math.min(DEFAULT_CHART_WINDOW_POINTS, history.length);
+  if (preset === "1h") return Math.min(12, maxWindow);
+  if (preset === "2h") return Math.min(24, maxWindow);
+  if (preset === "4h") return Math.min(48, maxWindow);
+  return maxWindow;
 }
 
 function moveMetric(ticker, direction) {
@@ -1416,6 +1539,12 @@ function formatSignedPercent(value) {
   if (value === null || value === undefined || value === "") return "&mdash;";
   const number = Number(value);
   return `${number >= 0 ? "+" : ""}${number.toFixed(2)}%`;
+}
+
+function formatSignedValue(value) {
+  if (value === null || value === undefined || value === "") return "&mdash;";
+  const number = Number(value);
+  return `${number >= 0 ? "+" : ""}${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function heatmapColor(value) {

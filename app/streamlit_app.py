@@ -16,6 +16,8 @@ from app.models import (
     EquityMetrics,
     GenerateRequest,
     GenerateResponse,
+    MarketSnapshotRequest,
+    MarketSnapshotResponse,
     MetricName,
     NewsArticle,
     NewsRequest,
@@ -98,6 +100,12 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> G
 def build_news(tickers: tuple[str, ...], per_ticker: int = NEWS_EXPANDED_HEADLINE_COUNT, general_count: int = 8) -> NewsResponse:
     """Fetch and normalize watchlist plus broad market news."""
     return news_service().build_news(list(tickers), per_ticker=per_ticker, general_count=general_count)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def build_market_snapshot(tickers: tuple[str, ...]) -> MarketSnapshotResponse:
+    """Fetch major market plus watchlist day-to-date performance."""
+    return market_data_service().build_market_snapshot(list(tickers))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -418,6 +426,49 @@ def render_app_chrome() -> str:
             overflow: hidden;
             padding: 1rem;
           }
+          .streamlit-market-grid {
+            display: grid;
+            gap: 0.75rem;
+            grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+            margin: 0.5rem 0 1rem;
+          }
+          .streamlit-market-grid.major {
+            background: #111827;
+            border-radius: 0.5rem;
+            padding: 0.8rem;
+          }
+          .streamlit-market-tile {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.35rem;
+            padding: 0.8rem;
+          }
+          .streamlit-market-grid.major .streamlit-market-tile {
+            background: transparent;
+            border-color: rgba(148, 163, 184, 0.24);
+            color: #ffffff !important;
+          }
+          .streamlit-market-tile h4 {
+            color: inherit !important;
+            font-size: 0.9rem;
+            margin: 0;
+          }
+          .streamlit-market-price {
+            color: inherit !important;
+            font-size: 1.15rem;
+            font-weight: 900;
+          }
+          .streamlit-market-change {
+            color: #64748b !important;
+            font-size: 0.86rem;
+            font-weight: 900;
+          }
+          .streamlit-market-change.positive { color: #059669 !important; }
+          .streamlit-market-change.negative { color: #dc2626 !important; }
+          .streamlit-market-grid.major .streamlit-market-change.positive { color: #10b981 !important; }
+          .streamlit-market-grid.major .streamlit-market-change.negative { color: #f43f5e !important; }
           .streamlit-news-card.with-image {
             grid-template-columns: 9rem 1fr;
           }
@@ -780,9 +831,9 @@ def render_metric_card(metric: EquityMetrics) -> None:
 
 
 def chart_frame(metric: EquityMetrics) -> pd.DataFrame:
-    """Build a daily close chart frame for Streamlit."""
+    """Build a 5-minute close chart frame for Streamlit."""
     return pd.DataFrame(
-        [{"date": point.date, "close": point.close} for point in metric.price_history]
+        [{"timestamp": point.timestamp, "close": point.close} for point in metric.intraday_history]
     )
 
 
@@ -791,10 +842,10 @@ def render_metric(metric: EquityMetrics) -> None:
     render_metric_card(metric)
     history = chart_frame(metric)
     if history.empty:
-        st.info(f"No daily close history was returned for {metric.ticker}.")
+        st.info(f"No 5-minute intraday history was returned for {metric.ticker}.")
     else:
-        with st.expander(f"{metric.ticker} chart", expanded=False):
-            st.line_chart(history, x="date", y="close", use_container_width=True)
+        with st.expander(f"{metric.ticker} 5-minute chart", expanded=False):
+            st.line_chart(history, x="timestamp", y="close", use_container_width=True)
     if metric.warnings:
         with st.expander(f"{len(metric.warnings)} data warning(s)"):
             for warning in metric.warnings:
@@ -894,11 +945,62 @@ def render_x_timeline() -> None:
     )
 
 
-def render_news(report: NewsResponse) -> None:
+def signed_fmt(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:+,.2f}"
+
+
+def signed_pct_fmt(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:+.2f}%"
+
+
+def render_snapshot_grid(snapshot: MarketSnapshotResponse | None) -> None:
+    """Render major market and watchlist day-to-date cards."""
+    if snapshot is None:
+        st.info("Market performance has not loaded yet.")
+        return
+    st.subheader("US Markets")
+    render_performance_rows(snapshot.market, major=True)
+    st.subheader("Watchlist Performance")
+    render_performance_rows(snapshot.watchlist, major=False)
+    if snapshot.warnings:
+        with st.expander(f"{len(snapshot.warnings)} market data note(s)", expanded=False):
+            for warning in snapshot.warnings:
+                st.caption(warning)
+
+
+def render_performance_rows(rows: list[Any], major: bool) -> None:
+    if not rows:
+        st.info("No performance data was returned.")
+        return
+    cards = []
+    for row in rows:
+        change_class = "negative" if (row.change or 0) < 0 or (row.change_percent or 0) < 0 else "positive"
+        cards.append(
+            (
+                '<article class="streamlit-market-tile">'
+                f"<h4>{escape(row.label or row.symbol)}</h4>"
+                f'<div class="streamlit-market-price">{escape(fmt(row.price))}</div>'
+                f'<div class="streamlit-market-change {change_class}">'
+                f"{escape(signed_fmt(row.change))} {escape(signed_pct_fmt(row.change_percent))}"
+                "</div>"
+                "</article>"
+            )
+        )
+    classes = "streamlit-market-grid major" if major else "streamlit-market-grid"
+    st.markdown(f'<div class="{classes}">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+
+def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = None) -> None:
     """Render watchlist and general market news."""
     st.caption(f"Refreshed at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     for warning in report.warnings:
         st.warning(warning)
+
+    render_snapshot_grid(snapshot)
 
     st.subheader("General Market News")
     if report.general_market:
@@ -940,6 +1042,11 @@ def render_scanner(report: ScannerResponse) -> None:
             warned = [row for row in report.setup_rows if row.warnings]
             for row in warned:
                 st.warning(f"{row.ticker}: {' '.join(row.warnings)}")
+            data_notes = [(row.ticker, note) for row in report.setup_rows for note in row.data_notes]
+            if data_notes:
+                with st.expander(f"{len(data_notes)} scanner data note(s)", expanded=False):
+                    for ticker, note in data_notes:
+                        st.caption(f"{ticker}: {note}")
 
     with pattern_tab:
         if not report.pattern_summary:
@@ -1069,8 +1176,28 @@ def main() -> None:
         st.session_state.news = None
     if "scanner" not in st.session_state:
         st.session_state.scanner = None
+    if "market_snapshot" not in st.session_state:
+        st.session_state.market_snapshot = None
     if "levels_status" not in st.session_state:
         st.session_state.levels_status = ""
+    if "autoload_key" not in st.session_state:
+        st.session_state.autoload_key = None
+
+    autoload_metrics = tuple(selected_metric_ids(selected_labels) if selected_labels else list(DEFAULT_METRICS))
+    try:
+        autoload_request = GenerateRequest(tickers=ticker_text, metrics=list(autoload_metrics))
+    except ValidationError:
+        autoload_request = None
+    if autoload_request is not None:
+        autoload_key = (tuple(autoload_request.tickers), tuple(autoload_request.metrics))
+        if st.session_state.autoload_key != autoload_key:
+            with st.spinner("Loading saved watchlist..."):
+                st.session_state.report = build_report(tuple(autoload_request.tickers), tuple(autoload_request.metrics))
+                st.session_state.scanner = build_scanner(tuple(autoload_request.tickers))
+                st.session_state.news = build_news(tuple(autoload_request.tickers), per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
+                st.session_state.market_snapshot = build_market_snapshot(tuple(autoload_request.tickers))
+            st.session_state.levels_status = "Saved watchlist loaded."
+            st.session_state.autoload_key = autoload_key
 
     if view == LEVELS_VIEW:
         with st.container():
@@ -1129,19 +1256,21 @@ def main() -> None:
     if refresh_news:
         try:
             request = NewsRequest(tickers=ticker_text, per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
+            snapshot_request = MarketSnapshotRequest(tickers=ticker_text)
         except ValidationError as exc:
             st.error(exc.errors()[0]["msg"])
             return
 
         with st.spinner("Loading news..."):
             st.session_state.news = build_news(tuple(request.tickers), per_ticker=request.per_ticker)
+            st.session_state.market_snapshot = build_market_snapshot(tuple(snapshot_request.tickers))
 
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
         if news is None:
             st.info("Enter tickers and refresh news.")
             return
-        render_news(news)
+        render_news(news, st.session_state.market_snapshot)
         return
 
     scanner: ScannerResponse | None = st.session_state.scanner

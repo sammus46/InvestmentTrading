@@ -7,8 +7,10 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Browser-persisted ticker/watchlist input and metric selections using `localStorage`.
 - Two main app views: investment trading levels and stock news.
 - Shared watchlist input that drives both generated price-level reports and ticker-specific news.
+- Saved watchlists automatically load levels, scanner output, news, and market performance when the app opens.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
 - `Refresh News` button that retrieves watchlist headlines, categorized expanded ticker news cards, and general US stock market news.
+- Yahoo-style market and watchlist day-to-date performance snapshots on the Stock News view.
 - X.com section embedding public `@unusual_whales` posts below the watchlist news.
 - `Run Scanner` button that manually scans the shared watchlist for setup scores, support/resistance zones, risk/reward, and recurring intraday dip patterns.
 - Downloadable PDF report button that honors the same metric selections.
@@ -191,7 +193,7 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Daily Bollinger Bands.
 - Scanner-only calculations include latest price, today VWAP, 1-month high/low, SMA/EMA levels, classic pivots, Fibonacci retracements, VWAP extension, relative strength versus SPY/sector ETF, support/resistance confidence zones, reclaim/rejection signals, and intraday pattern summaries.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
-- Web and PDF charts showing up to the latest 365 completed daily closes per ticker, with selected price levels overlaid using a consistent clickable color legend. The web charts include a dual-handle x-axis zoom slider, hover tooltips for close points, preset range buttons, and follow the same ticker order as the draggable metric cards.
+- Web charts showing latest-session 5-minute closes per ticker, with selected price levels overlaid using a consistent clickable color legend. The web charts include a dual-handle x-axis zoom slider, hover tooltips for close points, preset range buttons, and follow the same ticker order as the draggable metric cards. PDF charts continue to use completed daily closes.
 
 ## API usage
 
@@ -216,6 +218,16 @@ curl -X POST http://127.0.0.1:8000/api/news \
 The news endpoint works without extra configuration through Yahoo Finance data. If `FINNHUB_API_KEY` is set in the environment, the app tries Finnhub first for general market news and watchlist company news, then falls back to Yahoo Finance when Finnhub is unavailable or returns no articles.
 Use `per_ticker` from 1 to 20; the static and Streamlit UIs request 10 headlines per ticker, show the top 5 by default, and group the expanded ticker view into price rating changes, company contract announcements, earnings reports, and general news.
 
+Generate major market and watchlist performance snapshots:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/market-snapshot \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":"AAPL, MSFT, NVDA"}'
+```
+
+The snapshot endpoint returns S&P 500, Dow 30, Nasdaq, Russell 2000, VIX, Gold, Bitcoin USD, Brent Crude Oil, and the requested watchlist with latest price, previous completed close, day-to-date change, percent change, and intraday sparkline points when available.
+
 Run the scanner:
 
 ```bash
@@ -224,7 +236,7 @@ curl -X POST http://127.0.0.1:8000/api/scanner \
   -d '{"tickers":"AAPL, MSFT, NVDA","include_setup":true,"include_patterns":true}'
 ```
 
-The scanner uses the same watchlist input as the levels and news views. It runs only when requested because free intraday data can be rate-limited and the full pattern analysis fetches multiple weeks of 5-minute bars.
+The scanner uses the same watchlist input as the levels and news views. In the browser UI it autoloads for a saved watchlist and can still be rerun manually. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows.
 
 Download a PDF report:
 

@@ -8,7 +8,16 @@ from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.models import GenerateRequest, GenerateResponse, NewsRequest, NewsResponse, ScannerRequest, ScannerResponse
+from app.models import (
+    GenerateRequest,
+    GenerateResponse,
+    MarketSnapshotRequest,
+    MarketSnapshotResponse,
+    NewsRequest,
+    NewsResponse,
+    ScannerRequest,
+    ScannerResponse,
+)
 from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
@@ -59,6 +68,12 @@ def generate_scanner(request: ScannerRequest) -> ScannerResponse:
         include_patterns=request.include_patterns,
         pattern_lookback_days=request.pattern_lookback_days,
     )
+
+
+@app.post("/api/market-snapshot", response_model=MarketSnapshotResponse)
+def generate_market_snapshot(request: MarketSnapshotRequest) -> MarketSnapshotResponse:
+    """Generate major market and watchlist day-to-date performance."""
+    return market_data.build_market_snapshot(request.tickers)
 
 
 @app.post("/api/reports/pdf")

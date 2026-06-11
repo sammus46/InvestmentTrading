@@ -70,6 +70,41 @@ def test_analyze_setup_scores_level_hold_and_momentum():
     assert setup["nearest_name"] in {"PM High", "VWAP", "Prev Low", "PM Low"}
 
 
+def test_intraday_ema_uses_recent_regular_bars_when_latest_session_is_short():
+    service = MarketDataService()
+    today = datetime.now(EASTERN).date()
+    yesterday = today - timedelta(days=1)
+    index = []
+    closes = []
+    for day, count in [(yesterday, 20), (today, 5)]:
+        for offset in range(count):
+            index.append(datetime.combine(day, time(9, 30), tzinfo=EASTERN) + timedelta(minutes=offset * 5))
+            closes.append(float(len(closes) + 1))
+    frame = pd.DataFrame({"Close": closes}, index=pd.DatetimeIndex(index))
+    warnings: list[str] = []
+
+    ema = service._intraday_ema(frame, 20, warnings)
+
+    assert ema is not None
+    assert warnings == []
+
+
+def test_scanner_splits_optional_data_notes_from_visible_warnings():
+    visible, notes = ScannerService._split_scanner_messages(
+        [
+            "At least 200 completed daily closes are required for 200 SMA.",
+            "Earnings dates were unavailable: provider timeout",
+            "Fast price lookup was unavailable for ABC: rate limited",
+        ]
+    )
+
+    assert visible == ["Fast price lookup was unavailable for ABC: rate limited"]
+    assert notes == [
+        "At least 200 completed daily closes are required for 200 SMA.",
+        "Earnings dates were unavailable: provider timeout",
+    ]
+
+
 def test_pattern_analysis_builds_summary_heatmap_and_details(monkeypatch):
     service = ScannerService(MarketDataService())
     start = datetime.now(EASTERN).date() - timedelta(days=8)
