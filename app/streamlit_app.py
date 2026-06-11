@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from pydantic import ValidationError
 
 from app.models import (
@@ -37,6 +38,15 @@ METRIC_OPTIONS: dict[MetricName, str] = {
     "swing_levels": "Swing highs/lows",
     "bollinger_bands": "Bollinger Bands",
     "earnings_gap": "Earnings gap",
+}
+
+NEWS_COLLAPSED_HEADLINE_COUNT = 5
+NEWS_EXPANDED_HEADLINE_COUNT = 10
+NEWS_CATEGORY_LABELS = {
+    "rating_changes": "Price Rating Changes",
+    "contracts": "Company Contract Announcements",
+    "earnings": "Earnings Reports",
+    "general": "General News",
 }
 
 
@@ -85,7 +95,7 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> G
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def build_news(tickers: tuple[str, ...], per_ticker: int = 5, general_count: int = 8) -> NewsResponse:
+def build_news(tickers: tuple[str, ...], per_ticker: int = NEWS_EXPANDED_HEADLINE_COUNT, general_count: int = 8) -> NewsResponse:
     """Fetch and normalize watchlist plus broad market news."""
     return news_service().build_news(list(tickers), per_ticker=per_ticker, general_count=general_count)
 
@@ -458,6 +468,18 @@ def render_app_chrome() -> str:
             font-weight: 900;
             padding: 0.25rem 0.45rem;
           }
+          .streamlit-news-category {
+            background: #12312f;
+            border-left: 4px solid #0f766e;
+            border-radius: 0.45rem;
+            color: #ffffff !important;
+            font-size: 0.82rem;
+            font-weight: 900;
+            letter-spacing: 0.02em;
+            margin: 0.75rem 0 0.4rem;
+            padding: 0.55rem 0.7rem;
+            text-transform: uppercase;
+          }
           .streamlit-scanner-card {
             background: #ffffff;
             border: 1px solid #d5ddd9;
@@ -821,6 +843,57 @@ def render_article(article: NewsArticle) -> None:
     )
 
 
+def group_articles_by_category(articles: list[NewsArticle]) -> dict[str, list[NewsArticle]]:
+    """Return news articles keyed by the shared news category labels."""
+    grouped: dict[str, list[NewsArticle]] = {}
+    for article in articles:
+        category = article.category if article.category in NEWS_CATEGORY_LABELS else "general"
+        grouped.setdefault(category, []).append(article)
+    return grouped
+
+
+def render_categorized_articles(articles: list[NewsArticle]) -> None:
+    """Render the full article list in stable category sections."""
+    grouped = group_articles_by_category(articles)
+    for category, label in NEWS_CATEGORY_LABELS.items():
+        category_articles = grouped.get(category, [])
+        if not category_articles:
+            continue
+        st.markdown(f'<div class="streamlit-news-category">{escape(label)} ({len(category_articles)})</div>', unsafe_allow_html=True)
+        for article in category_articles:
+            render_article(article)
+
+
+def render_x_timeline() -> None:
+    """Embed the public @unusual_whales X.com timeline with a fallback link."""
+    components.html(
+        """
+        <a
+          class="twitter-timeline"
+          data-height="560"
+          data-theme="light"
+          data-dnt="true"
+          href="https://twitter.com/unusual_whales?ref_src=twsrc%5Etfw"
+        >
+          Posts by @unusual_whales
+        </a>
+        <p id="x-fallback" style="display:none; font: 13px sans-serif; color: #64748b;">
+          If the timeline does not load, open
+          <a href="https://x.com/unusual_whales" target="_blank" rel="noopener noreferrer">@unusual_whales on X.com</a>.
+        </p>
+        <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+        <script>
+          window.setTimeout(function () {
+            if (!document.querySelector("iframe")) {
+              document.getElementById("x-fallback").style.display = "block";
+            }
+          }, 6500);
+        </script>
+        """,
+        height=640,
+    )
+
+
 def render_news(report: NewsResponse) -> None:
     """Render watchlist and general market news."""
     st.caption(f"Refreshed at {report.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -836,14 +909,20 @@ def render_news(report: NewsResponse) -> None:
 
     st.subheader("Watchlist News")
     for ticker_group in report.ticker_news:
-        with st.expander(f"{ticker_group.ticker} - {len(ticker_group.articles)} headline(s)", expanded=True):
-            for warning in ticker_group.warnings:
-                st.warning(warning)
-            if ticker_group.articles:
-                for article in ticker_group.articles:
-                    render_article(article)
-            else:
-                st.info("No recent headlines returned.")
+        st.markdown(f"#### {escape(ticker_group.ticker)} - {len(ticker_group.articles)} headline(s)")
+        for warning in ticker_group.warnings:
+            st.warning(warning)
+        if ticker_group.articles:
+            for article in ticker_group.articles[:NEWS_COLLAPSED_HEADLINE_COUNT]:
+                render_article(article)
+            if len(ticker_group.articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
+                with st.expander(f"Show categorized headlines for {ticker_group.ticker}", expanded=False):
+                    render_categorized_articles(ticker_group.articles[:NEWS_EXPANDED_HEADLINE_COUNT])
+        else:
+            st.info("No recent headlines returned.")
+
+    st.subheader("X.com")
+    render_x_timeline()
 
 
 def render_scanner(report: ScannerResponse) -> None:
@@ -1049,13 +1128,13 @@ def main() -> None:
 
     if refresh_news:
         try:
-            request = NewsRequest(tickers=ticker_text)
+            request = NewsRequest(tickers=ticker_text, per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
         except ValidationError as exc:
             st.error(exc.errors()[0]["msg"])
             return
 
         with st.spinner("Loading news..."):
-            st.session_state.news = build_news(tuple(request.tickers))
+            st.session_state.news = build_news(tuple(request.tickers), per_ticker=request.per_ticker)
 
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news

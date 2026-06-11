@@ -120,7 +120,7 @@
           <div class="panel-header report-ribbon">
             <div>
               <h1 id="news-heading">Stock News</h1>
-              <p id="news-generated-at">Use the shared watchlist to pull ticker-specific headlines plus broad US market news.</p>
+              <p id="news-generated-at" class="sr-only">Use the shared watchlist to pull ticker-specific headlines plus broad US market news.</p>
             </div>
             <button id="refresh-news" class="primary" type="button">Refresh News</button>
           </div>
@@ -129,7 +129,11 @@
           <section class="news-section" aria-labelledby="market-news-heading">
             <div class="section-heading">
               <h3 id="market-news-heading">General Market News</h3>
-              <p>Major headlines related to the US stock market.</p>
+              <button class="info-button" type="button" data-news-info="market">
+                <span aria-hidden="true">i</span>
+                <span class="sr-only">General market news information</span>
+                <span class="info-tooltip" role="tooltip">Major headlines related to the US stock market.</span>
+              </button>
             </div>
             <div id="market-news" class="news-list empty">Open the News view or refresh to load market headlines.</div>
           </section>
@@ -137,9 +141,27 @@
           <section class="news-section" aria-labelledby="watchlist-news-heading">
             <div class="section-heading">
               <h3 id="watchlist-news-heading">Watchlist News</h3>
-              <p>Headlines grouped by ticker from the same list used for levels.</p>
+              <button class="info-button" type="button" data-news-info="watchlist">
+                <span aria-hidden="true">i</span>
+                <span class="sr-only">Watchlist news information</span>
+                <span class="info-tooltip" role="tooltip">Headlines grouped by ticker from the same list used for levels.</span>
+              </button>
             </div>
             <div id="watchlist-news" class="ticker-news-grid empty">Enter tickers and refresh news.</div>
+          </section>
+
+          <section class="news-section" aria-labelledby="x-news-heading">
+            <div class="section-heading">
+              <h3 id="x-news-heading">X.com</h3>
+              <button class="info-button" type="button" data-news-info="x">
+                <span aria-hidden="true">i</span>
+                <span class="sr-only">X.com news information</span>
+                <span class="info-tooltip" role="tooltip">Public @unusual_whales posts embedded from X.com.</span>
+              </button>
+            </div>
+            <div id="x-news" class="x-news-embed">
+              <a href="https://x.com/unusual_whales" target="_blank" rel="noopener noreferrer">Open @unusual_whales on X.com</a>
+            </div>
           </section>
         </section>
       </section>

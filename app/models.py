@@ -17,6 +17,7 @@ MetricName = Literal[
     "swing_levels",
     "bollinger_bands",
 ]
+NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
 
 DEFAULT_METRICS: tuple[MetricName, ...] = (
     "previous_day",
@@ -271,7 +272,7 @@ class NewsRequest(BaseModel):
     """Request payload for watchlist and market news."""
 
     tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
-    per_ticker: int = Field(default=5, ge=1, le=10)
+    per_ticker: int = Field(default=5, ge=1, le=20)
     general_count: int = Field(default=8, ge=1, le=20)
 
     @field_validator("tickers", mode="before")
@@ -291,6 +292,7 @@ class NewsArticle(BaseModel):
     summary: str | None = None
     thumbnail_url: str | None = None
     related_tickers: list[str] = Field(default_factory=list)
+    category: NewsCategory = "general"
 
 
 class TickerNews(BaseModel):

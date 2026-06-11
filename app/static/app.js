@@ -3,6 +3,16 @@ const METRICS_STORAGE_KEY = "equity-levels-selected-metrics";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
 const DEFAULT_CHART_WINDOW_DAYS = 365;
+const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
+const NEWS_EXPANDED_HEADLINE_COUNT = 10;
+const NEWS_MAX_HEADLINE_COUNT = 20;
+
+const NEWS_CATEGORY_LABELS = {
+  rating_changes: "Price Rating Changes",
+  contracts: "Company Contract Announcements",
+  earnings: "Earnings Reports",
+  general: "General News",
+};
 
 const LEVEL_STYLES = {
   previous: { color: "#2563eb", width: 1.35, dash: "6 5", legend: "Previous session" },
@@ -51,6 +61,8 @@ const newsStatusEl = document.querySelector("#news-status");
 const newsGeneratedAtEl = document.querySelector("#news-generated-at");
 const marketNewsEl = document.querySelector("#market-news");
 const watchlistNewsEl = document.querySelector("#watchlist-news");
+const xNewsEl = document.querySelector("#x-news");
+const newsInfoButtons = [...document.querySelectorAll("[data-news-info]")];
 const menuToggleButton = document.querySelector("#menu-toggle");
 const controlsDrawerEl = document.querySelector("#controls-drawer");
 const drawerBackdropEl = document.querySelector("#drawer-backdrop");
@@ -62,12 +74,14 @@ let currentNews = null;
 let currentScanner = null;
 let scannerSort = { key: "score", direction: "desc" };
 let draggedTicker = null;
+let expandedNewsTickers = new Set();
 const chartWindows = {};
 const hiddenChartGroups = {};
 
 tickersInput.value = localStorage.getItem(STORAGE_KEY) || "";
 renderMetricSelector();
 switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false });
+updateNewsInfoTooltips();
 
 viewNavButtons.forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.view));
@@ -99,6 +113,7 @@ tickersInput.addEventListener("input", () => {
   saveStateEl.textContent = "Saved locally";
   currentNews = null;
   currentScanner = null;
+  expandedNewsTickers.clear();
   renderNewsEmptyState();
   renderScannerEmptyState();
 });
@@ -136,6 +151,18 @@ pdfButton.addEventListener("click", async () => {
 
 refreshNewsButton.addEventListener("click", async () => {
   await loadNews();
+});
+
+watchlistNewsEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-news-toggle]");
+  if (!button || !currentNews) return;
+  const ticker = button.dataset.newsToggle;
+  if (expandedNewsTickers.has(ticker)) {
+    expandedNewsTickers.delete(ticker);
+  } else {
+    expandedNewsTickers.add(ticker);
+  }
+  renderWatchlistNews(currentNews.ticker_news || []);
 });
 
 runScannerButton.addEventListener("click", async () => {
@@ -269,8 +296,11 @@ function switchView(view, options = {}) {
   });
   metricsControlsEl.hidden = nextView !== "levels";
 
-  if (nextView === "news" && options.loadNews !== false && !currentNews) {
-    loadNews();
+  if (nextView === "news") {
+    loadXTimeline();
+    if (options.loadNews !== false && !currentNews) {
+      loadNews();
+    }
   }
 }
 
@@ -322,7 +352,7 @@ function buildPayload(options = {}) {
 function buildNewsPayload() {
   return {
     tickers: tickersInput.value,
-    per_ticker: 5,
+    per_ticker: Math.min(NEWS_EXPANDED_HEADLINE_COUNT, NEWS_MAX_HEADLINE_COUNT),
     general_count: 8,
   };
 }
@@ -446,7 +476,9 @@ function renderCurrentReport() {
 
 function renderNews(news) {
   currentNews = news;
+  expandedNewsTickers.clear();
   newsGeneratedAtEl.textContent = `News refreshed ${new Date(news.generated_at).toLocaleString()}`;
+  updateNewsInfoTooltips(news.generated_at);
   renderWarningStatus(news.warnings || []);
   renderMarketNews(news.general_market || []);
   renderWatchlistNews(news.ticker_news || []);
@@ -455,6 +487,7 @@ function renderNews(news) {
 function renderNewsEmptyState() {
   if (currentNews) return;
   newsGeneratedAtEl.textContent = "Use the shared watchlist to pull ticker-specific headlines plus broad US market news.";
+  updateNewsInfoTooltips();
   marketNewsEl.className = "news-list empty";
   marketNewsEl.textContent = "Open the News view or refresh to load market headlines.";
   watchlistNewsEl.className = "ticker-news-grid empty";
@@ -682,16 +715,146 @@ function renderWatchlistNews(tickerNews) {
 function renderTickerNews(tickerGroup) {
   const articles = tickerGroup.articles || [];
   const warnings = tickerGroup.warnings || [];
+  const ticker = tickerGroup.ticker || "";
+  const isExpanded = expandedNewsTickers.has(ticker);
+  const visibleArticles = isExpanded
+    ? articles.slice(0, NEWS_EXPANDED_HEADLINE_COUNT)
+    : articles.slice(0, NEWS_COLLAPSED_HEADLINE_COUNT);
+  const articleMarkup = isExpanded
+    ? renderCategorizedTickerArticles(visibleArticles)
+    : `<div class="ticker-articles">${visibleArticles.map((article) => renderArticleCard(article, { compact: true })).join("")}</div>`;
   return `
-    <article class="ticker-news-card">
+    <article class="ticker-news-card ${isExpanded ? "expanded" : ""}">
       <div class="ticker-news-header">
-        <h4>${escapeHtml(tickerGroup.ticker)}</h4>
-        <span>${articles.length} headline${articles.length === 1 ? "" : "s"}</span>
+        <h4>${escapeHtml(ticker)}</h4>
+        ${articles.length > NEWS_COLLAPSED_HEADLINE_COUNT ? renderNewsToggleButton(ticker, isExpanded, articles.length) : ""}
       </div>
       ${warnings.length ? `<div class="inline-warning">${warnings.map(escapeHtml).join(" ")}</div>` : ""}
-      ${articles.length ? `<div class="ticker-articles">${articles.map((article) => renderArticleCard(article, { compact: true })).join("")}</div>` : `<p class="news-empty">No recent headlines returned.</p>`}
+      ${articles.length ? articleMarkup : `<p class="news-empty">No recent headlines returned.</p>`}
     </article>
   `;
+}
+
+function renderNewsToggleButton(ticker, isExpanded, articleCount) {
+  const expandedCount = Math.min(articleCount, NEWS_EXPANDED_HEADLINE_COUNT);
+  const label = isExpanded
+    ? `Show top ${NEWS_COLLAPSED_HEADLINE_COUNT} headlines for ${ticker}`
+    : `Show ${expandedCount} headlines for ${ticker}`;
+  return `
+    <button
+      class="news-toggle-button"
+      type="button"
+      data-news-toggle="${escapeHtml(ticker)}"
+      aria-expanded="${isExpanded}"
+      aria-label="${escapeHtml(label)}"
+      title="${escapeHtml(label)}"
+    >
+      <span aria-hidden="true">${isExpanded ? "&#9652;" : "&#9662;"}</span>
+    </button>
+  `;
+}
+
+function renderCategorizedTickerArticles(articles) {
+  const grouped = groupArticlesByCategory(articles);
+  const groups = Object.keys(NEWS_CATEGORY_LABELS).map((category) => {
+    const categoryArticles = grouped[category] || [];
+    if (!categoryArticles.length) return "";
+    return `
+      <section class="ticker-article-group category-${escapeHtml(category)}" aria-label="${escapeHtml(NEWS_CATEGORY_LABELS[category])}">
+        <div class="ticker-article-group-heading">
+          <h5>${escapeHtml(NEWS_CATEGORY_LABELS[category])}</h5>
+          <span>${categoryArticles.length}</span>
+        </div>
+        <div class="ticker-articles">
+          ${categoryArticles.map((article) => renderArticleCard(article, { compact: true })).join("")}
+        </div>
+      </section>
+    `;
+  }).join("");
+  return groups ? `<div class="ticker-article-groups">${groups}</div>` : `<p class="news-empty">No categorized headlines returned.</p>`;
+}
+
+function groupArticlesByCategory(articles) {
+  return articles.reduce((groups, article) => {
+    const category = NEWS_CATEGORY_LABELS[article.category] ? article.category : "general";
+    groups[category] = groups[category] || [];
+    groups[category].push(article);
+    return groups;
+  }, {});
+}
+
+function updateNewsInfoTooltips(generatedAt = null) {
+  const refreshed = generatedAt
+    ? `News refreshed ${new Date(generatedAt).toLocaleString()}.`
+    : "News has not been refreshed yet.";
+  const descriptions = {
+    market: `${refreshed} Major headlines related to the US stock market.`,
+    watchlist: `${refreshed} Headlines grouped by ticker from the same list used for levels.`,
+    x: `${refreshed} Public @unusual_whales posts embedded from X.com.`,
+  };
+  newsInfoButtons.forEach((button) => {
+    const text = descriptions[button.dataset.newsInfo] || refreshed;
+    button.setAttribute("aria-label", text);
+    button.title = text;
+    const tooltip = button.querySelector(".info-tooltip");
+    if (tooltip) {
+      tooltip.textContent = text;
+    }
+  });
+}
+
+function loadXTimeline() {
+  if (!xNewsEl || xNewsEl.dataset.loaded === "true") return;
+  xNewsEl.dataset.loaded = "true";
+  xNewsEl.innerHTML = `
+    <a
+      class="twitter-timeline"
+      data-height="520"
+      data-theme="light"
+      data-dnt="true"
+      href="https://twitter.com/unusual_whales?ref_src=twsrc%5Etfw"
+    >
+      Posts by @unusual_whales
+    </a>
+    <p class="x-news-fallback">
+      If the timeline does not load, open <a href="https://x.com/unusual_whales" target="_blank" rel="noopener noreferrer">@unusual_whales on X.com</a>.
+    </p>
+  `;
+
+  if (window.twttr?.widgets?.load) {
+    window.twttr.widgets.load(xNewsEl);
+    showXTimelineFallbackIfNeeded();
+    return;
+  }
+
+  const existingScript = document.querySelector('script[src="https://platform.twitter.com/widgets.js"]');
+  if (existingScript) {
+    existingScript.addEventListener("load", () => {
+      window.twttr?.widgets?.load(xNewsEl);
+      showXTimelineFallbackIfNeeded();
+    }, { once: true });
+    showXTimelineFallbackIfNeeded();
+    return;
+  }
+
+  const script = document.createElement("script");
+  script.src = "https://platform.twitter.com/widgets.js";
+  script.async = true;
+  script.charset = "utf-8";
+  script.addEventListener("load", () => {
+    window.twttr?.widgets?.load(xNewsEl);
+    showXTimelineFallbackIfNeeded();
+  }, { once: true });
+  script.addEventListener("error", () => xNewsEl.classList.add("timeline-fallback-visible"), { once: true });
+  document.body.appendChild(script);
+}
+
+function showXTimelineFallbackIfNeeded() {
+  window.setTimeout(() => {
+    if (xNewsEl && !xNewsEl.querySelector("iframe")) {
+      xNewsEl.classList.add("timeline-fallback-visible");
+    }
+  }, 6500);
 }
 
 function renderArticleCard(article, options = {}) {
