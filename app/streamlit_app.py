@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.key
 CHART_RANGE_LABELS = {"1Y": "1YR"}
 AUTO_REFRESH_SECONDS = 300
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
+STREAMLIT_STATE_VERSION = 2
 LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
     Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
 )
@@ -171,26 +173,152 @@ def streamlit_state_path() -> Path:
     return Path.home() / ".investment_trading" / "streamlit_state.json"
 
 
-def load_streamlit_watchlist(path: Path | None = None) -> list[str]:
-    """Load a persisted Streamlit watchlist, falling back quietly to empty."""
+def stable_scope_hash(value: str) -> str:
+    """Return a short stable digest for non-secret user/device scope keys."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+
+
+def read_streamlit_state(path: Path | None = None) -> dict[str, Any]:
+    """Read persisted Streamlit state, quietly falling back to an empty mapping."""
     state_path = path or streamlit_state_path()
     try:
         data = json.loads(state_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
-        return []
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def first_present_value(mapping: dict[str, Any], keys: list[str]) -> str:
+    """Return the first non-empty string value in a dict for a set of candidate keys."""
+    for key in keys:
+        value = mapping.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def header_value(headers: dict[str, Any], name: str) -> str:
+    """Return a header value from a plain or case-insensitive header mapping."""
+    direct = headers.get(name)
+    if direct is not None:
+        return str(direct)
+    lower_name = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == lower_name and value is not None:
+            return str(value)
+    return ""
+
+
+def streamlit_user_info() -> dict[str, Any]:
+    """Return available Streamlit user claims without requiring auth to be configured."""
+    user = getattr(st, "user", None)
+    if user is None:
+        return {}
+    try:
+        info = user.to_dict()
+    except Exception:
+        try:
+            info = dict(user)
+        except Exception:
+            info = {}
+    return info if isinstance(info, dict) else {}
+
+
+def streamlit_context_info() -> dict[str, Any]:
+    """Return browser/session context values used to scope device-local watchlists."""
+    context = getattr(st, "context", None)
+    if context is None:
+        return {}
+    try:
+        headers = dict(getattr(context, "headers", {}) or {})
+    except Exception:
+        headers = {}
+    return {
+        "headers": headers,
+        "locale": getattr(context, "locale", None),
+        "timezone": getattr(context, "timezone", None),
+        "timezone_offset": getattr(context, "timezone_offset", None),
+    }
+
+
+def build_streamlit_watchlist_scope(
+    user_info: dict[str, Any] | None = None,
+    context_info: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Build a stable user-and-device scope for persisted Streamlit watchlists."""
+    user_info = user_info if user_info is not None else streamlit_user_info()
+    context_info = context_info if context_info is not None else streamlit_context_info()
+    headers = context_info.get("headers", {})
+    headers = headers if isinstance(headers, dict) else {}
+
+    user_claim = ""
+    if user_info.get("is_logged_in"):
+        user_claim = first_present_value(user_info, ["email", "preferred_username", "sub", "name"])
+    user_label = user_claim or "Anonymous"
+    user_key = "user:" + stable_scope_hash(user_claim.lower()) if user_claim else "user:anonymous"
+
+    device_parts = {
+        "user_agent": header_value(headers, "user-agent"),
+        "platform": header_value(headers, "sec-ch-ua-platform"),
+        "mobile": header_value(headers, "sec-ch-ua-mobile"),
+        "locale": str(context_info.get("locale") or ""),
+        "timezone": str(context_info.get("timezone") or ""),
+        "timezone_offset": str(context_info.get("timezone_offset") or ""),
+    }
+    device_signature = json.dumps(device_parts, sort_keys=True, separators=(",", ":"))
+    device_key = "device:" + stable_scope_hash(device_signature)
+    platform = device_parts["platform"].strip('"') or "this device"
+    device_label = platform if platform != "this device" else "this device"
+
+    return {
+        "key": f"{user_key}|{device_key}",
+        "user_key": user_key,
+        "device_key": device_key,
+        "label": f"{user_label} / {device_label}",
+    }
+
+
+def load_streamlit_watchlist(path: Path | None = None, scope: dict[str, str] | None = None) -> list[str]:
+    """Load a persisted Streamlit watchlist, falling back quietly to empty."""
+    data = read_streamlit_state(path)
+    if scope and isinstance(data.get("watchlists"), dict):
+        watchlist_entry = data["watchlists"].get(scope["key"])
+        if isinstance(watchlist_entry, dict):
+            return normalize_ticker_list(watchlist_entry.get("watchlist", []))
+        if isinstance(watchlist_entry, list):
+            return normalize_ticker_list(watchlist_entry)
     return normalize_ticker_list(data.get("watchlist", []))
 
 
-def save_streamlit_watchlist(tickers: list[str], path: Path | None = None) -> None:
+def save_streamlit_watchlist(
+    tickers: list[str],
+    path: Path | None = None,
+    scope: dict[str, str] | None = None,
+) -> None:
     """Persist the Streamlit watchlist to a small server-side JSON file."""
     state_path = path or streamlit_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "watchlist": normalize_ticker_list(tickers),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    normalized = normalize_ticker_list(tickers)
+    updated_at = datetime.now(timezone.utc).isoformat()
+    if scope:
+        payload = read_streamlit_state(state_path)
+        payload["version"] = STREAMLIT_STATE_VERSION
+        watchlists = payload.setdefault("watchlists", {})
+        if not isinstance(watchlists, dict):
+            watchlists = {}
+            payload["watchlists"] = watchlists
+        watchlists[scope["key"]] = {
+            "watchlist": normalized,
+            "updated_at": updated_at,
+            "user_key": scope["user_key"],
+            "device_key": scope["device_key"],
+            "label": scope["label"],
+        }
+    else:
+        payload = {
+            "watchlist": normalized,
+            "updated_at": updated_at,
+        }
     state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
@@ -2141,14 +2269,23 @@ def pattern_detail_frame(details: list[Any]) -> pd.DataFrame:
 
 def ensure_streamlit_watchlist() -> None:
     """Initialize Streamlit session watchlist state."""
-    if "watchlist_tickers" not in st.session_state:
-        st.session_state.watchlist_tickers = load_streamlit_watchlist()
+    scope = build_streamlit_watchlist_scope()
+    if st.session_state.get("watchlist_scope_key") != scope["key"]:
+        st.session_state.watchlist_scope = scope
+        st.session_state.watchlist_scope_key = scope["key"]
+        st.session_state.watchlist_tickers = load_streamlit_watchlist(scope=scope)
+    elif "watchlist_tickers" not in st.session_state:
+        st.session_state.watchlist_scope = scope
+        st.session_state.watchlist_tickers = load_streamlit_watchlist(scope=scope)
 
 
 def persist_session_watchlist() -> None:
     """Persist the current Streamlit session watchlist."""
     st.session_state.watchlist_tickers = normalize_ticker_list(list(st.session_state.watchlist_tickers))
-    save_streamlit_watchlist(list(st.session_state.watchlist_tickers))
+    save_streamlit_watchlist(
+        list(st.session_state.watchlist_tickers),
+        scope=st.session_state.get("watchlist_scope") or build_streamlit_watchlist_scope(),
+    )
 
 
 def render_streamlit_watchlist_controls() -> tuple[str, ...]:
@@ -2183,6 +2320,7 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
     ):
         st.session_state.sidebar_run_requested = True
         st.rerun()
+    st.caption(f"Saved for {st.session_state.watchlist_scope['label']}")
 
     for index, ticker in enumerate(list(st.session_state.watchlist_tickers)):
         cols = st.columns([2.6, 1, 1, 1], vertical_alignment="center")
