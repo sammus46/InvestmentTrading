@@ -17,3 +17,9 @@ def test_news_request_reuses_watchlist_normalization():
     request = NewsRequest(tickers="aapl, msft\nAAPL")
 
     assert request.tickers == ["AAPL", "MSFT"]
+
+
+def test_news_request_accepts_expanded_headline_count():
+    request = NewsRequest(tickers="aapl", per_ticker=20)
+
+    assert request.per_ticker == 20

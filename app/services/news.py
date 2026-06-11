@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import json
 import os
+import re
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import yfinance as yf
 
-from app.models import NewsArticle, NewsResponse, TickerNews
+from app.models import NewsArticle, NewsCategory, NewsResponse, TickerNews
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,69 @@ class NewsSettings:
 
 class NewsService:
     """Fetch and normalize news from configured providers."""
+
+    CATEGORY_KEYWORDS: dict[NewsCategory, tuple[str, ...]] = {
+        "rating_changes": (
+            "upgrade",
+            "upgrades",
+            "upgraded",
+            "downgrade",
+            "downgrades",
+            "downgraded",
+            "price target",
+            "target price",
+            "analyst rating",
+            "initiates",
+            "initiated",
+            "reiterates",
+            "reiterated",
+            "maintains",
+            "raises target",
+            "cuts target",
+            "outperform",
+            "underperform",
+            "overweight",
+            "underweight",
+        ),
+        "contracts": (
+            "contract",
+            "contracts",
+            "deal",
+            "deals",
+            "partnership",
+            "partnerships",
+            "agreement",
+            "agreements",
+            "order",
+            "orders",
+            "supply agreement",
+            "customer win",
+            "awarded",
+            "wins order",
+            "signs",
+            "signed",
+            "collaboration",
+        ),
+        "earnings": (
+            "earnings",
+            "eps",
+            "revenue",
+            "revenues",
+            "guidance",
+            "quarterly results",
+            "quarter results",
+            "q1 results",
+            "q2 results",
+            "q3 results",
+            "q4 results",
+            "profit",
+            "profits",
+            "loss",
+            "losses",
+            "beats estimates",
+            "misses estimates",
+        ),
+    }
 
     def __init__(self, settings: NewsSettings | None = None) -> None:
         self.settings = settings or NewsSettings.from_environment()
@@ -156,14 +220,16 @@ class NewsService:
             return None
 
         provider = content.get("provider") if isinstance(content.get("provider"), dict) else {}
+        summary = cls._string(content.get("summary") or content.get("description") or raw.get("summary"))
         return NewsArticle(
             title=title,
             url=cls._url(content.get("canonicalUrl")) or cls._url(content.get("clickThroughUrl")) or cls._string(raw.get("link")),
             publisher=cls._string(provider.get("displayName") or raw.get("publisher")),
             published_at=cls._published_at(content.get("pubDate") or content.get("displayTime") or raw.get("providerPublishTime")),
-            summary=cls._string(content.get("summary") or content.get("description") or raw.get("summary")),
+            summary=summary,
             thumbnail_url=cls._thumbnail_url(content.get("thumbnail") or raw.get("thumbnail")),
             related_tickers=cls._related_tickers(raw.get("relatedTickers") or content.get("relatedTickers")),
+            category=cls._classify_article(title, summary),
         )
 
     @classmethod
@@ -174,14 +240,16 @@ class NewsService:
             title = cls._string(raw.get("headline") or raw.get("title"))
             if not title:
                 continue
+            summary = cls._string(raw.get("summary"))
             article = NewsArticle(
                 title=title,
                 url=cls._string(raw.get("url") or raw.get("link")),
                 publisher=cls._string(raw.get("source")),
                 published_at=cls._published_at(raw.get("datetime")),
-                summary=cls._string(raw.get("summary")),
+                summary=summary,
                 thumbnail_url=cls._string(raw.get("image")),
                 related_tickers=cls._related_tickers(raw.get("related")),
+                category=cls._classify_article(title, summary),
             )
             key = article.url or article.title
             if key in seen:
@@ -191,6 +259,21 @@ class NewsService:
             if len(articles) == limit:
                 break
         return articles
+
+    @classmethod
+    def _classify_article(cls, title: str, summary: str | None = None) -> NewsCategory:
+        """Group headlines into trader-friendly buckets from provider text."""
+        haystack = f" {title} {summary or ''} ".casefold()
+        for category, keywords in cls.CATEGORY_KEYWORDS.items():
+            for keyword in keywords:
+                needle = keyword.casefold()
+                if " " in needle:
+                    if needle in haystack:
+                        return category
+                    continue
+                if re.search(rf"\b{re.escape(needle)}\b", haystack):
+                    return category
+        return "general"
 
     @staticmethod
     def _string(value: object) -> str | None:

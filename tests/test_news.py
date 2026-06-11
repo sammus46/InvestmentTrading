@@ -24,6 +24,7 @@ def test_normalize_article_accepts_ticker_news_shape():
     assert article.published_at is not None
     assert article.published_at.tzinfo == timezone.utc
     assert article.thumbnail_url == "https://example.com/apple.jpg"
+    assert article.category == "general"
 
 
 def test_normalize_article_accepts_search_news_shape():
@@ -48,6 +49,7 @@ def test_normalize_article_accepts_search_news_shape():
     assert article.url == "https://finance.yahoo.com/market-today"
     assert article.related_tickers == ["^GSPC", "AAPL"]
     assert article.thumbnail_url == "https://example.com/market.jpg"
+    assert article.category == "general"
 
 
 def test_normalize_finnhub_article_shape():
@@ -72,6 +74,26 @@ def test_normalize_finnhub_article_shape():
     assert article.summary == "Advancers led decliners across US exchanges."
     assert article.thumbnail_url == "https://example.com/breadth.jpg"
     assert article.related_tickers == ["SPY", "QQQ", "AAPL"]
+    assert article.category == "general"
+
+
+def test_classify_article_groups_rating_changes():
+    assert NewsService._classify_article("Apple upgraded as analyst raises price target") == "rating_changes"
+    assert NewsService._classify_article("Tesla downgraded after margin concerns") == "rating_changes"
+
+
+def test_classify_article_groups_contract_announcements():
+    assert NewsService._classify_article("Nvidia wins new cloud contract") == "contracts"
+    assert NewsService._classify_article("Microsoft announces AI partnership", "The companies signed a new deal.") == "contracts"
+
+
+def test_classify_article_groups_earnings_reports():
+    assert NewsService._classify_article("Meta earnings beat expectations") == "earnings"
+    assert NewsService._classify_article("AMD lifts guidance as revenue improves") == "earnings"
+
+
+def test_classify_article_defaults_to_general():
+    assert NewsService._classify_article("Markets rise as investors await Fed decision") == "general"
 
 
 def test_build_news_prefers_finnhub_when_configured(monkeypatch):

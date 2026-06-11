@@ -8,7 +8,8 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Two main app views: investment trading levels and stock news.
 - Shared watchlist input that drives both generated price-level reports and ticker-specific news.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
-- `Refresh News` button that retrieves watchlist headlines and general US stock market news.
+- `Refresh News` button that retrieves watchlist headlines, categorized expanded ticker news cards, and general US stock market news.
+- X.com section embedding public `@unusual_whales` posts below the watchlist news.
 - `Run Scanner` button that manually scans the shared watchlist for setup scores, support/resistance zones, risk/reward, and recurring intraday dip patterns.
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
@@ -209,10 +210,11 @@ Generate watchlist and market news:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/news \
   -H 'Content-Type: application/json' \
-  -d '{"tickers":"AAPL, MSFT, NVDA","per_ticker":5,"general_count":8}'
+  -d '{"tickers":"AAPL, MSFT, NVDA","per_ticker":10,"general_count":8}'
 ```
 
 The news endpoint works without extra configuration through Yahoo Finance data. If `FINNHUB_API_KEY` is set in the environment, the app tries Finnhub first for general market news and watchlist company news, then falls back to Yahoo Finance when Finnhub is unavailable or returns no articles.
+Use `per_ticker` from 1 to 20; the static and Streamlit UIs request 10 headlines per ticker, show the top 5 by default, and group the expanded ticker view into price rating changes, company contract announcements, earnings reports, and general news.
 
 Run the scanner:
 
