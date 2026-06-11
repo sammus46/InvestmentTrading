@@ -193,7 +193,7 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Daily Bollinger Bands.
 - Scanner-only calculations include latest price, today VWAP, 1-month high/low, SMA/EMA levels, classic pivots, Fibonacci retracements, VWAP extension, relative strength versus SPY/sector ETF, support/resistance confidence zones, reclaim/rejection signals, and intraday pattern summaries.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
-- Web charts showing latest-session 5-minute closes per ticker, with selected price levels overlaid using a consistent clickable color legend. The web charts include a dual-handle x-axis zoom slider, hover tooltips for close points, preset range buttons, and follow the same ticker order as the draggable metric cards. PDF charts continue to use completed daily closes.
+- Browser-style web charts using app-owned OHLC data, with global and per-ticker controls for line versus candlestick view, supported range, and interval. Charts are compact, follow the same ticker order as the draggable metric cards, and no longer overlay trading levels. PDF charts continue to use completed daily closes.
 
 ## API usage
 
@@ -228,6 +228,16 @@ curl -X POST http://127.0.0.1:8000/api/market-snapshot \
 
 The snapshot endpoint returns S&P 500, Dow 30, Nasdaq, Russell 2000, VIX, Gold, Bitcoin USD, Brent Crude Oil, and the requested watchlist with latest price, previous completed close, day-to-date change, percent change, and intraday sparkline points when available.
 
+Generate OHLC chart history:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/chart-history \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":["AAPL","MSFT"],"range":"1D","interval":"5m"}'
+```
+
+Supported chart ranges are `1D`, `WTD`, `5D`, `MTD`, `1M`, `QTD`, `3M`, `6M`, `YTD`, `1Y`, `2Y`, and `5Y`. The browser and Streamlit UIs label `1Y` as `1YR`. Supported intervals are `1m`, `2m`, `5m`, `15m`, `30m`, `1h`, `1d`, `1wk`, and `1mo`, with range-specific validation. The browser UI defaults to `Line`, `1D`, and `5m`; WTD/MTD/QTD use calendar-aware start dates, intraday chart history uses regular-session bars only, and daily, weekly, and monthly chart bars use provider date bars.
+
 Run the scanner:
 
 ```bash
@@ -236,7 +246,7 @@ curl -X POST http://127.0.0.1:8000/api/scanner \
   -d '{"tickers":"AAPL, MSFT, NVDA","include_setup":true,"include_patterns":true}'
 ```
 
-The scanner uses the same watchlist input as the levels and news views. In the browser UI it autoloads for a saved watchlist and can still be rerun manually. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows.
+The scanner uses the same saved watchlist as the levels and news views. In the browser UI it autoloads for a saved watchlist and can still be rerun manually. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, lows-held, and momentum cells are color-coded for faster scanning.
 
 Download a PDF report:
 

@@ -18,6 +18,10 @@ import pandas as pd
 import yfinance as yf
 
 from app.models import (
+    ChartHistoryResponse,
+    ChartInterval,
+    ChartOhlcPoint,
+    ChartRange,
     DEFAULT_METRICS,
     BollingerLevels,
     EarningsGap,
@@ -32,6 +36,7 @@ from app.models import (
     OpeningRange,
     PremarketRange,
     SwingLevels,
+    TickerChartHistory,
 )
 
 EASTERN = ZoneInfo("America/New_York")
@@ -49,6 +54,60 @@ MARKET_SNAPSHOT_INSTRUMENTS: tuple[tuple[str, str], ...] = (
     ("BTC-USD", "Bitcoin USD"),
     ("BZ=F", "Brent Crude Oil"),
 )
+
+CHART_DATE_TO_DATE_RANGES = {"WTD", "MTD", "QTD"}
+
+CHART_DOWNLOAD_CONFIG: dict[tuple[ChartRange, ChartInterval], tuple[str | None, str]] = {
+    ("1D", "1m"): ("1d", "1m"),
+    ("1D", "2m"): ("1d", "2m"),
+    ("1D", "5m"): ("1d", "5m"),
+    ("1D", "15m"): ("1d", "15m"),
+    ("1D", "30m"): ("1d", "30m"),
+    ("1D", "1h"): ("1d", "1h"),
+    ("WTD", "1m"): (None, "1m"),
+    ("WTD", "2m"): (None, "2m"),
+    ("WTD", "5m"): (None, "5m"),
+    ("WTD", "15m"): (None, "15m"),
+    ("WTD", "30m"): (None, "30m"),
+    ("WTD", "1h"): (None, "1h"),
+    ("5D", "1m"): ("5d", "1m"),
+    ("5D", "2m"): ("5d", "2m"),
+    ("5D", "5m"): ("5d", "5m"),
+    ("5D", "15m"): ("5d", "15m"),
+    ("5D", "30m"): ("5d", "30m"),
+    ("5D", "1h"): ("5d", "1h"),
+    ("MTD", "5m"): (None, "5m"),
+    ("MTD", "15m"): (None, "15m"),
+    ("MTD", "30m"): (None, "30m"),
+    ("MTD", "1h"): (None, "1h"),
+    ("MTD", "1d"): (None, "1d"),
+    ("1M", "5m"): ("1mo", "5m"),
+    ("1M", "15m"): ("1mo", "15m"),
+    ("1M", "30m"): ("1mo", "30m"),
+    ("1M", "1h"): ("1mo", "1h"),
+    ("1M", "1d"): ("1mo", "1d"),
+    ("QTD", "1h"): (None, "1h"),
+    ("QTD", "1d"): (None, "1d"),
+    ("QTD", "1wk"): (None, "1wk"),
+    ("3M", "1h"): ("3mo", "1h"),
+    ("3M", "1d"): ("3mo", "1d"),
+    ("3M", "1wk"): ("3mo", "1wk"),
+    ("6M", "1h"): ("6mo", "1h"),
+    ("6M", "1d"): ("6mo", "1d"),
+    ("6M", "1wk"): ("6mo", "1wk"),
+    ("YTD", "1d"): ("ytd", "1d"),
+    ("YTD", "1wk"): ("ytd", "1wk"),
+    ("YTD", "1mo"): ("ytd", "1mo"),
+    ("1Y", "1d"): ("1y", "1d"),
+    ("1Y", "1wk"): ("1y", "1wk"),
+    ("1Y", "1mo"): ("1y", "1mo"),
+    ("2Y", "1d"): ("2y", "1d"),
+    ("2Y", "1wk"): ("2y", "1wk"),
+    ("2Y", "1mo"): ("2y", "1mo"),
+    ("5Y", "1d"): ("5y", "1d"),
+    ("5Y", "1wk"): ("5y", "1wk"),
+    ("5Y", "1mo"): ("5y", "1mo"),
+}
 
 
 @dataclass(frozen=True)
@@ -98,6 +157,27 @@ class MarketDataService:
             generated_at=datetime.now(timezone.utc),
             market=market,
             watchlist=watchlist,
+            warnings=warnings,
+        )
+
+    def build_chart_history(
+        self,
+        tickers: list[str],
+        chart_range: ChartRange,
+        interval: ChartInterval,
+    ) -> ChartHistoryResponse:
+        """Return OHLC chart data for broker-style line and candle charts."""
+        warnings: list[str] = []
+        charts = [
+            self._chart_history_row(ticker.upper().strip(), chart_range, interval, warnings)
+            for ticker in tickers
+            if ticker.strip()
+        ]
+        return ChartHistoryResponse(
+            generated_at=datetime.now(timezone.utc),
+            range=chart_range,
+            interval=interval,
+            charts=charts,
             warnings=warnings,
         )
 
@@ -237,6 +317,66 @@ class MarketDataService:
             warnings=row_warnings,
         )
 
+    def _chart_history_row(
+        self,
+        symbol: str,
+        chart_range: ChartRange,
+        interval: ChartInterval,
+        warnings: list[str],
+    ) -> TickerChartHistory:
+        row_warnings: list[str] = []
+        try:
+            frame = self._chart_history_download(symbol, chart_range, interval)
+        except Exception as exc:
+            frame = pd.DataFrame()
+            row_warnings.append(f"Chart history was unavailable for {symbol}: {exc}")
+
+        points = self._chart_ohlc_points(frame, interval, row_warnings)
+        if not points and not row_warnings:
+            row_warnings.append(f"No chart history was returned for {symbol}.")
+        warnings.extend(row_warnings)
+        return TickerChartHistory(
+            ticker=symbol,
+            range=chart_range,
+            interval=interval,
+            points=points,
+            warnings=row_warnings,
+        )
+
+    def _chart_history_download(
+        self,
+        symbol: str,
+        chart_range: ChartRange,
+        interval: ChartInterval,
+    ) -> pd.DataFrame:
+        period, provider_interval = CHART_DOWNLOAD_CONFIG[(chart_range, interval)]
+        if chart_range in CHART_DATE_TO_DATE_RANGES:
+            start, end = self._chart_date_window(chart_range)
+            return self._download(symbol, period=None, interval=provider_interval, prepost=False, start=start, end=end)
+        return self._download(symbol, period=period, interval=provider_interval, prepost=False)
+
+    @staticmethod
+    def _chart_date_window(chart_range: ChartRange, now: datetime | None = None) -> tuple[datetime, datetime]:
+        """Return an Eastern-calendar start/end window for to-date chart ranges."""
+        current = now or datetime.now(EASTERN)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=EASTERN)
+        current = current.astimezone(EASTERN)
+
+        if chart_range == "WTD":
+            start_date = current.date() - timedelta(days=current.weekday())
+        elif chart_range == "MTD":
+            start_date = current.date().replace(day=1)
+        elif chart_range == "QTD":
+            quarter_start_month = ((current.month - 1) // 3) * 3 + 1
+            start_date = current.date().replace(month=quarter_start_month, day=1)
+        else:
+            raise ValueError(f"{chart_range} does not use a date-to-date chart window")
+
+        start = datetime.combine(start_date, time.min, tzinfo=EASTERN)
+        end = current + timedelta(days=1)
+        return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
     def _price_history(self, daily: pd.DataFrame, warnings: list[str]) -> list[PricePoint]:
         """Return recent completed daily closes for frontend and PDF charts."""
         if daily.empty:
@@ -288,6 +428,49 @@ class MarketDataService:
         points: list[IntradayPricePoint] = []
         for stamp, close in zip(index, frame["Close"].astype(float), strict=False):
             points.append(IntradayPricePoint(timestamp=stamp.to_pydatetime(), close=round(float(close), 2)))
+        return points
+
+    def _chart_ohlc_points(
+        self,
+        frame: pd.DataFrame,
+        interval: ChartInterval,
+        warnings: list[str],
+    ) -> list[ChartOhlcPoint]:
+        """Normalize provider OHLC bars for frontend charts."""
+        required = ["Open", "High", "Low", "Close"]
+        if frame.empty:
+            warnings.append("Chart history data was unavailable.")
+            return []
+        if not set(required).issubset(frame.columns):
+            warnings.append("Chart history bars were incomplete.")
+            return []
+
+        chart_frame = frame
+        if interval not in {"1d", "1wk", "1mo"}:
+            chart_frame = self._with_eastern_index(chart_frame)
+            chart_frame = chart_frame.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left")
+        chart_frame = chart_frame.dropna(subset=required)
+        if chart_frame.empty:
+            warnings.append("Chart history did not include usable regular-session bars.")
+            return []
+
+        index = pd.DatetimeIndex(chart_frame.index)
+        if index.tz is None:
+            index = index.tz_localize(timezone.utc)
+        chart_frame = chart_frame.copy()
+        chart_frame.index = index
+
+        points: list[ChartOhlcPoint] = []
+        for stamp, row in chart_frame.iterrows():
+            points.append(
+                ChartOhlcPoint(
+                    timestamp=pd.Timestamp(stamp).to_pydatetime(),
+                    open=round(float(row["Open"]), 2),
+                    high=round(float(row["High"]), 2),
+                    low=round(float(row["Low"]), 2),
+                    close=round(float(row["Close"]), 2),
+                )
+            )
         return points
 
     @staticmethod

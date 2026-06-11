@@ -350,3 +350,150 @@ def test_market_snapshot_preserves_configured_order_and_calculates_change(monkey
     assert snapshot.watchlist[0].previous_close == 100.0
     assert snapshot.watchlist[0].change == 12.0
     assert snapshot.watchlist[0].change_percent == 12.0
+
+
+def test_chart_ohlc_points_filter_regular_session_and_round_values():
+    today = datetime.now(EASTERN).date()
+    frame = pd.DataFrame(
+        {
+            "Open": [9.111, 10.125, 11.0],
+            "High": [9.5, 10.678, 11.5],
+            "Low": [8.5, 9.876, 10.5],
+            "Close": [9.25, 10.444, 11.25],
+        },
+        index=pd.DatetimeIndex(
+            [
+                datetime.combine(today, time(8, 0), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+                datetime.combine(today, time(16, 5), tzinfo=EASTERN),
+            ]
+        ),
+    )
+
+    points = MarketDataService()._chart_ohlc_points(frame, "5m", [])
+
+    assert len(points) == 1
+    assert points[0].open == 10.12
+    assert points[0].high == 10.68
+    assert points[0].low == 9.88
+    assert points[0].close == 10.44
+
+
+def test_chart_ohlc_points_keep_weekly_and_monthly_date_bars():
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0],
+            "High": [110.0],
+            "Low": [95.0],
+            "Close": [105.0],
+        },
+        index=pd.DatetimeIndex(["2026-06-01"]),
+    )
+
+    weekly = MarketDataService()._chart_ohlc_points(frame, "1wk", [])
+    monthly = MarketDataService()._chart_ohlc_points(frame, "1mo", [])
+
+    assert weekly[0].close == 105.0
+    assert monthly[0].close == 105.0
+
+
+def test_build_chart_history_preserves_ticker_order_and_download_mapping(monkeypatch):
+    downloads = []
+    today = datetime.now(EASTERN).date()
+
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        downloads.append((symbol, period, interval, prepost))
+        return pd.DataFrame(
+            {
+                "Open": [100.0],
+                "High": [102.0],
+                "Low": [99.0],
+                "Close": [101.0],
+            },
+            index=pd.DatetimeIndex([datetime.combine(today, time(9, 30), tzinfo=EASTERN)]),
+        )
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+
+    response = MarketDataService().build_chart_history(["msft", "aapl"], "5D", "15m")
+
+    assert [chart.ticker for chart in response.charts] == ["MSFT", "AAPL"]
+    assert [(symbol, period, interval, prepost) for symbol, period, interval, prepost in downloads] == [
+        ("MSFT", "5d", "15m", False),
+        ("AAPL", "5d", "15m", False),
+    ]
+    assert response.charts[0].points[0].close == 101.0
+
+
+def test_build_chart_history_supports_expanded_range_interval_mapping(monkeypatch):
+    downloads = []
+
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        downloads.append((symbol, period, interval, prepost))
+        return pd.DataFrame(
+            {
+                "Open": [100.0],
+                "High": [102.0],
+                "Low": [99.0],
+                "Close": [101.0],
+            },
+            index=pd.DatetimeIndex(["2026-06-01"]),
+        )
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+
+    response = MarketDataService().build_chart_history(["aapl"], "5Y", "1mo")
+
+    assert downloads == [("AAPL", "5y", "1mo", False)]
+    assert response.charts[0].points[0].close == 101.0
+
+
+def test_chart_date_window_uses_to_date_calendar_starts():
+    now = datetime(2026, 6, 11, 12, 0, tzinfo=EASTERN)
+
+    wtd_start, _ = MarketDataService._chart_date_window("WTD", now)
+    mtd_start, _ = MarketDataService._chart_date_window("MTD", now)
+    qtd_start, _ = MarketDataService._chart_date_window("QTD", now)
+
+    assert wtd_start.astimezone(EASTERN).date().isoformat() == "2026-06-08"
+    assert mtd_start.astimezone(EASTERN).date().isoformat() == "2026-06-01"
+    assert qtd_start.astimezone(EASTERN).date().isoformat() == "2026-04-01"
+
+
+def test_build_chart_history_uses_date_window_for_to_date_ranges(monkeypatch):
+    downloads = []
+    start = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 12, tzinfo=timezone.utc)
+
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        downloads.append((symbol, period, interval, prepost, start, end))
+        return pd.DataFrame(
+            {
+                "Open": [100.0],
+                "High": [102.0],
+                "Low": [99.0],
+                "Close": [101.0],
+            },
+            index=pd.DatetimeIndex([datetime(2026, 6, 11, 9, 30, tzinfo=EASTERN)]),
+        )
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+    monkeypatch.setattr(MarketDataService, "_chart_date_window", staticmethod(lambda chart_range: (start, end)))
+
+    response = MarketDataService().build_chart_history(["aapl"], "QTD", "1h")
+
+    assert downloads == [("AAPL", None, "1h", False, start, end)]
+    assert response.charts[0].points[0].close == 101.0
+
+
+def test_build_chart_history_surfaces_provider_failures(monkeypatch):
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+
+    response = MarketDataService().build_chart_history(["AAPL"], "1D", "5m")
+
+    assert response.charts[0].points == []
+    assert "rate limited" in response.charts[0].warnings[0]
+    assert response.warnings == response.charts[0].warnings

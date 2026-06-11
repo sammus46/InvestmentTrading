@@ -9,6 +9,8 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.models import (
+    ChartHistoryRequest,
+    ChartHistoryResponse,
     GenerateRequest,
     GenerateResponse,
     MarketSnapshotRequest,
@@ -74,6 +76,12 @@ def generate_scanner(request: ScannerRequest) -> ScannerResponse:
 def generate_market_snapshot(request: MarketSnapshotRequest) -> MarketSnapshotResponse:
     """Generate major market and watchlist day-to-date performance."""
     return market_data.build_market_snapshot(request.tickers)
+
+
+@app.post("/api/chart-history", response_model=ChartHistoryResponse)
+def generate_chart_history(request: ChartHistoryRequest) -> ChartHistoryResponse:
+    """Generate OHLC chart history for broker-style charts."""
+    return market_data.build_chart_history(request.tickers, request.range, request.interval)
 
 
 @app.post("/api/reports/pdf")
