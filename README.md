@@ -177,7 +177,7 @@ Then browse to `http://YOUR_SERVER_IP:8000`.
 
 For public internet access, put the app behind authentication or a private tunnel such as a VPN, Tailscale, Cloudflare Tunnel, or a reverse proxy with login. The app pulls market data and has no built-in user accounts, so avoid exposing it as an unauthenticated public service.
 
-For Streamlit Community Cloud, push this repository to GitHub, choose `app/streamlit_app.py` as the main file, and let the platform install dependencies from `pyproject.toml`.
+For Streamlit Community Cloud, push this repository to GitHub and choose `streamlit_app.py` as the main file. If using the URL deploy flow, paste a GitHub file URL such as `https://github.com/sammus46/InvestmentTrading/blob/main/streamlit_app.py`, not the repository clone URL. Community Cloud installs the app dependencies from `requirements.txt`; choose Python 3.10 or newer in Advanced settings.
 
 
 ## Generated metrics
