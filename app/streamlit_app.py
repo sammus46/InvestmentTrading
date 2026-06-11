@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import os
 from datetime import datetime, timezone
 from html import escape
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -48,6 +52,11 @@ NEWS_CATEGORY_LABELS = {
 CHART_TYPE_OPTIONS = ("Line", "Candles")
 CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
 CHART_RANGE_LABELS = {"1Y": "1YR"}
+AUTO_REFRESH_SECONDS = 300
+STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
+LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
+    Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
+)
 
 
 LEVELS_VIEW = "Investment Trading Levels"
@@ -86,7 +95,7 @@ def scanner_service() -> ScannerService:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> GenerateResponse:
+def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int = 0) -> GenerateResponse:
     """Fetch and calculate metrics, cached briefly to avoid repeated provider calls."""
     return GenerateResponse(
         generated_at=datetime.now(timezone.utc),
@@ -95,27 +104,43 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> G
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def build_news(tickers: tuple[str, ...], per_ticker: int = NEWS_EXPANDED_HEADLINE_COUNT, general_count: int = 8) -> NewsResponse:
+def build_news(
+    tickers: tuple[str, ...],
+    per_ticker: int = NEWS_EXPANDED_HEADLINE_COUNT,
+    general_count: int = 8,
+    refresh_token: int = 0,
+) -> NewsResponse:
     """Fetch and normalize watchlist plus broad market news."""
     return news_service().build_news(list(tickers), per_ticker=per_ticker, general_count=general_count)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def build_market_snapshot(tickers: tuple[str, ...]) -> MarketSnapshotResponse:
+def build_market_snapshot(tickers: tuple[str, ...], refresh_token: int = 0) -> MarketSnapshotResponse:
     """Fetch major market plus watchlist day-to-date performance."""
     return market_data_service().build_market_snapshot(list(tickers))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def build_scanner(tickers: tuple[str, ...]) -> ScannerResponse:
+def build_scanner(tickers: tuple[str, ...], refresh_token: int = 0) -> ScannerResponse:
     """Run setup scanner and intraday pattern analysis."""
     return scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=True)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def build_chart_history(tickers: tuple[str, ...], chart_range: ChartRange, interval: ChartInterval) -> ChartHistoryResponse:
+def build_chart_history(
+    tickers: tuple[str, ...],
+    chart_range: ChartRange,
+    interval: ChartInterval,
+    refresh_token: int = 0,
+) -> ChartHistoryResponse:
     """Fetch OHLC chart history for line and candlestick charts."""
     return market_data_service().build_chart_history(list(tickers), chart_range, interval)
+
+
+@st.cache_data(show_spinner=False)
+def lightweight_charts_bundle_b64() -> str:
+    """Return the vendored TradingView Lightweight Charts bundle for Streamlit iframes."""
+    return base64.b64encode(LIGHTWEIGHT_CHARTS_BUNDLE_PATH.read_bytes()).decode("ascii")
 
 
 def fmt(value: Any) -> str:
@@ -125,6 +150,63 @@ def fmt(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:,.2f}"
     return str(value)
+
+
+def normalize_ticker_list(value: str | list[str]) -> list[str]:
+    """Normalize delimited ticker text or a ticker list while preserving order."""
+    candidates = value if isinstance(value, list) else value.replace(",", " ").split()
+    cleaned: list[str] = []
+    for candidate in candidates:
+        ticker = str(candidate).strip().upper()
+        if ticker and ticker not in cleaned:
+            cleaned.append(ticker)
+    return cleaned
+
+
+def streamlit_state_path() -> Path:
+    """Return the server-side Streamlit state file path."""
+    configured = os.getenv(STREAMLIT_STATE_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".investment_trading" / "streamlit_state.json"
+
+
+def load_streamlit_watchlist(path: Path | None = None) -> list[str]:
+    """Load a persisted Streamlit watchlist, falling back quietly to empty."""
+    state_path = path or streamlit_state_path()
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    return normalize_ticker_list(data.get("watchlist", []))
+
+
+def save_streamlit_watchlist(tickers: list[str], path: Path | None = None) -> None:
+    """Persist the Streamlit watchlist to a small server-side JSON file."""
+    state_path = path or streamlit_state_path()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "watchlist": normalize_ticker_list(tickers),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def refresh_bucket(now: datetime | None = None, interval_seconds: int = AUTO_REFRESH_SECONDS) -> int:
+    """Return the current auto-refresh bucket for cache invalidation."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return int(current.timestamp() // interval_seconds)
+
+
+def bump_streamlit_refresh_token() -> int:
+    """Advance the Streamlit data refresh token and return it."""
+    st.session_state.streamlit_refresh_token = int(st.session_state.get("streamlit_refresh_token", 0)) + 1
+    st.session_state.autoload_key = None
+    return int(st.session_state.streamlit_refresh_token)
 
 
 def render_app_chrome() -> str:
@@ -205,30 +287,6 @@ def render_app_chrome() -> str:
             background: #ffffff;
             border-color: #cbd5e1;
             border-radius: 0.5rem;
-          }
-          [data-testid="stSidebarCollapseButton"],
-          [data-testid="stSidebarCollapsedControl"],
-          [data-testid="stSidebarCollapseButton"] button,
-          [data-testid="stSidebarCollapsedControl"] button {
-            background: #ffffff !important;
-            border: 1px solid #d5ddd9 !important;
-            border-radius: 0.5rem !important;
-            box-shadow: 0 6px 16px rgba(17, 24, 39, 0.12) !important;
-            color: #111827 !important;
-            opacity: 1 !important;
-          }
-          [data-testid="stSidebarCollapseButton"] svg,
-          [data-testid="stSidebarCollapsedControl"] svg,
-          [data-testid="stSidebarCollapseButton"] svg *,
-          [data-testid="stSidebarCollapsedControl"] svg * {
-            color: #111827 !important;
-            fill: #111827 !important;
-            stroke: #111827 !important;
-          }
-          [data-testid="stSidebarCollapseButton"]:hover,
-          [data-testid="stSidebarCollapsedControl"]:hover {
-            background: #f0fdfa !important;
-            border-color: #99f6e4 !important;
           }
           .streamlit-brand-ribbon {
             align-items: center;
@@ -312,7 +370,7 @@ def render_app_chrome() -> str:
           }
           div[data-testid="stVerticalBlock"]:has(.view-hero-marker) h1 {
             color: #111827;
-            font-size: clamp(2rem, 5vw, 3.8rem);
+            font-size: clamp(1.9rem, 4vw, 3.25rem);
             line-height: 1.05;
             margin: 0;
           }
@@ -592,6 +650,327 @@ def render_app_chrome() -> str:
             border-radius: 0.5rem;
             box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
           }
+          .stApp .block-container {
+            padding-top: 0.75rem;
+          }
+          [data-testid="stSidebarCollapsedControl"],
+          [data-testid="stSidebarCollapseButton"],
+          [data-testid="stExpandSidebarButton"] {
+            height: 3rem !important;
+            left: 0.75rem !important;
+            opacity: 1 !important;
+            position: fixed !important;
+            top: 0.75rem !important;
+            visibility: visible !important;
+            width: 3rem !important;
+            z-index: 100000 !important;
+          }
+          [data-testid="stSidebarCollapsedControl"] button,
+          [data-testid="stSidebarCollapseButton"] button,
+          [data-testid="stExpandSidebarButton"] button,
+          [data-testid="stExpandSidebarButton"],
+          button[aria-label="Open sidebar"],
+          button[aria-label="Close sidebar"],
+          button[title="Open sidebar"],
+          button[title="Close sidebar"] {
+            align-items: center !important;
+            background: #0b2f2d !important;
+            border: 2px solid #2dd4bf !important;
+            border-radius: 0.7rem !important;
+            box-shadow: 0 12px 28px rgba(17, 49, 47, 0.34) !important;
+            color: #ccfbf1 !important;
+            display: inline-flex !important;
+            height: 3rem !important;
+            justify-content: center !important;
+            left: 0.75rem !important;
+            min-height: 3rem !important;
+            min-width: 3rem !important;
+            opacity: 1 !important;
+            overflow: hidden !important;
+            padding: 0 !important;
+            position: fixed !important;
+            top: 0.75rem !important;
+            width: 3rem !important;
+            z-index: 100001 !important;
+          }
+          [data-testid="stSidebarCollapsedControl"] button:hover,
+          [data-testid="stSidebarCollapseButton"] button:hover,
+          [data-testid="stExpandSidebarButton"] button:hover,
+          [data-testid="stExpandSidebarButton"]:hover,
+          button[aria-label="Open sidebar"]:hover,
+          button[aria-label="Close sidebar"]:hover,
+          button[title="Open sidebar"]:hover,
+          button[title="Close sidebar"]:hover {
+            background: #0f766e !important;
+            border-color: #5eead4 !important;
+          }
+          [data-testid="stSidebarCollapsedControl"] button:focus-visible,
+          [data-testid="stSidebarCollapseButton"] button:focus-visible,
+          [data-testid="stExpandSidebarButton"] button:focus-visible,
+          [data-testid="stExpandSidebarButton"]:focus-visible,
+          button[aria-label="Open sidebar"]:focus-visible,
+          button[aria-label="Close sidebar"]:focus-visible,
+          button[title="Open sidebar"]:focus-visible,
+          button[title="Close sidebar"]:focus-visible {
+            outline: 3px solid rgba(45, 212, 191, 0.45) !important;
+            outline-offset: 2px !important;
+          }
+          [data-testid="stSidebarCollapsedControl"] button::before,
+          [data-testid="stSidebarCollapseButton"] button::before,
+          [data-testid="stExpandSidebarButton"] button::before,
+          [data-testid="stExpandSidebarButton"]::before,
+          button[aria-label="Open sidebar"]::before,
+          button[aria-label="Close sidebar"]::before,
+          button[title="Open sidebar"]::before,
+          button[title="Close sidebar"]::before {
+            align-items: center;
+            color: #ccfbf1 !important;
+            content: "\\00AB";
+            display: flex;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 1.75rem;
+            font-weight: 900;
+            inset: 0;
+            justify-content: center;
+            line-height: 1;
+            pointer-events: none;
+            position: absolute;
+            z-index: 2;
+          }
+          [data-testid="stSidebarCollapsedControl"] button::before,
+          [data-testid="stExpandSidebarButton"] button::before,
+          [data-testid="stExpandSidebarButton"]::before,
+          button[aria-label="Open sidebar"]::before,
+          button[title="Open sidebar"]::before {
+            content: "\\00BB";
+          }
+          [data-testid="stSidebarCollapsedControl"] button > *,
+          [data-testid="stSidebarCollapseButton"] button > *,
+          [data-testid="stExpandSidebarButton"] button > *,
+          [data-testid="stExpandSidebarButton"] > *,
+          button[aria-label="Open sidebar"] > *,
+          button[aria-label="Close sidebar"] > *,
+          button[title="Open sidebar"] > *,
+          button[title="Close sidebar"] > * {
+            opacity: 0 !important;
+          }
+          [data-testid="stSidebarCollapsedControl"] svg,
+          [data-testid="stSidebarCollapseButton"] svg,
+          [data-testid="stExpandSidebarButton"] svg,
+          button[aria-label="Open sidebar"] svg,
+          button[aria-label="Close sidebar"] svg,
+          button[title="Open sidebar"] svg,
+          button[title="Close sidebar"] svg,
+          [data-testid="stSidebarCollapsedControl"] svg *,
+          [data-testid="stSidebarCollapseButton"] svg *,
+          [data-testid="stExpandSidebarButton"] svg *,
+          button[aria-label="Open sidebar"] svg *,
+          button[aria-label="Close sidebar"] svg *,
+          button[title="Open sidebar"] svg *,
+          button[title="Close sidebar"] svg * {
+            color: #ccfbf1 !important;
+            fill: #ccfbf1 !important;
+            stroke: #ccfbf1 !important;
+            -webkit-text-fill-color: #ccfbf1 !important;
+          }
+          [data-testid="stSidebar"] input,
+          [data-testid="stSidebar"] textarea,
+          [data-testid="stSidebar"] [data-baseweb="input"] input {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            color: #111827 !important;
+            font-weight: 800 !important;
+            min-height: 2.65rem;
+          }
+          [data-testid="stSidebar"] input::placeholder {
+            color: #94a3b8 !important;
+            font-weight: 700 !important;
+            opacity: 1 !important;
+          }
+          [data-testid="stSidebar"] [data-testid="stButton"] button {
+            align-items: center;
+            border-radius: 0.55rem;
+            font-weight: 900;
+            justify-content: center;
+            line-height: 1;
+            min-height: 2.45rem;
+            min-width: 2.35rem;
+            padding: 0.45rem 0.65rem;
+            white-space: nowrap;
+          }
+          [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
+            background: #0f766e !important;
+            border-color: #0f766e !important;
+            color: #ffffff !important;
+            box-shadow: 0 10px 20px rgba(15, 118, 110, 0.22) !important;
+          }
+          [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover {
+            background: #115e59 !important;
+            border-color: #115e59 !important;
+          }
+          [data-testid="stSidebar"] [data-testid="stButton"] button:disabled {
+            opacity: 0.45 !important;
+          }
+          .streamlit-brand-ribbon {
+            margin: -0.75rem 0 0;
+            min-height: 4.25rem;
+            position: sticky;
+            top: 0;
+            z-index: 30;
+          }
+          div[data-testid="stHorizontalBlock"]:has(.streamlit-nav-marker) {
+            margin: 0 0 1rem;
+            min-height: 3.25rem;
+            position: sticky;
+            top: 4.25rem;
+            z-index: 29;
+          }
+          .streamlit-page-hero,
+          .streamlit-section-panel,
+          .streamlit-report-panel,
+          .streamlit-scanner-panel {
+            background: #ffffff;
+            border: 1px solid #d5ddd9;
+            border-radius: 0.5rem;
+            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+            margin: 0 0 1rem;
+            padding: 1.25rem;
+          }
+          .streamlit-page-hero {
+            align-items: center;
+            display: flex;
+            gap: 1rem;
+            justify-content: space-between;
+          }
+          .streamlit-page-hero h1 {
+            color: #111827 !important;
+            font-size: clamp(2rem, 4vw, 3.25rem);
+            line-height: 1.05;
+            margin: 0;
+          }
+          .streamlit-section-header,
+          .streamlit-chart-header {
+            align-items: center;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            justify-content: space-between;
+            margin-bottom: 0.85rem;
+          }
+          .streamlit-section-header h2,
+          .streamlit-chart-header h2 {
+            color: #111827;
+            margin: 0;
+          }
+          .streamlit-status-chip {
+            background: #ccfbf1;
+            border: 1px solid #99f6e4;
+            border-radius: 999px;
+            color: #0f766e !important;
+            font-size: 0.78rem;
+            font-weight: 900;
+            padding: 0.35rem 0.6rem;
+          }
+          .streamlit-watchlist-row {
+            align-items: center;
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            display: flex;
+            gap: 0.55rem;
+            justify-content: space-between;
+            margin: 0.4rem 0;
+            padding: 0.45rem 0.55rem 0.45rem 0.75rem;
+          }
+          .streamlit-watchlist-row strong {
+            color: #111827;
+            letter-spacing: 0.04em;
+          }
+          .streamlit-report-grid,
+          .streamlit-chart-grid,
+          .streamlit-ticker-news-grid {
+            align-items: start;
+            display: grid;
+            gap: 0.9rem;
+            grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+          }
+          .streamlit-chart-grid {
+            grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+          }
+          .streamlit-news-grid {
+            display: grid;
+            gap: 0.75rem;
+            grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+            margin-bottom: 1rem;
+          }
+          .streamlit-chart-card {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+            margin-bottom: 0.9rem;
+            min-width: 0;
+            padding: 0.75rem;
+          }
+          .streamlit-chart-card h4 {
+            color: #0f172a;
+            letter-spacing: 0.06em;
+            margin: 0 0 0.65rem;
+          }
+          .streamlit-chart-controls {
+            align-items: center;
+            display: grid;
+            gap: 0.55rem;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            margin-bottom: 0.75rem;
+          }
+          .streamlit-chart-controls [data-testid="stSelectbox"],
+          .streamlit-chart-controls [data-testid="stRadio"] {
+            min-width: 0;
+          }
+          .streamlit-chart-frame {
+            border: 1px solid #eef2f7;
+            border-radius: 0.5rem;
+            min-height: 232px;
+            overflow: hidden;
+          }
+          .streamlit-ticker-news-card {
+            align-content: start;
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.65rem;
+            padding: 0.85rem;
+          }
+          .streamlit-ticker-news-card h4 {
+            color: #12312f;
+            letter-spacing: 0.06em;
+            margin: 0;
+          }
+          .streamlit-news-category-details {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-left: 4px solid #0f766e;
+            border-radius: 0.5rem;
+            margin-top: 0.5rem;
+            overflow: hidden;
+          }
+          .streamlit-news-category-details summary {
+            background: #12312f;
+            color: #ffffff;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            padding: 0.55rem 0.7rem;
+            text-transform: uppercase;
+          }
+          .streamlit-news-category-details > div {
+            display: grid;
+            gap: 0.5rem;
+            padding: 0.55rem;
+          }
           @media (max-width: 760px) {
             .stApp {
               --page-gutter: 0.5rem;
@@ -612,6 +991,15 @@ def render_app_chrome() -> str:
             }
             .metric-cell:nth-child(odd) {
               border-right: 0;
+            }
+            .streamlit-page-hero,
+            .streamlit-section-header,
+            .streamlit-chart-header {
+              align-items: stretch;
+              display: grid;
+            }
+            .streamlit-chart-controls {
+              grid-template-columns: 1fr;
             }
           }
         </style>
@@ -800,8 +1188,8 @@ def metric_sections(metric: EquityMetrics) -> list[dict[str, list[tuple[str, Any
     return sections
 
 
-def render_metric_card(metric: EquityMetrics) -> None:
-    """Render one ticker card styled like the static app."""
+def metric_card_html(metric: EquityMetrics) -> str:
+    """Return one ticker card styled like the static app."""
     section_html = []
     for section in metric_sections(metric):
         [(title, rows)] = section.items()
@@ -821,17 +1209,33 @@ def render_metric_card(metric: EquityMetrics) -> None:
             "</section>"
         )
 
-    st.markdown(
-        (
-            '<article class="metric-card">'
-            '<div class="metric-card-header">'
-            f'<div><span class="drag-glyph">&vellip;</span> <h3 style="display:inline">{escape(metric.ticker)}</h3></div>'
-            "</div>"
-            f'<div class="metric-card-body">{"".join(section_html)}</div>'
-            "</article>"
-        ),
-        unsafe_allow_html=True,
+    warning_html = ""
+    if metric.warnings:
+        items = "".join(f"<li>{escape(warning)}</li>" for warning in metric.warnings)
+        warning_html = (
+            f'<details class="warning"><summary>{len(metric.warnings)} data warning(s)</summary>'
+            f"<ul>{items}</ul></details>"
+        )
+
+    return (
+        '<article class="metric-card">'
+        '<div class="metric-card-header">'
+        f'<div><span class="drag-glyph">&vellip;</span> <h3 style="display:inline">{escape(metric.ticker)}</h3></div>'
+        "</div>"
+        f'<div class="metric-card-body">{"".join(section_html)}{warning_html}</div>'
+        "</article>"
     )
+
+
+def render_metric_card(metric: EquityMetrics) -> None:
+    """Render one ticker report card."""
+    st.markdown(metric_card_html(metric), unsafe_allow_html=True)
+
+
+def render_metric_grid(metrics: list[EquityMetrics]) -> None:
+    """Render ticker report cards in a responsive grid."""
+    cards = "".join(metric_card_html(metric) for metric in metrics)
+    st.markdown(f'<div class="streamlit-report-grid">{cards}</div>', unsafe_allow_html=True)
 
 
 def render_metric(metric: EquityMetrics) -> None:
@@ -859,20 +1263,34 @@ def chart_history_frame(chart: TickerChartHistory) -> pd.DataFrame:
     )
 
 
-def render_chart_history(report: GenerateResponse, chart_range: ChartRange, interval: ChartInterval, chart_type: str) -> None:
+def render_chart_history(
+    report: GenerateResponse,
+    chart_range: ChartRange,
+    interval: ChartInterval,
+    chart_type: str,
+    refresh_token: int = 0,
+) -> None:
     """Render compact line/candlestick charts in report order."""
     tickers = tuple(metric.ticker for metric in report.metrics)
     if not tickers:
         return
-    response = build_chart_history(tickers, chart_range, interval)
+    response = build_chart_history(tickers, chart_range, interval, refresh_token=refresh_token)
     charts_by_ticker = {chart.ticker: chart for chart in response.charts}
-    st.subheader("Charts")
-    columns = st.columns(2)
+    st.markdown(
+        (
+            '<div class="streamlit-chart-header">'
+            "<h2>Charts</h2>"
+            '<span class="streamlit-status-chip">Auto-refreshes every 5 min</span>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    columns = st.columns(3)
     for index, ticker in enumerate(tickers):
         chart = charts_by_ticker.get(ticker)
         with columns[index % len(columns)]:
             with st.container(border=True):
-                st.markdown(f"**{escape(ticker)}**")
+                st.markdown(f'<span class="streamlit-chart-card-marker"></span><h4>{escape(ticker)}</h4>', unsafe_allow_html=True)
                 override_range, override_interval, override_type = chart_range, interval, chart_type
                 with st.expander("Chart settings", expanded=False):
                     override_type = st.radio(
@@ -898,51 +1316,414 @@ def render_chart_history(report: GenerateResponse, chart_range: ChartRange, inte
                         index=interval_options.index(default_interval),
                     )
                 if (override_range, override_interval) != (chart_range, interval):
-                    chart = build_chart_history((ticker,), override_range, override_interval).charts[0]
+                    chart = build_chart_history(
+                        (ticker,),
+                        override_range,
+                        override_interval,
+                        refresh_token=refresh_token,
+                    ).charts[0]
                 if chart is None or not chart.points:
                     st.caption("No chart data returned.")
                     continue
-                render_single_chart(chart, override_type)
+                render_single_chart(chart, override_type, override_range, override_interval)
                 for warning in chart.warnings:
                     st.caption(warning)
 
 
-def render_single_chart(chart: TickerChartHistory, chart_type: str) -> None:
-    """Render one Streamlit chart using Vega-Lite."""
-    frame = chart_history_frame(chart)
-    if frame.empty:
+def render_single_chart(
+    chart: TickerChartHistory,
+    chart_type: str,
+    chart_range: ChartRange,
+    interval: ChartInterval,
+) -> None:
+    """Render one Streamlit chart using TradingView Lightweight Charts."""
+    if not chart.points:
         st.caption("No chart data returned.")
         return
-    if chart_type == "Line":
-        st.line_chart(frame, x="timestamp", y="close", use_container_width=True, height=240)
-        return
+    components.html(
+        lightweight_chart_html(chart, chart_type, chart_range, interval),
+        height=332,
+        scrolling=False,
+    )
 
-    spec = {
-        "height": 240,
-        "transform": [{"calculate": "datum.close >= datum.open", "as": "isUp"}],
-        "layer": [
+
+def lightweight_chart_html(
+    chart: TickerChartHistory,
+    chart_type: str,
+    chart_range: ChartRange,
+    interval: ChartInterval,
+) -> str:
+    """Return an embeddable Lightweight Charts document for one ticker."""
+    payload = {
+        "ticker": chart.ticker,
+        "chartType": "candles" if chart_type == "Candles" else "line",
+        "range": format_chart_option(chart_range),
+        "interval": interval,
+        "points": [
             {
-                "mark": "rule",
-                "encoding": {
-                    "x": {"field": "timestamp", "type": "temporal"},
-                    "y": {"field": "low", "type": "quantitative", "scale": {"zero": False}},
-                    "y2": {"field": "high"},
-                    "color": {"condition": {"test": "datum.isUp", "value": "#059669"}, "value": "#dc2626"},
-                },
-            },
-            {
-                "mark": {"type": "bar", "size": 7},
-                "encoding": {
-                    "x": {"field": "timestamp", "type": "temporal"},
-                    "y": {"field": "open", "type": "quantitative", "scale": {"zero": False}},
-                    "y2": {"field": "close"},
-                    "color": {"condition": {"test": "datum.isUp", "value": "#059669"}, "value": "#dc2626"},
-                },
-            },
+                "timestamp": point.timestamp.isoformat(),
+                "open": point.open,
+                "high": point.high,
+                "low": point.low,
+                "close": point.close,
+            }
+            for point in chart.points
         ],
-        "config": {"view": {"stroke": "transparent"}, "axis": {"gridColor": "#eef2f7"}},
     }
-    st.vega_lite_chart(frame, spec, use_container_width=True)
+    payload_json = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
+    bundle_b64 = lightweight_charts_bundle_b64()
+    return (
+        """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="data:text/javascript;base64,__LIGHTWEIGHT_CHARTS_BUNDLE__"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: transparent;
+      margin: 0;
+      overflow: hidden;
+    }
+    .chart-shell {
+      background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+      border: 1px solid #dbe3ef;
+      border-radius: 10px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+      min-width: 0;
+      overflow: hidden;
+      padding: 12px 12px 8px;
+      position: relative;
+      width: 100%;
+    }
+    .chart-top {
+      align-items: start;
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      min-height: 42px;
+      padding: 0 2px 6px;
+    }
+    .ticker {
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      line-height: 1.2;
+    }
+    .meta {
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin-top: 3px;
+      text-transform: uppercase;
+    }
+    .last-price {
+      color: #0f172a;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.2;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .change {
+      color: #64748b;
+      display: block;
+      font-size: 11px;
+      font-weight: 900;
+      margin-top: 3px;
+    }
+    .change.up { color: #059669; }
+    .change.down { color: #dc2626; }
+    #chart-canvas {
+      height: 238px;
+      min-width: 0;
+      position: relative;
+      width: 100%;
+    }
+    .empty {
+      align-items: center;
+      background: #f8fafc;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      color: #64748b;
+      display: none;
+      font-size: 13px;
+      font-weight: 800;
+      height: 238px;
+      justify-content: center;
+      text-align: center;
+    }
+    .tooltip {
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: 8px;
+      box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+      color: #e2e8f0;
+      display: none;
+      font-size: 11px;
+      font-weight: 800;
+      left: 0;
+      line-height: 1.45;
+      min-width: 126px;
+      padding: 8px 9px;
+      pointer-events: none;
+      position: absolute;
+      top: 0;
+      z-index: 10;
+    }
+    .tooltip strong {
+      color: #ffffff;
+      display: block;
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+    .attribution {
+      color: #94a3b8;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 2px 0;
+    }
+    .attribution a {
+      color: #0f766e;
+      font-weight: 900;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <script type="application/json" id="chart-payload">__CHART_PAYLOAD__</script>
+  <div class="chart-shell">
+    <div class="chart-top">
+      <div>
+        <div class="ticker" id="ticker-label"></div>
+        <div class="meta" id="chart-meta"></div>
+      </div>
+      <div class="last-price" id="last-price"></div>
+    </div>
+    <div id="chart-canvas"></div>
+    <div class="empty" id="empty-state">No chart data returned.</div>
+    <div class="tooltip" id="tooltip"></div>
+    <div class="attribution">Lightweight Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView</a></div>
+  </div>
+  <script>
+    (function () {
+      const payload = JSON.parse(document.getElementById("chart-payload").textContent);
+      const container = document.getElementById("chart-canvas");
+      const empty = document.getElementById("empty-state");
+      const tooltip = document.getElementById("tooltip");
+      const tickerLabel = document.getElementById("ticker-label");
+      const metaLabel = document.getElementById("chart-meta");
+      const lastPrice = document.getElementById("last-price");
+      const intradayIntervals = new Set(["5m", "15m", "1h"]);
+      const isIntraday = intradayIntervals.has(payload.interval);
+      const easternFormatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      const displayTimeFormatter = new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: isIntraday ? "numeric" : undefined,
+        minute: isIntraday ? "2-digit" : undefined,
+      });
+
+      function price(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return "-";
+        return number.toLocaleString(undefined, {
+          minimumFractionDigits: number >= 100 ? 2 : 2,
+          maximumFractionDigits: number >= 100 ? 2 : 4,
+        });
+      }
+
+      function numberOrNull(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      }
+
+      function easternTimestampSeconds(timestamp) {
+        const date = new Date(timestamp);
+        if (Number.isNaN(date.getTime())) return null;
+        if (!isIntraday) return String(timestamp || "").slice(0, 10);
+        const parts = Object.fromEntries(
+          easternFormatter
+            .formatToParts(date)
+            .filter((part) => part.type !== "literal")
+            .map((part) => [part.type, part.value])
+        );
+        const hour = Number(parts.hour) === 24 ? 0 : Number(parts.hour);
+        return Math.floor(Date.UTC(
+          Number(parts.year),
+          Number(parts.month) - 1,
+          Number(parts.day),
+          hour,
+          Number(parts.minute)
+        ) / 1000);
+      }
+
+      function compareTimes(left, right) {
+        if (typeof left.time === "number" && typeof right.time === "number") return left.time - right.time;
+        return String(left.time).localeCompare(String(right.time));
+      }
+
+      const points = (payload.points || [])
+        .map((point) => ({
+          time: easternTimestampSeconds(point.timestamp),
+          timestamp: point.timestamp,
+          open: numberOrNull(point.open),
+          high: numberOrNull(point.high),
+          low: numberOrNull(point.low),
+          close: numberOrNull(point.close),
+        }))
+        .filter((point) => point.time && Number.isFinite(point.close))
+        .sort(compareTimes);
+
+      tickerLabel.textContent = payload.ticker;
+      metaLabel.textContent = `${payload.chartType === "candles" ? "Candles" : "Line"} · ${payload.range} · ${payload.interval}`;
+
+      if (!window.LightweightCharts || points.length === 0) {
+        container.style.display = "none";
+        empty.style.display = "flex";
+        return;
+      }
+
+      const first = points[0];
+      const last = points[points.length - 1];
+      const change = last.close - first.close;
+      const changePercent = first.close ? (change / first.close) * 100 : 0;
+      const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
+      lastPrice.innerHTML = `${price(last.close)}<span class="change ${changeClass}">${change >= 0 ? "+" : ""}${price(change)} ${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%</span>`;
+
+      const chartApi = LightweightCharts.createChart(container, {
+        width: container.clientWidth || 360,
+        height: 238,
+        layout: {
+          background: { type: "solid", color: "#ffffff" },
+          textColor: "#64748b",
+          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          fontSize: 11,
+        },
+        grid: {
+          vertLines: { color: "#f1f5f9" },
+          horzLines: { color: "#edf2f7" },
+        },
+        rightPriceScale: {
+          borderVisible: false,
+          scaleMargins: { top: 0.14, bottom: 0.14 },
+        },
+        timeScale: {
+          borderVisible: false,
+          fixLeftEdge: true,
+          fixRightEdge: true,
+          minBarSpacing: 0.5,
+          rightOffset: 2,
+          timeVisible: isIntraday,
+          secondsVisible: false,
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLine: { color: "#94a3b8", labelBackgroundColor: "#0f172a" },
+          horzLine: { color: "#94a3b8", labelBackgroundColor: "#0f172a" },
+        },
+        localization: {
+          priceFormatter: price,
+        },
+        handleScale: {
+          axisPressedMouseMove: false,
+          mouseWheel: false,
+          pinch: false,
+        },
+        handleScroll: {
+          horzTouchDrag: true,
+          mouseWheel: false,
+          pressedMouseMove: true,
+          vertTouchDrag: false,
+        },
+      });
+
+      const series = payload.chartType === "candles"
+        ? chartApi.addSeries(LightweightCharts.CandlestickSeries, {
+            upColor: "#059669",
+            downColor: "#dc2626",
+            borderVisible: false,
+            wickUpColor: "#059669",
+            wickDownColor: "#dc2626",
+            priceLineVisible: false,
+            lastValueVisible: true,
+          })
+        : chartApi.addSeries(LightweightCharts.AreaSeries, {
+            lineColor: "#0f766e",
+            topColor: "rgba(15, 118, 110, 0.22)",
+            bottomColor: "rgba(15, 118, 110, 0.03)",
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: true,
+            crosshairMarkerVisible: true,
+            crosshairMarkerRadius: 4,
+          });
+
+      const seriesData = payload.chartType === "candles"
+        ? points
+            .filter((point) => [point.open, point.high, point.low, point.close].every(Number.isFinite))
+            .map((point) => ({ time: point.time, open: point.open, high: point.high, low: point.low, close: point.close }))
+        : points.map((point) => ({ time: point.time, value: point.close }));
+
+      series.setData(seriesData);
+      chartApi.timeScale().fitContent();
+
+      function resizeChart() {
+        chartApi.applyOptions({ width: container.clientWidth || 360, height: 238 });
+        chartApi.timeScale().fitContent();
+      }
+
+      if (window.ResizeObserver) {
+        new ResizeObserver(resizeChart).observe(container);
+      } else {
+        window.addEventListener("resize", resizeChart);
+      }
+      window.requestAnimationFrame(resizeChart);
+
+      chartApi.subscribeCrosshairMove((param) => {
+        const item = param.seriesData.get(series);
+        if (!item || !param.point || param.point.x < 0 || param.point.y < 0) {
+          tooltip.style.display = "none";
+          return;
+        }
+        const index = Math.max(0, Math.min(points.length - 1, points.findIndex((point) => point.time === param.time)));
+        const sourcePoint = points[index] || last;
+        const close = item.value ?? item.close;
+        const body = payload.chartType === "candles"
+          ? `O ${price(item.open)} · H ${price(item.high)}<br>L ${price(item.low)} · C ${price(item.close)}`
+          : `Close ${price(close)}`;
+        tooltip.innerHTML = `<strong>${displayTimeFormatter.format(new Date(sourcePoint.timestamp))}</strong>${body}`;
+        const box = tooltip.getBoundingClientRect();
+        const shell = document.querySelector(".chart-shell").getBoundingClientRect();
+        const left = Math.min(param.point.x + 16, shell.width - box.width - 12);
+        const top = Math.max(54, Math.min(param.point.y + 56, shell.height - box.height - 18));
+        tooltip.style.left = `${Math.max(8, left)}px`;
+        tooltip.style.top = `${top}px`;
+        tooltip.style.display = "block";
+      });
+    })();
+  </script>
+</body>
+</html>
+        """
+        .replace("__LIGHTWEIGHT_CHARTS_BUNDLE__", bundle_b64)
+        .replace("__CHART_PAYLOAD__", payload_json)
+    )
 
 
 def format_chart_option(option: str) -> str:
@@ -952,12 +1733,19 @@ def format_chart_option(option: str) -> str:
 
 def render_article(article: NewsArticle) -> None:
     """Render one normalized news article as a readable light-theme card."""
+    st.markdown(article_card_html(article), unsafe_allow_html=True)
+
+
+def article_card_html(article: NewsArticle, compact: bool = False) -> str:
+    """Return one normalized news article card."""
     published = article.published_at.astimezone().strftime("%Y-%m-%d %H:%M") if article.published_at else None
     meta = " | ".join(item for item in [article.publisher, published] if item)
-    classes = "streamlit-news-card with-image" if article.thumbnail_url else "streamlit-news-card"
+    classes = "streamlit-news-card"
+    if article.thumbnail_url and not compact:
+        classes += " with-image"
     image_html = (
         f'<img src="{escape(article.thumbnail_url)}" alt="" loading="lazy" />'
-        if article.thumbnail_url
+        if article.thumbnail_url and not compact
         else ""
     )
     if article.url:
@@ -979,17 +1767,20 @@ def render_article(article: NewsArticle) -> None:
             f'<div class="streamlit-related-tickers">{ticker_spans}</div>'
         )
 
-    st.markdown(
-        (
-            f'<article class="{classes}">'
-            f"{image_html}"
-            '<div class="streamlit-news-body">'
-            f"{title_html}{meta_html}{summary_html}{related_html}"
-            "</div>"
-            "</article>"
-        ),
-        unsafe_allow_html=True,
+    return (
+        f'<article class="{classes}">'
+        f"{image_html}"
+        '<div class="streamlit-news-body">'
+        f"{title_html}{meta_html}{summary_html}{related_html}"
+        "</div>"
+        "</article>"
     )
+
+
+def render_article_grid(articles: list[NewsArticle], compact: bool = False) -> None:
+    """Render articles in a responsive static-style grid."""
+    cards = "".join(article_card_html(article, compact=compact) for article in articles)
+    st.markdown(f'<div class="streamlit-news-grid">{cards}</div>', unsafe_allow_html=True)
 
 
 def group_articles_by_category(articles: list[NewsArticle]) -> dict[str, list[NewsArticle]]:
@@ -1011,6 +1802,47 @@ def render_categorized_articles(articles: list[NewsArticle]) -> None:
         st.markdown(f'<div class="streamlit-news-category">{escape(label)} ({len(category_articles)})</div>', unsafe_allow_html=True)
         for article in category_articles:
             render_article(article)
+
+
+def ticker_news_card_html(ticker_group: Any) -> str:
+    """Return one watchlist news card with collapsed top headlines and categorized details."""
+    articles = list(ticker_group.articles or [])
+    visible_articles = articles[:NEWS_COLLAPSED_HEADLINE_COUNT]
+    warnings = "".join(f'<div class="inline-warning">{escape(warning)}</div>' for warning in ticker_group.warnings)
+    top_html = "".join(article_card_html(article, compact=True) for article in visible_articles)
+    if not top_html:
+        top_html = '<p class="news-empty">No recent headlines returned.</p>'
+
+    grouped = group_articles_by_category(articles[:NEWS_EXPANDED_HEADLINE_COUNT])
+    category_html = []
+    if len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
+        for category, label in NEWS_CATEGORY_LABELS.items():
+            category_articles = grouped.get(category, [])
+            if not category_articles:
+                continue
+            category_cards = "".join(article_card_html(article, compact=True) for article in category_articles)
+            category_html.append(
+                '<details class="streamlit-news-category-details">'
+                f'<summary>{escape(label)} ({len(category_articles)})</summary>'
+                f"<div>{category_cards}</div>"
+                "</details>"
+            )
+
+    return (
+        '<article class="streamlit-ticker-news-card">'
+        f'<h4>{escape(ticker_group.ticker)} <span>{len(articles)} headline(s)</span></h4>'
+        f"{warnings}{top_html}{''.join(category_html)}"
+        "</article>"
+    )
+
+
+def render_ticker_news_grid(ticker_news: list[Any]) -> None:
+    """Render watchlist news groups in a compact responsive grid."""
+    if not ticker_news:
+        st.info("No watchlist news was returned.")
+        return
+    cards = "".join(ticker_news_card_html(group) for group in ticker_news)
+    st.markdown(f'<div class="streamlit-ticker-news-grid">{cards}</div>', unsafe_allow_html=True)
 
 
 def render_x_timeline() -> None:
@@ -1099,28 +1931,16 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
 
     render_snapshot_grid(snapshot)
 
-    st.subheader("General Market News")
+    st.markdown('<div class="streamlit-section-header"><h2>General Market News</h2></div>', unsafe_allow_html=True)
     if report.general_market:
-        for article in report.general_market:
-            render_article(article)
+        render_article_grid(report.general_market)
     else:
         st.info("No general market headlines were returned.")
 
-    st.subheader("Watchlist News")
-    for ticker_group in report.ticker_news:
-        st.markdown(f"#### {escape(ticker_group.ticker)} - {len(ticker_group.articles)} headline(s)")
-        for warning in ticker_group.warnings:
-            st.warning(warning)
-        if ticker_group.articles:
-            for article in ticker_group.articles[:NEWS_COLLAPSED_HEADLINE_COUNT]:
-                render_article(article)
-            if len(ticker_group.articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
-                with st.expander(f"Show categorized headlines for {ticker_group.ticker}", expanded=False):
-                    render_categorized_articles(ticker_group.articles[:NEWS_EXPANDED_HEADLINE_COUNT])
-        else:
-            st.info("No recent headlines returned.")
+    st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
+    render_ticker_news_grid(report.ticker_news)
 
-    st.subheader("X.com")
+    st.markdown('<div class="streamlit-section-header"><h2>X.com</h2></div>', unsafe_allow_html=True)
     render_x_timeline()
 
 
@@ -1134,7 +1954,13 @@ def render_scanner(report: ScannerResponse) -> None:
         if not report.setup_rows:
             st.info("No setup scanner rows were returned.")
         else:
-            st.dataframe(styled_scanner_setup_frame(report), use_container_width=True, hide_index=True)
+            st.dataframe(
+                styled_scanner_setup_frame(report),
+                use_container_width=True,
+                hide_index=True,
+                row_height=42,
+                height=dataframe_height(len(report.setup_rows), row_height=42),
+            )
             warned = [row for row in report.setup_rows if row.warnings]
             for row in warned:
                 st.warning(f"{row.ticker}: {' '.join(row.warnings)}")
@@ -1149,21 +1975,45 @@ def render_scanner(report: ScannerResponse) -> None:
             st.info("No intraday pattern analysis was returned.")
             return
         st.subheader("Pattern Summary")
-        st.dataframe(pattern_summary_frame(report), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pattern_summary_frame(report),
+            use_container_width=True,
+            hide_index=True,
+            row_height=40,
+            height=dataframe_height(len(report.pattern_summary), row_height=40),
+        )
         st.subheader("5-Min Heatmap")
         st.caption("Average percent from open by 5-minute ET bucket. Negative values mark below-open periods.")
-        st.dataframe(pattern_heatmap_frame(report), use_container_width=True, hide_index=True)
+        heatmap_frame = pattern_heatmap_frame(report)
+        st.dataframe(
+            heatmap_frame,
+            use_container_width=True,
+            hide_index=True,
+            row_height=40,
+            height=dataframe_height(len(heatmap_frame), row_height=40),
+        )
         st.subheader("Per-Ticker Detail")
         for ticker in sorted({detail.ticker for detail in report.pattern_details}):
             rows = [detail for detail in report.pattern_details if detail.ticker == ticker]
             with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
-                st.dataframe(pattern_detail_frame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    pattern_detail_frame(rows),
+                    use_container_width=True,
+                    hide_index=True,
+                    row_height=40,
+                    height=dataframe_height(len(rows), row_height=40),
+                )
         st.subheader("Key Takeaways")
         if report.takeaways:
             for takeaway in report.takeaways:
                 st.markdown(f'<div class="streamlit-takeaway">{escape(takeaway)}</div>', unsafe_allow_html=True)
         else:
             st.info("No strong recurring pattern takeaways were found.")
+
+
+def dataframe_height(row_count: int, row_height: int = 40, min_height: int = 160, max_height: int = 520) -> int:
+    """Return a readable dataframe height with breathing room for header and rows."""
+    return min(max_height, max(min_height, row_count * row_height + 46))
 
 
 def scanner_setup_frame(report: ScannerResponse) -> pd.DataFrame:
@@ -1289,59 +2139,114 @@ def pattern_detail_frame(details: list[Any]) -> pd.DataFrame:
     )
 
 
-def normalize_ticker_list(value: str | list[str]) -> list[str]:
-    """Normalize delimited ticker text or a ticker list while preserving order."""
-    candidates = value if isinstance(value, list) else value.replace(",", " ").split()
-    cleaned: list[str] = []
-    for candidate in candidates:
-        ticker = str(candidate).strip().upper()
-        if ticker and ticker not in cleaned:
-            cleaned.append(ticker)
-    return cleaned
-
-
 def ensure_streamlit_watchlist() -> None:
     """Initialize Streamlit session watchlist state."""
     if "watchlist_tickers" not in st.session_state:
-        st.session_state.watchlist_tickers = normalize_ticker_list("AAPL, MSFT, NVDA")
+        st.session_state.watchlist_tickers = load_streamlit_watchlist()
+
+
+def persist_session_watchlist() -> None:
+    """Persist the current Streamlit session watchlist."""
+    st.session_state.watchlist_tickers = normalize_ticker_list(list(st.session_state.watchlist_tickers))
+    save_streamlit_watchlist(list(st.session_state.watchlist_tickers))
 
 
 def render_streamlit_watchlist_controls() -> tuple[str, ...]:
     """Render add/remove/reorder controls and return the current watchlist."""
     ensure_streamlit_watchlist()
-    with st.form("ticker-add-form", clear_on_submit=True):
-        add_text = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, NVDA")
-        submitted = st.form_submit_button("Add", type="primary", use_container_width=True)
-    if submitted:
+
+    def add_pending_tickers() -> None:
+        add_text = str(st.session_state.get("streamlit_ticker_add_text", ""))
         added = False
         for ticker in normalize_ticker_list(add_text):
             if ticker not in st.session_state.watchlist_tickers:
                 st.session_state.watchlist_tickers.append(ticker)
                 added = True
         if added:
-            st.rerun()
+            persist_session_watchlist()
+            bump_streamlit_refresh_token()
+        st.session_state.streamlit_ticker_add_text = ""
+
+    st.text_input(
+        "Ticker symbol",
+        key="streamlit_ticker_add_text",
+        placeholder="Add ticker symbols",
+    )
+    st.button("Add", type="primary", use_container_width=True, on_click=add_pending_tickers)
+    if st.button(
+        "▶ Run levels + news",
+        key="streamlit-sidebar-run",
+        type="primary",
+        use_container_width=True,
+        disabled=not bool(st.session_state.watchlist_tickers),
+        help="Refresh levels, news, scanner, market snapshot, and charts for the saved watchlist.",
+    ):
+        st.session_state.sidebar_run_requested = True
+        st.rerun()
 
     for index, ticker in enumerate(list(st.session_state.watchlist_tickers)):
-        cols = st.columns([3, 1, 1, 1], vertical_alignment="center")
-        cols[0].markdown(f"**{escape(ticker)}**")
-        if cols[1].button("↑", key=f"watch-up-{ticker}", disabled=index == 0):
+        cols = st.columns([2.6, 1, 1, 1], vertical_alignment="center")
+        cols[0].markdown(
+            f'<div class="streamlit-watchlist-row"><strong>{escape(ticker)}</strong></div>',
+            unsafe_allow_html=True,
+        )
+        if cols[1].button("↑", key=f"watch-up-{ticker}", disabled=index == 0, help=f"Move {ticker} up"):
             st.session_state.watchlist_tickers[index - 1], st.session_state.watchlist_tickers[index] = (
                 st.session_state.watchlist_tickers[index],
                 st.session_state.watchlist_tickers[index - 1],
             )
+            persist_session_watchlist()
+            bump_streamlit_refresh_token()
             st.rerun()
-        if cols[2].button("↓", key=f"watch-down-{ticker}", disabled=index == len(st.session_state.watchlist_tickers) - 1):
+        if cols[2].button(
+            "↓",
+            key=f"watch-down-{ticker}",
+            disabled=index == len(st.session_state.watchlist_tickers) - 1,
+            help=f"Move {ticker} down",
+        ):
             st.session_state.watchlist_tickers[index + 1], st.session_state.watchlist_tickers[index] = (
                 st.session_state.watchlist_tickers[index],
                 st.session_state.watchlist_tickers[index + 1],
             )
+            persist_session_watchlist()
+            bump_streamlit_refresh_token()
             st.rerun()
-        if cols[3].button("×", key=f"watch-remove-{ticker}"):
+        if cols[3].button("×", key=f"watch-remove-{ticker}", help=f"Remove {ticker}"):
             st.session_state.watchlist_tickers.remove(ticker)
+            persist_session_watchlist()
+            bump_streamlit_refresh_token()
             st.rerun()
     if not st.session_state.watchlist_tickers:
         st.caption("No tickers saved.")
     return tuple(st.session_state.watchlist_tickers)
+
+
+def load_streamlit_data(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int) -> None:
+    """Load all Streamlit datasets for the current watchlist."""
+    st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
+    st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
+    st.session_state.news = build_news(
+        tickers,
+        per_ticker=NEWS_EXPANDED_HEADLINE_COUNT,
+        refresh_token=refresh_token,
+    )
+    st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
+
+
+@st.fragment(run_every=AUTO_REFRESH_SECONDS)
+def render_auto_refresh_fragment(enabled: bool) -> None:
+    """Trigger full-app data refreshes on a native Streamlit timer."""
+    if not enabled:
+        return
+    current_bucket = refresh_bucket()
+    previous_bucket = st.session_state.get("auto_refresh_bucket")
+    if previous_bucket is None:
+        st.session_state.auto_refresh_bucket = current_bucket
+        return
+    if current_bucket != previous_bucket:
+        st.session_state.auto_refresh_bucket = current_bucket
+        bump_streamlit_refresh_token()
+        st.rerun()
 
 
 def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
@@ -1385,6 +2290,16 @@ def main() -> None:
         st.session_state.levels_status = ""
     if "autoload_key" not in st.session_state:
         st.session_state.autoload_key = None
+    if "streamlit_refresh_token" not in st.session_state:
+        st.session_state.streamlit_refresh_token = 0
+    if "auto_refresh_bucket" not in st.session_state:
+        st.session_state.auto_refresh_bucket = refresh_bucket()
+
+    sidebar_run_requested = bool(st.session_state.pop("sidebar_run_requested", False))
+    render_auto_refresh_fragment(bool(tickers))
+    refresh_token = int(st.session_state.streamlit_refresh_token)
+    if sidebar_run_requested and tickers:
+        refresh_token = bump_streamlit_refresh_token()
 
     autoload_metrics = tuple(DEFAULT_METRICS)
     try:
@@ -1392,15 +2307,18 @@ def main() -> None:
     except ValidationError:
         autoload_request = None
     if autoload_request is not None:
-        autoload_key = (tuple(autoload_request.tickers), tuple(autoload_request.metrics))
+        autoload_key = (tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
         if st.session_state.autoload_key != autoload_key:
             with st.spinner("Loading saved watchlist..."):
-                st.session_state.report = build_report(tuple(autoload_request.tickers), tuple(autoload_request.metrics))
-                st.session_state.scanner = build_scanner(tuple(autoload_request.tickers))
-                st.session_state.news = build_news(tuple(autoload_request.tickers), per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
-                st.session_state.market_snapshot = build_market_snapshot(tuple(autoload_request.tickers))
+                load_streamlit_data(tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
             st.session_state.levels_status = ""
             st.session_state.autoload_key = autoload_key
+    else:
+        st.session_state.report = None
+        st.session_state.scanner = None
+        st.session_state.news = None
+        st.session_state.market_snapshot = None
+        st.session_state.autoload_key = None
 
     if view == LEVELS_VIEW:
         with st.container():
@@ -1439,7 +2357,8 @@ def main() -> None:
             return
 
         with st.spinner("Generating levels..."):
-            st.session_state.report = build_report(tuple(request.tickers), tuple(request.metrics))
+            refresh_token = bump_streamlit_refresh_token()
+            load_streamlit_data(tuple(request.tickers), tuple(request.metrics), refresh_token)
         st.session_state.levels_status = ""
 
     if run_scanner:
@@ -1450,7 +2369,8 @@ def main() -> None:
             return
 
         with st.spinner("Running scanner..."):
-            st.session_state.scanner = build_scanner(tuple(request.tickers))
+            refresh_token = bump_streamlit_refresh_token()
+            st.session_state.scanner = build_scanner(tuple(request.tickers), refresh_token=refresh_token)
 
     if refresh_news:
         try:
@@ -1461,8 +2381,16 @@ def main() -> None:
             return
 
         with st.spinner("Loading news..."):
-            st.session_state.news = build_news(tuple(request.tickers), per_ticker=request.per_ticker)
-            st.session_state.market_snapshot = build_market_snapshot(tuple(snapshot_request.tickers))
+            refresh_token = bump_streamlit_refresh_token()
+            st.session_state.news = build_news(
+                tuple(request.tickers),
+                per_ticker=request.per_ticker,
+                refresh_token=refresh_token,
+            )
+            st.session_state.market_snapshot = build_market_snapshot(
+                tuple(snapshot_request.tickers),
+                refresh_token=refresh_token,
+            )
 
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
@@ -1495,11 +2423,10 @@ def main() -> None:
                 use_container_width=True,
             )
 
-    for metric in report.metrics:
-        render_metric(metric)
+    render_metric_grid(report.metrics)
 
     chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
-    render_chart_history(report, chart_range, chart_interval, chart_type)
+    render_chart_history(report, chart_range, chart_interval, chart_type, refresh_token=refresh_token)
 
 
 if __name__ == "__main__":
