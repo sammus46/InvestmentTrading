@@ -196,6 +196,26 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
 - Browser-style web charts using app-owned OHLC data, with global and per-ticker controls for line versus candlestick view, supported range, and interval. Charts are compact, follow the same ticker order as the draggable metric cards, and no longer overlay trading levels. PDF charts continue to use completed daily closes.
 
+## Backend calculation comparison
+
+The independent developer implementation expected at `coding projects/adam/trading-levels` has not been formula-compared yet because macOS currently denies this process read access to that folder with `Operation not permitted`. Until that folder is readable, there are no verified calculation differences against the independent implementation, and no backend level formulas should be considered intentionally aligned to it.
+
+Current backend calculation behavior in this app:
+
+| Level | Current app behavior |
+| --- | --- |
+| Previous day OHLC | Uses the most recent completed Eastern-calendar daily bar and excludes the current Eastern date. |
+| Premarket high/low | Uses the latest available session's 1-minute extended-hours bars from 4:00 ET inclusive to 9:30 ET exclusive. |
+| First five-minute range | Uses the latest available session's 1-minute bars from 9:30 ET inclusive to 9:35 ET exclusive. |
+| Previous session VWAP | Uses the previous completed regular session's 5-minute bars from 9:30 ET inclusive to 16:00 ET exclusive; VWAP is volume-weighted typical price, `(high + low + close) / 3`. |
+| 52-week high/low | Uses completed daily sessions only and excludes the current Eastern date. |
+| Earnings gap | Uses the most recent completed earnings date returned by yfinance and calculates earnings-day open minus the prior daily close. |
+| Swing levels | Uses completed daily bars, centered swing points with a 10-bar window, merges nearby levels within 0.3%, and keeps the five levels nearest the latest completed close. |
+| Bollinger Bands | Uses the latest available 20 daily closes with 2 standard deviations. |
+| Scanner-only levels | Adds current price, today's VWAP, 1-month range, SMA/EMA levels, classic pivots, Fibonacci retracements, VWAP extension, relative strength, support/resistance confidence, reclaim/rejection signals, and intraday pattern summaries. |
+
+When `adam/trading-levels` is accessible, document each verified difference here before changing formulas. Alignment changes should then update `app/services/market_data.py`, API/Pydantic models if needed, Streamlit/static UI display, PDF output, this README, and tests.
+
 ## API usage
 
 Generate a JSON report:

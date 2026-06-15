@@ -6,8 +6,10 @@ paid data source can replace yfinance without touching API routes or UI code.
 
 from __future__ import annotations
 
+import io
 import json
 import os
+from contextlib import redirect_stderr
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from urllib.parse import urlencode
@@ -636,7 +638,8 @@ class MarketDataService:
             return EarningsGap()
 
         try:
-            earnings_dates = yf.Ticker(symbol).earnings_dates
+            with redirect_stderr(io.StringIO()):
+                earnings_dates = yf.Ticker(symbol).earnings_dates
         except Exception as exc:
             warnings.append(f"Earnings dates were unavailable: {exc}")
             return EarningsGap()
