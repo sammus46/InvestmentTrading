@@ -105,6 +105,7 @@ const newsStatusEl = document.querySelector("#news-status");
 const newsGeneratedAtEl = document.querySelector("#news-generated-at");
 const marketNewsEl = document.querySelector("#market-news");
 const watchlistNewsEl = document.querySelector("#watchlist-news");
+const watchlistNewsSearchEl = document.querySelector("#watchlist-news-search");
 const marketSnapshotEl = document.querySelector("#market-snapshot");
 const watchlistPerformanceEl = document.querySelector("#watchlist-performance");
 const xNewsEl = document.querySelector("#x-news");
@@ -217,6 +218,10 @@ watchlistNewsEl.addEventListener("click", (event) => {
     expandedNewsTickers.add(ticker);
   }
   renderWatchlistNews(currentNews.ticker_news || []);
+});
+
+watchlistNewsSearchEl?.addEventListener("input", () => {
+  renderWatchlistNews(currentNews?.ticker_news || []);
 });
 
 runScannerButton.addEventListener("click", async () => {
@@ -1073,13 +1078,23 @@ function renderMarketNews(articles) {
 }
 
 function renderWatchlistNews(tickerNews) {
-  if (!tickerNews.length) {
+  const filteredNews = filterTickerNewsGroups(tickerNews, watchlistNewsSearchEl?.value);
+  const terms = normalizeTickers(watchlistNewsSearchEl?.value || "");
+  if (!filteredNews.length) {
     watchlistNewsEl.className = "ticker-news-grid empty";
-    watchlistNewsEl.textContent = "No watchlist news was returned.";
+    watchlistNewsEl.textContent = terms.length
+      ? `No ticker matching "${terms.join(", ")}".`
+      : "No watchlist news was returned.";
     return;
   }
   watchlistNewsEl.className = "ticker-news-grid";
-  watchlistNewsEl.innerHTML = tickerNews.map(renderTickerNews).join("");
+  watchlistNewsEl.innerHTML = filteredNews.map(renderTickerNews).join("");
+}
+
+function filterTickerNewsGroups(tickerNews, query) {
+  const terms = normalizeTickers(query || "");
+  if (!terms.length) return tickerNews;
+  return tickerNews.filter((group) => terms.some((term) => String(group.ticker || "").toUpperCase().includes(term)));
 }
 
 function renderTickerNews(tickerGroup) {

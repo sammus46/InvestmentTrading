@@ -8,14 +8,17 @@ from app.models import (
     EarningsGap,
     EquityMetrics,
     FiftyTwoWeekRange,
+    NewsArticle,
     OpeningRange,
     Ohlc,
     PremarketRange,
     SwingLevels,
     TechnicalLevels,
+    TickerNews,
 )
 from app.streamlit_app import (
     filter_report_metrics,
+    filter_ticker_news_groups,
     load_streamlit_watchlist,
     metric_card_html,
     metric_rows,
@@ -25,6 +28,9 @@ from app.streamlit_app import (
     report_layout_label,
     refresh_bucket,
     save_streamlit_watchlist,
+    ticker_news_body_html,
+    ticker_news_card_html,
+    ticker_news_toggle_label,
 )
 from app.streamlit_ui.metrics import compare_table_html, insert_current_price, ladder_rows
 
@@ -137,6 +143,41 @@ def test_streamlit_level_search_filters_report_metrics():
     assert [metric.ticker for metric in filter_report_metrics(metrics, "ms\nzz")] == ["MSFT"]
     assert filter_report_metrics(metrics, "") == metrics
     assert filter_report_metrics(metrics, "zz") == []
+
+
+def test_streamlit_watchlist_news_search_filters_ticker_groups():
+    groups = [
+        TickerNews(ticker="AAPL", articles=[NewsArticle(title="AAPL headline")]),
+        TickerNews(ticker="MSFT", articles=[NewsArticle(title="MSFT headline")]),
+        TickerNews(ticker="NVDA", articles=[NewsArticle(title="NVDA headline")]),
+    ]
+
+    assert [group.ticker for group in filter_ticker_news_groups(groups, "aap, nv")] == ["AAPL", "NVDA"]
+    assert [group.ticker for group in filter_ticker_news_groups(groups, "ms nv")] == ["MSFT", "NVDA"]
+    assert filter_ticker_news_groups(groups, "") == groups
+    assert filter_ticker_news_groups(groups, "zz") == []
+
+
+def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
+    group = TickerNews(
+        ticker="AAPL",
+        articles=[
+            NewsArticle(title=f"Headline {index}", category="general" if index % 2 else "earnings")
+            for index in range(8)
+        ],
+    )
+
+    collapsed = ticker_news_body_html(group, expanded=False)
+    expanded = ticker_news_body_html(group, expanded=True)
+    card = ticker_news_card_html(group, expanded=True)
+
+    assert "Headline 0" in collapsed
+    assert "Headline 5" not in collapsed
+    assert "Headline 5" in expanded
+    assert "streamlit-news-category-details" in expanded
+    assert "streamlit-ticker-news-card expanded" in card
+    assert ticker_news_toggle_label("AAPL", False, 8) == "Show 8 headlines for AAPL"
+    assert ticker_news_toggle_label("AAPL", True, 8) == "Show top 5 headlines for AAPL"
 
 
 def test_price_ladder_rows_sort_and_insert_current_price():

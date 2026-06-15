@@ -1095,10 +1095,24 @@ def render_app_chrome() -> str:
             gap: 0.65rem;
             padding: 0.85rem;
           }
-          .streamlit-ticker-news-card h4 {
+          .streamlit-ticker-news-header {
+            align-items: center;
+            display: flex;
+            gap: 0.5rem;
+            justify-content: space-between;
+            margin-bottom: 0.65rem;
+          }
+          .streamlit-ticker-news-title h4 {
             color: #12312f;
             letter-spacing: 0.06em;
             margin: 0;
+          }
+          .streamlit-ticker-news-title span {
+            color: #64748b !important;
+            display: block;
+            font-size: 0.76rem;
+            font-weight: 800;
+            margin-top: 0.15rem;
           }
           .streamlit-news-category-details {
             background: #ffffff;
@@ -1755,45 +1769,117 @@ def render_categorized_articles(articles: list[NewsArticle]) -> None:
             render_article(article)
 
 
-def ticker_news_card_html(ticker_group: Any) -> str:
-    """Return one watchlist news card with collapsed top headlines and categorized details."""
+def ticker_news_body_html(ticker_group: Any, expanded: bool = False) -> str:
+    """Return one watchlist news card body for collapsed or expanded state."""
     articles = list(ticker_group.articles or [])
-    visible_articles = articles[:NEWS_COLLAPSED_HEADLINE_COUNT]
+    visible_count = NEWS_EXPANDED_HEADLINE_COUNT if expanded else NEWS_COLLAPSED_HEADLINE_COUNT
+    visible_articles = articles[:visible_count]
     warnings = "".join(f'<div class="inline-warning">{escape(warning)}</div>' for warning in ticker_group.warnings)
-    top_html = "".join(article_card_html(article, compact=True) for article in visible_articles)
-    if not top_html:
-        top_html = '<p class="news-empty">No recent headlines returned.</p>'
 
-    grouped = group_articles_by_category(articles[:NEWS_EXPANDED_HEADLINE_COUNT])
-    category_html = []
-    if len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
+    if expanded:
+        grouped = group_articles_by_category(visible_articles)
+        category_html = []
         for category, label in NEWS_CATEGORY_LABELS.items():
             category_articles = grouped.get(category, [])
             if not category_articles:
                 continue
             category_cards = "".join(article_card_html(article, compact=True) for article in category_articles)
             category_html.append(
-                '<details class="streamlit-news-category-details">'
+                '<details class="streamlit-news-category-details" open>'
                 f'<summary>{escape(label)} ({len(category_articles)})</summary>'
                 f"<div>{category_cards}</div>"
                 "</details>"
             )
+        body_html = "".join(category_html) or '<p class="news-empty">No categorized headlines returned.</p>'
+    else:
+        body_html = "".join(article_card_html(article, compact=True) for article in visible_articles)
+        if not body_html:
+            body_html = '<p class="news-empty">No recent headlines returned.</p>'
 
+    return f"{warnings}{body_html}"
+
+
+def ticker_news_card_html(ticker_group: Any, expanded: bool = False) -> str:
+    """Return one static HTML watchlist news card for tests and non-interactive contexts."""
+    articles = list(ticker_group.articles or [])
+    expanded_class = " expanded" if expanded else ""
     return (
-        '<article class="streamlit-ticker-news-card">'
-        f'<h4>{escape(ticker_group.ticker)} <span>{len(articles)} headline(s)</span></h4>'
-        f"{warnings}{top_html}{''.join(category_html)}"
+        f'<article class="streamlit-ticker-news-card{expanded_class}">'
+        '<div class="streamlit-ticker-news-header">'
+        f'<div class="streamlit-ticker-news-title"><h4>{escape(ticker_group.ticker)}</h4>'
+        f"<span>{len(articles)} headline(s)</span></div>"
+        "</div>"
+        f"{ticker_news_body_html(ticker_group, expanded=expanded)}"
         "</article>"
     )
 
 
-def render_ticker_news_grid(ticker_news: list[Any]) -> None:
+def ticker_news_toggle_label(ticker: str, expanded: bool, article_count: int) -> str:
+    """Return the watchlist news card toggle label."""
+    expanded_count = min(article_count, NEWS_EXPANDED_HEADLINE_COUNT)
+    return (
+        f"Show top {NEWS_COLLAPSED_HEADLINE_COUNT} headlines for {ticker}"
+        if expanded
+        else f"Show {expanded_count} headlines for {ticker}"
+    )
+
+
+def expanded_news_tickers() -> set[str]:
+    """Return mutable Streamlit session state for expanded news cards."""
+    current = st.session_state.get("expanded_news_tickers", set())
+    if not isinstance(current, set):
+        current = set(current)
+    st.session_state.expanded_news_tickers = current
+    return current
+
+
+def render_ticker_news_card(ticker_group: Any) -> None:
+    """Render one watchlist news card with a top-right expansion arrow."""
+    articles = list(ticker_group.articles or [])
+    ticker = str(ticker_group.ticker)
+    expanded_set = expanded_news_tickers()
+    expanded = ticker in expanded_set
+    with st.container(border=True):
+        header_col, toggle_col = st.columns([1, 0.16], vertical_alignment="center")
+        with header_col:
+            st.markdown(
+                (
+                    '<div class="streamlit-ticker-news-title">'
+                    f"<h4>{escape(ticker)}</h4>"
+                    f"<span>{len(articles)} headline(s)</span>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+        with toggle_col:
+            if len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
+                label = ticker_news_toggle_label(ticker, expanded, len(articles))
+                if st.button("▴" if expanded else "▾", key=f"ticker-news-toggle-{ticker}", help=label):
+                    if expanded:
+                        expanded_set.discard(ticker)
+                    else:
+                        expanded_set.add(ticker)
+                    st.rerun()
+        st.markdown(ticker_news_body_html(ticker_group, expanded=expanded), unsafe_allow_html=True)
+
+
+def filter_ticker_news_groups(ticker_news: list[Any], query: object) -> list[Any]:
+    """Return ticker news groups whose ticker matches any search term."""
+    terms = level_search_terms(query)
+    if not terms:
+        return list(ticker_news)
+    return [group for group in ticker_news if any(term in str(group.ticker).upper() for term in terms)]
+
+
+def render_ticker_news_grid(ticker_news: list[Any], empty_message: str = "No watchlist news was returned.") -> None:
     """Render watchlist news groups in a compact responsive grid."""
     if not ticker_news:
-        st.info("No watchlist news was returned.")
+        st.info(empty_message)
         return
-    cards = "".join(ticker_news_card_html(group) for group in ticker_news)
-    st.markdown(f'<div class="streamlit-ticker-news-grid">{cards}</div>', unsafe_allow_html=True)
+    columns = st.columns(min(3, len(ticker_news)))
+    for index, group in enumerate(ticker_news):
+        with columns[index % len(columns)]:
+            render_ticker_news_card(group)
 
 
 def render_x_timeline() -> None:
@@ -1888,8 +1974,22 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
     else:
         st.info("No general market headlines were returned.")
 
-    st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
-    render_ticker_news_grid(report.ticker_news)
+    watchlist_heading_col, watchlist_search_col = st.columns([1.6, 1], vertical_alignment="center")
+    with watchlist_heading_col:
+        st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
+    with watchlist_search_col:
+        news_search = st.text_input(
+            "Search watchlist news",
+            placeholder="AAPL, MSFT",
+            key="watchlist_news_search",
+        )
+    visible_ticker_news = filter_ticker_news_groups(report.ticker_news, news_search)
+    if news_search and not visible_ticker_news:
+        render_ticker_news_grid([], f"No ticker matching '{normalize_level_search(news_search)}'.")
+    else:
+        if news_search:
+            st.caption(f"Showing {len(visible_ticker_news)} of {len(report.ticker_news)} ticker(s).")
+        render_ticker_news_grid(visible_ticker_news)
 
     st.markdown('<div class="streamlit-section-header"><h2>X.com</h2></div>', unsafe_allow_html=True)
     render_x_timeline()

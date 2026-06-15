@@ -151,11 +151,17 @@
           <section class="news-section" aria-labelledby="watchlist-news-heading">
             <div class="section-heading">
               <h3 id="watchlist-news-heading">Watchlist News</h3>
-              <button class="info-button" type="button" data-news-info="watchlist">
-                <span aria-hidden="true">i</span>
-                <span class="sr-only">Watchlist news information</span>
-                <span class="info-tooltip" role="tooltip">Headlines grouped by ticker from the same list used for levels.</span>
-              </button>
+              <div class="section-actions">
+                <label class="news-search" for="watchlist-news-search">
+                  <span>Search</span>
+                  <input id="watchlist-news-search" type="search" placeholder="AAPL, MSFT" autocomplete="off" />
+                </label>
+                <button class="info-button" type="button" data-news-info="watchlist">
+                  <span aria-hidden="true">i</span>
+                  <span class="sr-only">Watchlist news information</span>
+                  <span class="info-tooltip" role="tooltip">Headlines grouped by ticker from the same list used for levels.</span>
+                </button>
+              </div>
             </div>
             <div id="watchlist-news" class="ticker-news-grid empty"></div>
           </section>
