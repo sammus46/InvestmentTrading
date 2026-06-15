@@ -8,7 +8,7 @@ import json
 import os
 import re
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlparse, urlencode
 from urllib.request import Request, urlopen
 
 import yfinance as yf
@@ -223,7 +223,7 @@ class NewsService:
         summary = cls._string(content.get("summary") or content.get("description") or raw.get("summary"))
         return NewsArticle(
             title=title,
-            url=cls._url(content.get("canonicalUrl")) or cls._url(content.get("clickThroughUrl")) or cls._string(raw.get("link")),
+            url=cls._url(content.get("canonicalUrl")) or cls._url(content.get("clickThroughUrl")) or cls._url(raw.get("link")),
             publisher=cls._string(provider.get("displayName") or raw.get("publisher")),
             published_at=cls._published_at(content.get("pubDate") or content.get("displayTime") or raw.get("providerPublishTime")),
             summary=summary,
@@ -243,11 +243,11 @@ class NewsService:
             summary = cls._string(raw.get("summary"))
             article = NewsArticle(
                 title=title,
-                url=cls._string(raw.get("url") or raw.get("link")),
+                url=cls._url(raw.get("url") or raw.get("link")),
                 publisher=cls._string(raw.get("source")),
                 published_at=cls._published_at(raw.get("datetime")),
                 summary=summary,
-                thumbnail_url=cls._string(raw.get("image")),
+                thumbnail_url=cls._url(raw.get("image")),
                 related_tickers=cls._related_tickers(raw.get("related")),
                 category=cls._classify_article(title, summary),
             )
@@ -285,14 +285,20 @@ class NewsService:
     @classmethod
     def _url(cls, value: object) -> str | None:
         if isinstance(value, dict):
-            return cls._string(value.get("url"))
-        return cls._string(value)
+            value = value.get("url")
+        url = cls._string(value)
+        if not url:
+            return None
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        return url
 
     @classmethod
     def _thumbnail_url(cls, value: object) -> str | None:
         if not isinstance(value, dict):
             return None
-        original = cls._string(value.get("originalUrl"))
+        original = cls._url(value.get("originalUrl"))
         if original:
             return original
         resolutions = value.get("resolutions")

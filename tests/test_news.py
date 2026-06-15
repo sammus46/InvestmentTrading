@@ -77,6 +77,36 @@ def test_normalize_finnhub_article_shape():
     assert article.category == "general"
 
 
+def test_normalize_article_drops_unsafe_urls():
+    article = NewsService._normalize_article(
+        {
+            "title": "Unsafe link",
+            "link": "javascript:alert(1)",
+            "thumbnail": {"originalUrl": "data:text/html,<b>x</b>"},
+        }
+    )
+
+    assert article is not None
+    assert article.url is None
+    assert article.thumbnail_url is None
+
+
+def test_normalize_finnhub_article_drops_unsafe_urls():
+    [article] = NewsService._normalize_finnhub_articles(
+        [
+            {
+                "headline": "Unsafe Finnhub link",
+                "url": "data:text/html,<b>x</b>",
+                "image": "javascript:alert(1)",
+            }
+        ],
+        limit=1,
+    )
+
+    assert article.url is None
+    assert article.thumbnail_url is None
+
+
 def test_classify_article_groups_rating_changes():
     assert NewsService._classify_article("Apple upgraded as analyst raises price target") == "rating_changes"
     assert NewsService._classify_article("Tesla downgraded after margin concerns") == "rating_changes"

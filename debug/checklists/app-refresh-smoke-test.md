@@ -13,9 +13,11 @@ Use this checklist when touching watchlist state, data loading, refresh buttons,
 
 - [ ] Open the static app and confirm the saved watchlist renders.
 - [ ] Generate levels and confirm report cards, charts, and warnings render without a page crash.
+- [ ] Enter invalid ticker tokens such as `<script>`, `AAPL;MSFT`, and an overlong symbol; confirm they are rejected before saving or shown as concise validation errors.
 - [ ] Click `Refresh News` and confirm market news, watchlist news, market snapshot, and watchlist performance update.
 - [ ] Click `Run Scanner` and confirm setup rows or quiet data notes render.
 - [ ] Trigger `Refresh News` again immediately and confirm the button re-enables and status does not get stuck.
+- [ ] Trigger a levels/news/scanner refresh, then quickly change the watchlist; confirm older responses do not overwrite the current UI.
 - [ ] Remove, add, and reorder a ticker; confirm levels/news/scanner views keep the same order and do not duplicate stale cards.
 - [ ] Confirm provider failures show warnings or data notes instead of blanking the entire view.
 
@@ -23,6 +25,7 @@ Use this checklist when touching watchlist state, data loading, refresh buttons,
 
 - [ ] Open the Streamlit app and confirm saved watchlist autoload begins.
 - [ ] Confirm the top refresh banner appears only during active loading and clears after completion.
+- [ ] Enter invalid ticker tokens such as `<script>`, `AAPL;MSFT`, and an overlong symbol; confirm they are skipped and not saved.
 - [ ] Click `Generate Levels`; confirm report cards, charts, and warnings render without a long stuck overlay.
 - [ ] Click `Run Scanner`; confirm scanner output updates and the app remains responsive.
 - [ ] Switch to `Stock News`, click `Refresh News`, and confirm all news sections return or show clear empty states.

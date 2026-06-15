@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -34,6 +35,8 @@ from app.models import (
     ScannerRequest,
     ScannerResponse,
     TickerChartHistory,
+    normalize_ticker_symbol,
+    split_ticker_candidates,
 )
 from app.services.market_data import MarketDataService
 from app.services.news import NewsService
@@ -57,6 +60,7 @@ CHART_RANGE_LABELS = {"1Y": "1YR"}
 AUTO_REFRESH_SECONDS = 300
 REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
+STREAMLIT_DATASETS = ("report", "scanner", "news", "market_snapshot", "chart")
 LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
     Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
 )
@@ -158,11 +162,17 @@ def fmt(value: Any) -> str:
 
 def normalize_ticker_list(value: str | list[str]) -> list[str]:
     """Normalize delimited ticker text or a ticker list while preserving order."""
-    candidates = value if isinstance(value, list) else value.replace(",", " ").split()
+    try:
+        candidates = split_ticker_candidates(value)
+    except ValueError:
+        return []
     cleaned: list[str] = []
     for candidate in candidates:
-        ticker = str(candidate).strip().upper()
-        if ticker and ticker not in cleaned:
+        try:
+            ticker = normalize_ticker_symbol(candidate)
+        except ValueError:
+            continue
+        if ticker not in cleaned:
             cleaned.append(ticker)
     return cleaned
 
@@ -206,10 +216,36 @@ def refresh_bucket(now: datetime | None = None, interval_seconds: int = AUTO_REF
     return int(current.timestamp() // interval_seconds)
 
 
-def bump_streamlit_refresh_token(reason: str | None = None) -> int:
+def ensure_streamlit_data_state() -> None:
+    """Initialize per-dataset Streamlit freshness state."""
+    if "streamlit_refresh_token" not in st.session_state:
+        st.session_state.streamlit_refresh_token = 0
+    tokens = st.session_state.get("streamlit_refresh_tokens")
+    if not isinstance(tokens, dict):
+        tokens = {dataset: int(st.session_state.streamlit_refresh_token) for dataset in STREAMLIT_DATASETS}
+    for dataset in STREAMLIT_DATASETS:
+        tokens.setdefault(dataset, int(st.session_state.streamlit_refresh_token))
+    st.session_state.streamlit_refresh_tokens = tokens
+    if "loaded_data_keys" not in st.session_state or not isinstance(st.session_state.loaded_data_keys, dict):
+        st.session_state.loaded_data_keys = {}
+
+
+def dataset_refresh_token(dataset: str) -> int:
+    """Return the cache-busting token for one Streamlit dataset."""
+    ensure_streamlit_data_state()
+    return int(st.session_state.streamlit_refresh_tokens.get(dataset, 0))
+
+
+def bump_streamlit_refresh_token(
+    reason: str | None = None,
+    datasets: tuple[str, ...] = STREAMLIT_DATASETS,
+) -> int:
     """Advance the Streamlit data refresh token and return it."""
+    ensure_streamlit_data_state()
     st.session_state.streamlit_refresh_token = int(st.session_state.get("streamlit_refresh_token", 0)) + 1
-    st.session_state.autoload_key = None
+    for dataset in datasets:
+        if dataset in STREAMLIT_DATASETS:
+            st.session_state.streamlit_refresh_tokens[dataset] = int(st.session_state.streamlit_refresh_token)
     if reason:
         st.session_state.refresh_banner_title = reason
     return int(st.session_state.streamlit_refresh_token)
@@ -1102,6 +1138,47 @@ def render_app_chrome() -> str:
             justify-content: space-between;
             margin-bottom: 0.65rem;
           }
+          .streamlit-news-toggle-details {
+            display: grid;
+            gap: 0.65rem;
+          }
+          .streamlit-news-toggle-details summary {
+            cursor: pointer;
+            list-style: none;
+            margin-bottom: 0;
+          }
+          .streamlit-news-toggle-details summary::-webkit-details-marker {
+            display: none;
+          }
+          .streamlit-news-toggle-arrow {
+            align-items: center;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 999px;
+            color: #1d4ed8;
+            display: inline-flex;
+            flex: 0 0 auto;
+            font-size: 0.72rem;
+            font-weight: 900;
+            height: 1.85rem;
+            justify-content: center;
+            line-height: 1;
+            width: 1.85rem;
+          }
+          .streamlit-news-toggle-arrow::before {
+            content: "▾";
+          }
+          .streamlit-news-toggle-details[open] .streamlit-news-toggle-arrow::before {
+            content: "▴";
+          }
+          .streamlit-news-toggle-details[open] + .streamlit-news-collapsed-body {
+            display: none;
+          }
+          .streamlit-news-expanded-body,
+          .streamlit-news-collapsed-body {
+            display: grid;
+            gap: 0.5rem;
+          }
           .streamlit-ticker-news-title h4 {
             color: #12312f;
             letter-spacing: 0.06em;
@@ -1235,6 +1312,7 @@ def render_chart_history(
     interval: ChartInterval,
     chart_type: str,
     refresh_token: int = 0,
+    visible_tickers: tuple[str, ...] | None = None,
 ) -> None:
     """Render compact line/candlestick charts in report order."""
     tickers = tuple(metric.ticker for metric in report.metrics)
@@ -1242,6 +1320,7 @@ def render_chart_history(
         return
     response = build_chart_history(tickers, chart_range, interval, refresh_token=refresh_token)
     charts_by_ticker = {chart.ticker: chart for chart in response.charts}
+    display_tickers = visible_tickers or tickers
     st.markdown(
         (
             '<div class="streamlit-chart-header">'
@@ -1252,7 +1331,7 @@ def render_chart_history(
         unsafe_allow_html=True,
     )
     columns = st.columns(3)
-    for index, ticker in enumerate(tickers):
+    for index, ticker in enumerate(display_tickers):
         chart = charts_by_ticker.get(ticker)
         with columns[index % len(columns)]:
             with st.container(border=True):
@@ -1706,16 +1785,18 @@ def article_card_html(article: NewsArticle, compact: bool = False) -> str:
     published = article.published_at.astimezone().strftime("%Y-%m-%d %H:%M") if article.published_at else None
     meta = " | ".join(item for item in [article.publisher, published] if item)
     classes = "streamlit-news-card"
-    if article.thumbnail_url and not compact:
+    thumbnail_url = safe_url(article.thumbnail_url)
+    article_url = safe_url(article.url)
+    if thumbnail_url and not compact:
         classes += " with-image"
     image_html = (
-        f'<img src="{escape(article.thumbnail_url)}" alt="" loading="lazy" />'
-        if article.thumbnail_url and not compact
+        f'<img src="{escape(thumbnail_url)}" alt="" loading="lazy" />'
+        if thumbnail_url and not compact
         else ""
     )
-    if article.url:
+    if article_url:
         title_html = (
-            f'<a class="streamlit-news-title" href="{escape(article.url)}" '
+            f'<a class="streamlit-news-title" href="{escape(article_url)}" '
             f'target="_blank" rel="noopener noreferrer">{escape(article.title)}</a>'
         )
     else:
@@ -1740,6 +1821,16 @@ def article_card_html(article: NewsArticle, compact: bool = False) -> str:
         "</div>"
         "</article>"
     )
+
+
+def safe_url(value: object) -> str | None:
+    """Return http(s) URLs only for Streamlit unsafe HTML rendering."""
+    if not value:
+        return None
+    parsed = urlparse(str(value).strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return str(value).strip()
 
 
 def render_article_grid(articles: list[NewsArticle], compact: bool = False) -> None:
@@ -1802,65 +1893,38 @@ def ticker_news_body_html(ticker_group: Any, expanded: bool = False) -> str:
 def ticker_news_card_html(ticker_group: Any, expanded: bool = False) -> str:
     """Return one static HTML watchlist news card for tests and non-interactive contexts."""
     articles = list(ticker_group.articles or [])
+    expanded_attr = " open" if expanded else ""
     expanded_class = " expanded" if expanded else ""
+    collapsed_body = ticker_news_body_html(ticker_group, expanded=False)
+    expanded_body = ticker_news_body_html(ticker_group, expanded=True)
+    can_expand = len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT
+    if not can_expand:
+        return (
+            '<article class="streamlit-ticker-news-card">'
+            '<div class="streamlit-ticker-news-header">'
+            f'<div class="streamlit-ticker-news-title"><h4>{escape(ticker_group.ticker)}</h4>'
+            f"<span>{len(articles)} headline(s)</span></div>"
+            "</div>"
+            f"{collapsed_body}"
+            "</article>"
+        )
     return (
         f'<article class="streamlit-ticker-news-card{expanded_class}">'
-        '<div class="streamlit-ticker-news-header">'
+        f'<details class="streamlit-news-toggle-details"{expanded_attr}>'
+        '<summary class="streamlit-ticker-news-header">'
         f'<div class="streamlit-ticker-news-title"><h4>{escape(ticker_group.ticker)}</h4>'
-        f"<span>{len(articles)} headline(s)</span></div>"
-        "</div>"
-        f"{ticker_news_body_html(ticker_group, expanded=expanded)}"
+        f'<span>{len(articles)} headline(s)</span></div><span class="streamlit-news-toggle-arrow" aria-hidden="true"></span>'
+        "</summary>"
+        f'<div class="streamlit-news-expanded-body">{expanded_body}</div>'
+        "</details>"
+        f'<div class="streamlit-news-collapsed-body">{collapsed_body}</div>'
         "</article>"
     )
 
 
-def ticker_news_toggle_label(ticker: str, expanded: bool, article_count: int) -> str:
-    """Return the watchlist news card toggle label."""
-    expanded_count = min(article_count, NEWS_EXPANDED_HEADLINE_COUNT)
-    return (
-        f"Show top {NEWS_COLLAPSED_HEADLINE_COUNT} headlines for {ticker}"
-        if expanded
-        else f"Show {expanded_count} headlines for {ticker}"
-    )
-
-
-def expanded_news_tickers() -> set[str]:
-    """Return mutable Streamlit session state for expanded news cards."""
-    current = st.session_state.get("expanded_news_tickers", set())
-    if not isinstance(current, set):
-        current = set(current)
-    st.session_state.expanded_news_tickers = current
-    return current
-
-
 def render_ticker_news_card(ticker_group: Any) -> None:
-    """Render one watchlist news card with a top-right expansion arrow."""
-    articles = list(ticker_group.articles or [])
-    ticker = str(ticker_group.ticker)
-    expanded_set = expanded_news_tickers()
-    expanded = ticker in expanded_set
-    with st.container(border=True):
-        header_col, toggle_col = st.columns([1, 0.16], vertical_alignment="center")
-        with header_col:
-            st.markdown(
-                (
-                    '<div class="streamlit-ticker-news-title">'
-                    f"<h4>{escape(ticker)}</h4>"
-                    f"<span>{len(articles)} headline(s)</span>"
-                    "</div>"
-                ),
-                unsafe_allow_html=True,
-            )
-        with toggle_col:
-            if len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
-                label = ticker_news_toggle_label(ticker, expanded, len(articles))
-                if st.button("▴" if expanded else "▾", key=f"ticker-news-toggle-{ticker}", help=label):
-                    if expanded:
-                        expanded_set.discard(ticker)
-                    else:
-                        expanded_set.add(ticker)
-                    st.rerun()
-        st.markdown(ticker_news_body_html(ticker_group, expanded=expanded), unsafe_allow_html=True)
+    """Render one watchlist news card with local HTML expansion."""
+    st.markdown(ticker_news_card_html(ticker_group), unsafe_allow_html=True)
 
 
 def filter_ticker_news_groups(ticker_news: list[Any], query: object) -> list[Any]:
@@ -2209,10 +2273,27 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
     def add_pending_tickers() -> None:
         add_text = str(st.session_state.get("streamlit_ticker_add_text", ""))
         added = False
-        for ticker in normalize_ticker_list(add_text):
+        invalid: list[str] = []
+        try:
+            candidates = split_ticker_candidates(add_text)
+        except ValueError:
+            candidates = []
+        for candidate in candidates:
+            try:
+                ticker = normalize_ticker_symbol(candidate)
+            except ValueError:
+                if str(candidate).strip():
+                    invalid.append(str(candidate).strip())
+                continue
             if ticker not in st.session_state.watchlist_tickers:
                 st.session_state.watchlist_tickers.append(ticker)
                 added = True
+        if invalid:
+            st.session_state.watchlist_validation_message = (
+                f"Skipped invalid ticker{'s' if len(invalid) != 1 else ''}: {', '.join(invalid[:4])}."
+            )
+        else:
+            st.session_state.pop("watchlist_validation_message", None)
         if added:
             persist_session_watchlist()
             bump_streamlit_refresh_token("Refreshing watchlist")
@@ -2224,6 +2305,8 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
         placeholder="Add ticker symbols",
     )
     st.button("Add", type="primary", width="stretch", on_click=add_pending_tickers)
+    if st.session_state.get("watchlist_validation_message"):
+        st.warning(str(st.session_state.watchlist_validation_message))
     if st.button(
         "▶ Run levels + news",
         key="streamlit-sidebar-run",
@@ -2312,45 +2395,68 @@ def run_refresh_steps(refresh_slot: Any, title: str, steps: list[RefreshStep]) -
         st.session_state.pop("refresh_banner_title", None)
 
 
-def mark_streamlit_data_current(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int) -> None:
-    """Mark the current Streamlit data bundle as loaded for the active refresh token."""
-    st.session_state.autoload_key = (tuple(tickers), tuple(metrics), refresh_token)
+def streamlit_data_key(dataset: str, tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> tuple[tuple[str, ...], tuple[MetricName, ...], int]:
+    """Return the loaded-state key for one Streamlit dataset."""
+    return (tuple(tickers), tuple(metrics), dataset_refresh_token(dataset))
+
+
+def streamlit_dataset_current(dataset: str, tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> bool:
+    """Return whether one Streamlit dataset is current for the watchlist and token."""
+    ensure_streamlit_data_state()
+    return st.session_state.loaded_data_keys.get(dataset) == streamlit_data_key(dataset, tickers, metrics)
+
+
+def mark_streamlit_data_current(
+    tickers: tuple[str, ...],
+    metrics: tuple[MetricName, ...],
+    refresh_token: int | None = None,
+    datasets: tuple[str, ...] = STREAMLIT_DATASETS,
+) -> None:
+    """Mark selected Streamlit datasets as loaded for their active refresh tokens."""
+    del refresh_token
+    ensure_streamlit_data_state()
+    for dataset in datasets:
+        if dataset in STREAMLIT_DATASETS:
+            st.session_state.loaded_data_keys[dataset] = streamlit_data_key(dataset, tickers, metrics)
 
 
 def load_streamlit_data_with_banner(
     tickers: tuple[str, ...],
     metrics: tuple[MetricName, ...],
-    refresh_token: int,
     refresh_slot: Any,
     title: str,
+    datasets: tuple[str, ...] = ("report", "scanner", "news", "market_snapshot"),
 ) -> None:
     """Load all Streamlit datasets with a temporary top banner."""
 
     def load_levels() -> None:
-        st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
+        st.session_state.report = build_report(tickers, metrics, refresh_token=dataset_refresh_token("report"))
 
     def load_scanner() -> None:
-        st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
+        st.session_state.scanner = build_scanner(tickers, refresh_token=dataset_refresh_token("scanner"))
 
     def load_headlines() -> None:
         st.session_state.news = build_news(
             tickers,
             per_ticker=NEWS_EXPANDED_HEADLINE_COUNT,
-            refresh_token=refresh_token,
+            refresh_token=dataset_refresh_token("news"),
         )
 
     def load_snapshot() -> None:
-        st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
+        st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=dataset_refresh_token("market_snapshot"))
+
+    all_steps: dict[str, RefreshStep] = {
+        "report": ("Calculating levels...", load_levels),
+        "scanner": ("Running scanner...", load_scanner),
+        "news": ("Loading headlines...", load_headlines),
+        "market_snapshot": ("Refreshing market snapshot...", load_snapshot),
+    }
+    steps = [all_steps[dataset] for dataset in datasets if dataset in all_steps]
 
     run_refresh_steps(
         refresh_slot,
         title,
-        [
-            ("Calculating levels...", load_levels),
-            ("Running scanner...", load_scanner),
-            ("Loading headlines...", load_headlines),
-            ("Refreshing market snapshot...", load_snapshot),
-        ],
+        steps,
     )
 
 
@@ -2428,7 +2534,25 @@ def normalize_level_search(query: object) -> str:
 
 def level_search_terms(query: object) -> list[str]:
     """Return comma/space separated report search terms."""
-    return normalize_ticker_list(normalize_level_search(query))
+    normalized = normalize_level_search(query)
+    if not normalized:
+        return []
+    try:
+        candidates = split_ticker_candidates(normalized)
+    except ValueError:
+        candidates = [normalized]
+    terms: list[str] = []
+    for candidate in candidates:
+        raw = str(candidate).strip().upper()
+        if not raw:
+            continue
+        try:
+            term = normalize_ticker_symbol(raw)
+        except ValueError:
+            term = raw
+        if term not in terms:
+            terms.append(term)
+    return terms
 
 
 def filter_report_metrics(metrics: list[EquityMetrics], query: object) -> list[EquityMetrics]:
@@ -2462,6 +2586,7 @@ def main() -> None:
         st.session_state.autoload_key = None
     if "streamlit_refresh_token" not in st.session_state:
         st.session_state.streamlit_refresh_token = 0
+    ensure_streamlit_data_state()
     if "auto_refresh_bucket" not in st.session_state:
         st.session_state.auto_refresh_bucket = refresh_bucket()
     if "report_layout" not in st.session_state:
@@ -2479,24 +2604,31 @@ def main() -> None:
     except ValidationError:
         autoload_request = None
     if autoload_request is not None:
-        autoload_key = (tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
-        if st.session_state.autoload_key != autoload_key:
+        autoload_tickers = tuple(autoload_request.tickers)
+        autoload_metrics_tuple = tuple(autoload_request.metrics)
+        stale_datasets = tuple(
+            dataset
+            for dataset in ("report", "scanner", "news", "market_snapshot")
+            if not streamlit_dataset_current(dataset, autoload_tickers, autoload_metrics_tuple)
+        )
+        if stale_datasets:
             refresh_title = str(st.session_state.pop("refresh_banner_title", "Loading saved watchlist"))
             load_streamlit_data_with_banner(
-                tuple(autoload_request.tickers),
-                tuple(autoload_request.metrics),
-                refresh_token,
+                autoload_tickers,
+                autoload_metrics_tuple,
                 refresh_banner_slot,
                 refresh_title,
+                datasets=stale_datasets,
             )
             st.session_state.levels_status = ""
-            mark_streamlit_data_current(tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
+            mark_streamlit_data_current(autoload_tickers, autoload_metrics_tuple, datasets=stale_datasets)
     else:
         st.session_state.report = None
         st.session_state.scanner = None
         st.session_state.news = None
         st.session_state.market_snapshot = None
         st.session_state.autoload_key = None
+        st.session_state.loaded_data_keys = {}
 
     if view == LEVELS_VIEW:
         with st.container():
@@ -2538,11 +2670,10 @@ def main() -> None:
         load_streamlit_data_with_banner(
             tuple(request.tickers),
             tuple(request.metrics),
-            refresh_token,
             refresh_banner_slot,
             "Generating levels",
         )
-        mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), refresh_token)
+        mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics))
         st.session_state.levels_status = ""
 
     if run_scanner:
@@ -2552,13 +2683,13 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        refresh_token = bump_streamlit_refresh_token("Refreshing scanner")
+        refresh_token = bump_streamlit_refresh_token("Refreshing scanner", datasets=("scanner",))
 
         def refresh_scanner() -> None:
-            st.session_state.scanner = build_scanner(tuple(request.tickers), refresh_token=refresh_token)
+            st.session_state.scanner = build_scanner(tuple(request.tickers), refresh_token=dataset_refresh_token("scanner"))
 
         run_refresh_steps(refresh_banner_slot, "Refreshing scanner", [("Running scanner...", refresh_scanner)])
-        mark_streamlit_data_current(tuple(request.tickers), autoload_metrics, refresh_token)
+        mark_streamlit_data_current(tuple(request.tickers), autoload_metrics, refresh_token, datasets=("scanner",))
 
     if refresh_news:
         try:
@@ -2568,19 +2699,19 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        refresh_token = bump_streamlit_refresh_token("Refreshing news")
+        refresh_token = bump_streamlit_refresh_token("Refreshing news", datasets=("news", "market_snapshot"))
 
         def refresh_headlines() -> None:
             st.session_state.news = build_news(
                 tuple(request.tickers),
                 per_ticker=request.per_ticker,
-                refresh_token=refresh_token,
+                refresh_token=dataset_refresh_token("news"),
             )
 
         def refresh_snapshot() -> None:
             st.session_state.market_snapshot = build_market_snapshot(
                 tuple(snapshot_request.tickers),
-                refresh_token=refresh_token,
+                refresh_token=dataset_refresh_token("market_snapshot"),
             )
 
         run_refresh_steps(
@@ -2588,7 +2719,12 @@ def main() -> None:
             "Refreshing news",
             [("Loading headlines...", refresh_headlines), ("Refreshing market snapshot...", refresh_snapshot)],
         )
-        mark_streamlit_data_current(tuple(request.tickers), autoload_metrics, refresh_token)
+        mark_streamlit_data_current(
+            tuple(request.tickers),
+            autoload_metrics,
+            refresh_token,
+            datasets=("news", "market_snapshot"),
+        )
 
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
@@ -2639,8 +2775,14 @@ def main() -> None:
 
     if visible_metrics:
         chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
-        visible_report = report.model_copy(update={"metrics": visible_metrics})
-        render_chart_history(visible_report, chart_range, chart_interval, chart_type, refresh_token=refresh_token)
+        render_chart_history(
+            report,
+            chart_range,
+            chart_interval,
+            chart_type,
+            refresh_token=dataset_refresh_token("chart"),
+            visible_tickers=tuple(metric.ticker for metric in visible_metrics),
+        )
 
 
 if __name__ == "__main__":

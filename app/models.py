@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date as Date, datetime
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -67,6 +68,51 @@ DEFAULT_METRICS: tuple[MetricName, ...] = (
     "technical_levels",
 )
 
+TICKER_MAX_LENGTH = 20
+TICKER_PATTERN = re.compile(r"^(?:\^[A-Z0-9][A-Z0-9-]*|[A-Z0-9][A-Z0-9-]*(?:=[A-Z0-9]+)?)$")
+
+
+def split_ticker_candidates(value: object) -> list[str]:
+    """Return raw ticker tokens from supported request/watchlist input."""
+    if isinstance(value, str):
+        return value.replace(",", " ").split()
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    raise ValueError("tickers must be a list or delimited string")
+
+
+def normalize_ticker_symbol(value: object) -> str:
+    """Normalize one Yahoo-style ticker symbol or raise a clear validation error."""
+    raw = str(value).strip().upper()
+    if not raw:
+        raise ValueError("ticker symbol cannot be empty")
+    if raw.startswith("$"):
+        raw = raw[1:]
+    normalized = raw.replace(".", "-").replace("/", "-")
+    if not normalized:
+        raise ValueError("ticker symbol cannot be empty")
+    if len(normalized) > TICKER_MAX_LENGTH:
+        raise ValueError(f"ticker symbol is too long: {raw}")
+    if any(char in normalized for char in "<>\"'`;&|\\"):
+        raise ValueError(f"unsupported ticker symbol: {raw}")
+    if normalized.count("=") > 1 or normalized.startswith("=") or normalized.endswith("="):
+        raise ValueError(f"malformed ticker symbol: {raw}")
+    if not TICKER_PATTERN.fullmatch(normalized):
+        raise ValueError(f"unsupported ticker symbol: {raw}")
+    return normalized
+
+
+def normalize_ticker_list(value: object) -> list[str]:
+    """Normalize, validate, and deduplicate ticker input while preserving order."""
+    cleaned: list[str] = []
+    for candidate in split_ticker_candidates(value):
+        ticker = normalize_ticker_symbol(candidate)
+        if ticker not in cleaned:
+            cleaned.append(ticker)
+    if not cleaned:
+        raise ValueError("at least one ticker is required")
+    return cleaned
+
 
 class GenerateRequest(BaseModel):
     """Request payload containing one or more ticker symbols and selected metrics."""
@@ -78,21 +124,7 @@ class GenerateRequest(BaseModel):
     @classmethod
     def split_ticker_input(cls, value: object) -> list[str]:
         """Accept either a list or comma/space/newline separated ticker text."""
-        if isinstance(value, str):
-            candidates = value.replace(",", " ").split()
-        elif isinstance(value, list):
-            candidates = [str(item) for item in value]
-        else:
-            raise ValueError("tickers must be a list or delimited string")
-
-        cleaned: list[str] = []
-        for candidate in candidates:
-            ticker = candidate.strip().upper()
-            if ticker and ticker not in cleaned:
-                cleaned.append(ticker)
-        if not cleaned:
-            raise ValueError("at least one ticker is required")
-        return cleaned
+        return normalize_ticker_list(value)
 
     @field_validator("metrics", mode="before")
     @classmethod

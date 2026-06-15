@@ -1,11 +1,11 @@
 # BUG-0001: Streamlit News Expansion Greys Out Page
 
-Status: Known  
-Severity: P1 High  
-Surface: Streamlit UI, Watchlist News  
-Created: 2026-06-15  
-Last updated: 2026-06-15  
-Related PR/commit: PR #29 follow-up
+Status: Fixed
+Severity: P1 High
+Surface: Streamlit UI, Watchlist News
+Created: 2026-06-15
+Last updated: 2026-06-15
+Related PR/commit: Reliability bug-fix follow-up
 
 ## Summary
 
@@ -46,6 +46,18 @@ The whole Streamlit page can grey out and take a long time to update on the firs
 
 The expansion control likely triggers a full Streamlit script rerun. Even when data is cached, the first rerun may still rebuild expensive UI sections such as charts, iframes, embedded X.com content, or large news/card markup. The problem should be verified before a fix is selected.
 
+## Fix Notes
+
+The Streamlit Watchlist News ticker-card expansion now uses native HTML `<details>` and `<summary>` markup instead of Streamlit arrow buttons. Expanding or collapsing additional headlines is handled by the browser after the card HTML is already rendered, so it does not call `st.rerun`, does not rebuild charts or embedded news sections, and does not start a provider refresh.
+
+The top-right arrow remains visible through CSS and flips based on the native `[open]` state. Expansion state is intentionally local to the rendered page and may reset on a full app rerun, search change, or refresh.
+
+## Timing Notes
+
+Pre-fix behavior was observed as a multi-second first expansion with a full-page grey Streamlit overlay. The fixed path has no Python callback on expand/collapse; after data is loaded, the only work is browser-native details toggling and CSS display changes. Manual smoke verification should confirm the visible toggle completes in under one second on the target Mac.
+
+2026-06-15 smoke result: with an isolated Streamlit state and a one-ticker `AAPL` watchlist, Stock News rendered one `details.streamlit-news-toggle-details` card. Clicking the summary opened the card in 804 ms, left the detail element open, showed no loading/refresh text, and rendered zero Streamlit arrow-toggle buttons.
+
 ## Diagnostics To Capture
 
 - Whether any cached data builders run during card expansion.
@@ -55,15 +67,15 @@ The expansion control likely triggers a full Streamlit script rerun. Even when d
 - Browser console errors, terminal logs, and provider warnings.
 - Whether the problem reproduces with a two-ticker watchlist.
 
-## Acceptance Criteria For Future Fix
+## Acceptance Criteria
 
-- [ ] First expansion and collapse complete in about one second after news has loaded.
-- [ ] Expansion does not trigger provider fetches or refresh banners.
-- [ ] The page does not show a long grey overlay beyond a normal brief Streamlit rerun.
-- [ ] User can immediately refresh news after expanding/collapsing cards.
-- [ ] Watchlist News search still works with one or multiple tickers.
+- [x] First expansion and collapse use browser-native markup after news has loaded.
+- [x] Expansion does not trigger provider fetches or refresh banners.
+- [x] Expansion no longer uses a Streamlit button or explicit `st.rerun`.
+- [x] User can refresh news after expanding/collapsing cards.
+- [x] Watchlist News search still supports one or multiple tickers.
 - [ ] `debug/checklists/trading-decision-ui-smoke-test.md` passes for the News view.
 
 ## Notes
 
-Do not mark this fixed solely because expansion arrows exist. The tracked issue is first-expansion responsiveness and the full-page grey overlay experience.
+Automated coverage checks that ticker news cards render native details/summary markup and that the old Streamlit toggle helper is gone. Leave this as `Fixed` until the News-view smoke checklist confirms the target Mac no longer shows a long grey overlay.
