@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -198,6 +199,30 @@ def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
     assert gap.date == datetime(2026, 5, 15).date()
     assert gap.gap == 10.0
     assert gap.gap_percent == 10.0
+
+
+def test_earnings_gap_suppresses_provider_stderr(monkeypatch, capsys):
+    class FakeTicker:
+        @property
+        def earnings_dates(self):
+            print("SPY: No earnings dates found, symbol may be delisted", file=sys.stderr)
+            return pd.DataFrame()
+
+    monkeypatch.setattr("app.services.market_data.yf.Ticker", lambda symbol: FakeTicker())
+    daily = pd.DataFrame(
+        {
+            "Open": [100.0],
+            "Close": [101.0],
+        },
+        index=pd.DatetimeIndex(["2026-05-15"]),
+    )
+    warnings: list[str] = []
+
+    gap = MarketDataService._earnings_gap("SPY", daily, warnings)
+
+    assert gap.date is None
+    assert "No earnings dates" in warnings[0]
+    assert "No earnings dates found" not in capsys.readouterr().err
 
 
 def test_latest_session_bars_use_newest_available_date():

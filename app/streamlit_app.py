@@ -12,7 +12,6 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from pydantic import ValidationError
 
 from app.models import (
@@ -1026,7 +1025,7 @@ def render_app_chrome() -> str:
         st.button(
             "Trading Levels",
             type="primary" if st.session_state.active_view == LEVELS_VIEW else "secondary",
-            use_container_width=True,
+            width="stretch",
             on_click=set_active_view,
             args=(LEVELS_VIEW,),
         )
@@ -1034,7 +1033,7 @@ def render_app_chrome() -> str:
         st.button(
             "Stock News",
             type="primary" if st.session_state.active_view == NEWS_VIEW else "secondary",
-            use_container_width=True,
+            width="stretch",
             on_click=set_active_view,
             args=(NEWS_VIEW,),
         )
@@ -1340,10 +1339,9 @@ def render_single_chart(
     if not chart.points:
         st.caption("No chart data returned.")
         return
-    components.html(
+    st.iframe(
         lightweight_chart_html(chart, chart_type, chart_range, interval),
         height=332,
-        scrolling=False,
     )
 
 
@@ -1847,7 +1845,7 @@ def render_ticker_news_grid(ticker_news: list[Any]) -> None:
 
 def render_x_timeline() -> None:
     """Embed the public @unusual_whales X.com timeline with a fallback link."""
-    components.html(
+    st.iframe(
         """
         <a
           class="twitter-timeline"
@@ -1956,7 +1954,7 @@ def render_scanner(report: ScannerResponse) -> None:
         else:
             st.dataframe(
                 styled_scanner_setup_frame(report),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 row_height=42,
                 height=dataframe_height(len(report.setup_rows), row_height=42),
@@ -1977,7 +1975,7 @@ def render_scanner(report: ScannerResponse) -> None:
         st.subheader("Pattern Summary")
         st.dataframe(
             pattern_summary_frame(report),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             row_height=40,
             height=dataframe_height(len(report.pattern_summary), row_height=40),
@@ -1987,7 +1985,7 @@ def render_scanner(report: ScannerResponse) -> None:
         heatmap_frame = pattern_heatmap_frame(report)
         st.dataframe(
             heatmap_frame,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             row_height=40,
             height=dataframe_height(len(heatmap_frame), row_height=40),
@@ -1998,7 +1996,7 @@ def render_scanner(report: ScannerResponse) -> None:
             with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
                 st.dataframe(
                     pattern_detail_frame(rows),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     row_height=40,
                     height=dataframe_height(len(rows), row_height=40),
@@ -2030,9 +2028,9 @@ def scanner_setup_frame(report: ScannerResponse) -> pd.DataFrame:
                 "RS vs SPY": row.rs_vs_spy_label or "-",
                 "RS vs Sec": row.rs_vs_sector_label or "-",
                 "Best Support": row.best_support or "-",
-                "Sup Conf": row.support_confidence or "-",
+                "Sup Conf": str(row.support_confidence) if row.support_confidence is not None else "-",
                 "Best Resistance": row.best_resistance or "-",
-                "Res Conf": row.resistance_confidence or "-",
+                "Res Conf": str(row.resistance_confidence) if row.resistance_confidence is not None else "-",
                 "R/R": f"{row.risk_reward:.1f}R" if row.risk_reward else "-",
                 "Setup At": row.setup_level or "-",
                 "% Away": f"{row.setup_distance_percent:.2f}%" if row.setup_distance_percent is not None else "-",
@@ -2172,12 +2170,12 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
         key="streamlit_ticker_add_text",
         placeholder="Add ticker symbols",
     )
-    st.button("Add", type="primary", use_container_width=True, on_click=add_pending_tickers)
+    st.button("Add", type="primary", width="stretch", on_click=add_pending_tickers)
     if st.button(
         "▶ Run levels + news",
         key="streamlit-sidebar-run",
         type="primary",
-        use_container_width=True,
+        width="stretch",
         disabled=not bool(st.session_state.watchlist_tickers),
         help="Refresh levels, news, scanner, market snapshot, and charts for the saved watchlist.",
     ):
@@ -2327,7 +2325,7 @@ def main() -> None:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Investment Trading Levels")
             with action_col:
-                generate = st.button("Generate Levels", type="primary", use_container_width=True)
+                generate = st.button("Generate Levels", type="primary", width="stretch")
             levels_status_slot = st.empty()
             if st.session_state.levels_status:
                 levels_status_slot.success(st.session_state.levels_status)
@@ -2336,7 +2334,7 @@ def main() -> None:
             with scanner_text_col:
                 st.subheader("Scanner")
             with scanner_action_col:
-                run_scanner = st.button("Run Scanner", type="primary", use_container_width=True)
+                run_scanner = st.button("Run Scanner", type="primary", width="stretch")
         refresh_news = False
     else:
         with st.container():
@@ -2345,7 +2343,7 @@ def main() -> None:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Stock News")
             with action_col:
-                refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
+                refresh_news = st.button("Refresh News", type="primary", width="stretch")
         generate = False
         run_scanner = False
 
@@ -2420,7 +2418,7 @@ def main() -> None:
                 file_name=f"equity-levels-{report.generated_at.strftime('%Y%m%d-%H%M%S')}.pdf",
                 mime="application/pdf",
                 type="secondary",
-                use_container_width=True,
+                width="stretch",
             )
 
     render_metric_grid(report.metrics)
