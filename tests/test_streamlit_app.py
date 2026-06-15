@@ -132,6 +132,9 @@ def test_streamlit_level_search_filters_report_metrics():
 
     assert normalize_level_search(" aap ") == "AAP"
     assert [metric.ticker for metric in filter_report_metrics(metrics, "aap")] == ["AAPL"]
+    assert [metric.ticker for metric in filter_report_metrics(metrics, "aap, ms")] == ["AAPL", "MSFT"]
+    assert [metric.ticker for metric in filter_report_metrics(metrics, "ms aap")] == ["AAPL", "MSFT"]
+    assert [metric.ticker for metric in filter_report_metrics(metrics, "ms\nzz")] == ["MSFT"]
     assert filter_report_metrics(metrics, "") == metrics
     assert filter_report_metrics(metrics, "zz") == []
 

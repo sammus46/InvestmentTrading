@@ -2326,12 +2326,17 @@ def normalize_level_search(query: object) -> str:
     return str(query or "").strip().upper()
 
 
+def level_search_terms(query: object) -> list[str]:
+    """Return comma/space separated report search terms."""
+    return normalize_ticker_list(normalize_level_search(query))
+
+
 def filter_report_metrics(metrics: list[EquityMetrics], query: object) -> list[EquityMetrics]:
     """Return report metrics whose ticker contains the search query."""
-    search = normalize_level_search(query)
-    if not search:
+    terms = level_search_terms(query)
+    if not terms:
         return list(metrics)
-    return [metric for metric in metrics if search in metric.ticker.upper()]
+    return [metric for metric in metrics if any(term in metric.ticker.upper() for term in terms)]
 
 
 def main() -> None:
