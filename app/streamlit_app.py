@@ -37,6 +37,7 @@ from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 from app.services.scanner import ScannerService
+from app.services.display import DEFAULT_REPORT_LAYOUT, report_layout_catalog
 from app.streamlit_ui.metrics import metric_card_html, metric_rows, render_metric, render_metric_grid
 
 
@@ -892,6 +893,129 @@ def render_app_chrome() -> str:
             display: grid;
             gap: 0.9rem;
             grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+          }
+          .streamlit-report-layout-price-ladder,
+          .streamlit-report-layout-compact {
+            grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+          }
+          .streamlit-report-layout-compare {
+            margin-bottom: 1rem;
+            overflow-x: auto;
+          }
+          .ladder-body {
+            padding: 0.85rem;
+          }
+          .levels-table,
+          .compare-table {
+            border-collapse: collapse;
+            width: 100%;
+          }
+          .levels-table th,
+          .compare-table th {
+            color: #475569;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.06em;
+            padding: 0.5rem 0.65rem;
+            text-align: left;
+            text-transform: uppercase;
+          }
+          .levels-table th:nth-child(n + 2),
+          .levels-table td:nth-child(n + 2),
+          .compare-table td {
+            text-align: right;
+          }
+          .levels-table td,
+          .compare-table td,
+          .compare-table th {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 0.5rem 0.65rem;
+          }
+          .levels-table .current td {
+            background: #12312f;
+            color: #ffffff;
+            font-weight: 900;
+          }
+          .levels-table .above td {
+            color: #b91c1c;
+          }
+          .levels-table .below td {
+            color: #047857;
+          }
+          .levels-table .neutral td {
+            color: #0f172a;
+          }
+          .levels-table .priority td {
+            font-weight: 900;
+          }
+          .ladder-notes {
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            margin-top: 0.75rem;
+          }
+          .ladder-notes div,
+          .compact-metric {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.65rem;
+          }
+          .ladder-notes span,
+          .compact-metric span {
+            color: #64748b;
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+          }
+          .ladder-notes strong,
+          .compact-metric strong {
+            color: #0f172a;
+            display: block;
+            font-size: 0.95rem;
+            margin-top: 0.15rem;
+          }
+          .compact-body {
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            padding: 0.85rem;
+          }
+          .compact-body .warning {
+            grid-column: 1 / -1;
+          }
+          .compact-metric.priority {
+            background: #fefce8;
+            border-color: #facc15;
+          }
+          .compact-metric.current {
+            background: #ccfbf1;
+            border-color: #99f6e4;
+          }
+          .compare-wrap {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+            overflow-x: auto;
+          }
+          .compare-table {
+            min-width: 980px;
+          }
+          .compare-table th:first-child {
+            background: #12312f;
+            color: #ffffff;
+            left: 0;
+            position: sticky;
+            z-index: 1;
+          }
+          .metric-empty {
+            border: 1px dashed #cbd5e1;
+            border-radius: 0.5rem;
+            color: #64748b;
+            padding: 0.85rem;
           }
           .streamlit-chart-grid {
             grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
@@ -2068,6 +2192,36 @@ def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
     return chart_type, chart_range, chart_interval
 
 
+def report_layout_options() -> tuple[str, ...]:
+    """Return configured report layout IDs in display order."""
+    return tuple(layout.id for layout in report_layout_catalog())
+
+
+def report_layout_label(layout_id: str) -> str:
+    """Return the display label for a report layout ID."""
+    return next((layout.label for layout in report_layout_catalog() if layout.id == layout_id), layout_id)
+
+
+def normalize_report_layout(layout_id: object) -> str:
+    """Return a supported report layout ID."""
+    candidate = str(layout_id or "")
+    options = report_layout_options()
+    return candidate if candidate in options else DEFAULT_REPORT_LAYOUT
+
+
+def render_report_layout_selector() -> str:
+    """Render and persist the Streamlit report layout selector."""
+    st.session_state.report_layout = normalize_report_layout(st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT))
+    return str(
+        st.selectbox(
+            "View",
+            report_layout_options(),
+            format_func=report_layout_label,
+            key="report_layout",
+        )
+    )
+
+
 def main() -> None:
     """Run the Streamlit application."""
     view = render_app_chrome()
@@ -2092,6 +2246,8 @@ def main() -> None:
         st.session_state.streamlit_refresh_token = 0
     if "auto_refresh_bucket" not in st.session_state:
         st.session_state.auto_refresh_bucket = refresh_bucket()
+    if "report_layout" not in st.session_state:
+        st.session_state.report_layout = DEFAULT_REPORT_LAYOUT
 
     sidebar_run_requested = bool(st.session_state.pop("sidebar_run_requested", False))
     render_auto_refresh_fragment(bool(tickers))
@@ -2207,9 +2363,11 @@ def main() -> None:
         return
 
     with st.container(border=True):
-        header_col, download_col = st.columns([2.2, 1], vertical_alignment="center")
+        header_col, layout_col, download_col = st.columns([1.8, 0.9, 1], vertical_alignment="center")
         with header_col:
             st.header("Report")
+        with layout_col:
+            report_layout = render_report_layout_selector()
         with download_col:
             pdf = pdf_report_service().build_pdf(report)
             st.download_button(
@@ -2221,7 +2379,7 @@ def main() -> None:
                 width="stretch",
             )
 
-    render_metric_grid(report.metrics)
+    render_metric_grid(report.metrics, report_layout)
 
     chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
     render_chart_history(report, chart_range, chart_interval, chart_type, refresh_token=refresh_token)

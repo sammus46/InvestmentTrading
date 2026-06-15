@@ -99,7 +99,13 @@
               <h2 id="results-heading">Report</h2>
               <p id="generated-at" class="sr-only"></p>
             </div>
-            <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
+            <div class="report-actions">
+              <label class="report-layout-select" for="report-layout">
+                <span>View</span>
+                <select id="report-layout" aria-label="Report layout"></select>
+              </label>
+              <button id="download-pdf" class="secondary" type="button">Download PDF Report</button>
+            </div>
           </div>
           <div id="results" class="results empty"></div>
           <section id="charts-section" class="charts-section empty" aria-live="polite" hidden></section>
