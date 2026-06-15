@@ -14,7 +14,12 @@ from app.models import (
     SwingLevels,
     TechnicalLevels,
 )
-from app.services.display import build_metric_display_sections, metric_catalog, metric_definitions_match_defaults
+from app.services.display import (
+    build_metric_display_sections,
+    metric_catalog,
+    metric_definitions_match_defaults,
+    report_layout_catalog,
+)
 from app.services.pdf_report import PdfReportService
 
 
@@ -80,6 +85,37 @@ def test_config_endpoint_returns_catalog_and_chart_ranges():
     assert config.metrics[0].id == "previous_day"
     assert config.chart_ranges["1D"].default_interval == "5m"
     assert "1m" in config.chart_ranges["1D"].intervals
+    assert config.default_report_layout == "grid"
+    assert [layout.id for layout in config.report_layouts] == ["grid", "price_ladder", "compact", "compare"]
+
+
+def test_report_layout_catalog_defaults_to_grid():
+    layouts = report_layout_catalog()
+
+    assert [layout.id for layout in layouts] == ["grid", "price_ladder", "compact", "compare"]
+    assert [layout.id for layout in layouts if layout.default] == ["grid"]
+
+
+def test_display_rows_include_numeric_and_emphasis_metadata():
+    metric = metric_fixture()
+
+    sections = build_metric_display_sections(metric)
+    session_rows = sections[0].rows
+    technical_rows = next(section.rows for section in sections if section.title == "Technical Levels")
+    indicator_rows = next(section.rows for section in sections if section.title == "Indicators & Events")
+
+    prev_high = next(row for row in session_rows if row.label == "Prev High")
+    current_price = next(row for row in technical_rows if row.label == "Current Price")
+    pivot = next(row for row in technical_rows if row.label == "Pivot")
+    earnings_gap_pct = next(row for row in indicator_rows if row.label == "Earnings Gap %")
+
+    assert prev_high.kind == "price"
+    assert prev_high.numeric_value == 12.0
+    assert prev_high.emphasis == "priority"
+    assert current_price.emphasis == "current"
+    assert pivot.emphasis == "priority"
+    assert earnings_gap_pct.kind == "percent"
+    assert earnings_gap_pct.numeric_value == 5.0
 
 
 def test_pdf_uses_existing_display_sections(monkeypatch):

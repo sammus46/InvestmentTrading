@@ -21,6 +21,9 @@ MetricName = Literal[
 NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
+DisplayRowKind = Literal["price", "percent", "date", "text"]
+DisplayRowEmphasis = Literal["normal", "priority", "current"]
+ReportLayoutName = Literal["grid", "price_ladder", "compact", "compare"]
 
 CHART_INTERVALS_BY_RANGE: dict[ChartRange, tuple[ChartInterval, ...]] = {
     "1D": ("1m", "2m", "5m", "15m", "30m", "1h"),
@@ -130,6 +133,10 @@ class DisplayRow(BaseModel):
     label: str
     value: str | None = None
     values: list[str] = Field(default_factory=list)
+    kind: DisplayRowKind = "text"
+    numeric_value: float | None = None
+    numeric_values: list[float] = Field(default_factory=list)
+    emphasis: DisplayRowEmphasis = "normal"
 
 
 class DisplaySection(BaseModel):
@@ -147,11 +154,23 @@ class ChartRangeConfig(BaseModel):
     default_interval: ChartInterval
 
 
+class ReportLayoutDefinition(BaseModel):
+    """Frontend-facing metadata for one report layout option."""
+
+    id: ReportLayoutName
+    label: str
+    description: str
+    order: int
+    default: bool = False
+
+
 class AppConfigResponse(BaseModel):
     """Configuration values shared by backend and browser clients."""
 
     metrics: list[MetricDefinition]
     chart_ranges: dict[ChartRange, ChartRangeConfig]
+    report_layouts: list[ReportLayoutDefinition] = Field(default_factory=list)
+    default_report_layout: ReportLayoutName = "grid"
 
 
 class Ohlc(BaseModel):

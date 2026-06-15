@@ -1,11 +1,12 @@
 import { getJson, postJson } from "./modules/api.js";
 import { escapeHtml } from "./modules/formatters.js";
-import { renderMetricCard } from "./modules/levels.js";
+import { renderMetrics } from "./modules/levels.js";
 
 const STORAGE_KEY = "equity-levels-watchlist";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
 const CHART_SETTINGS_STORAGE_KEY = "equity-levels-chart-settings";
+const REPORT_LAYOUT_STORAGE_KEY = "equity-levels-report-layout";
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
@@ -69,12 +70,20 @@ let METRIC_DEFINITIONS = [
   { id: "technical_levels", label: "Technical levels", group: "Indicators" },
   { id: "earnings_gap", label: "Earnings gap", group: "Events" },
 ];
+let REPORT_LAYOUTS = [
+  { id: "grid", label: "Grid", description: "Grouped cards with sectioned metrics.", order: 0, default: true },
+  { id: "price_ladder", label: "Price Ladder", description: "Price-sorted levels around current price.", order: 1 },
+  { id: "compact", label: "Compact", description: "Dense ticker cards for quick scanning.", order: 2 },
+  { id: "compare", label: "Compare", description: "Cross-ticker table using report rows.", order: 3 },
+];
+let DEFAULT_REPORT_LAYOUT = "grid";
 
 const tickersInput = document.querySelector("#tickers");
 const watchlistFormEl = document.querySelector("#watchlist-form");
 const watchlistListEl = document.querySelector("#watchlist-list");
 const generateButton = document.querySelector("#generate");
 const pdfButton = document.querySelector("#download-pdf");
+const reportLayoutSelectEl = document.querySelector("#report-layout");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
@@ -96,6 +105,7 @@ const newsStatusEl = document.querySelector("#news-status");
 const newsGeneratedAtEl = document.querySelector("#news-generated-at");
 const marketNewsEl = document.querySelector("#market-news");
 const watchlistNewsEl = document.querySelector("#watchlist-news");
+const watchlistNewsSearchEl = document.querySelector("#watchlist-news-search");
 const marketSnapshotEl = document.querySelector("#market-snapshot");
 const watchlistPerformanceEl = document.querySelector("#watchlist-performance");
 const xNewsEl = document.querySelector("#x-news");
@@ -115,6 +125,7 @@ let scannerSort = { key: "score", direction: "desc" };
 let draggedTicker = null;
 let expandedNewsTickers = new Set();
 let chartSettings = loadStoredChartSettings();
+let reportLayout = loadStoredReportLayout();
 let watchlistRefreshTimer = null;
 const chartOverrides = {};
 const chartDataCache = new Map();
@@ -189,6 +200,10 @@ pdfButton.addEventListener("click", async () => {
   });
 });
 
+reportLayoutSelectEl?.addEventListener("change", () => {
+  setReportLayout(reportLayoutSelectEl.value);
+});
+
 refreshNewsButton.addEventListener("click", async () => {
   await Promise.all([loadMarketSnapshot(), loadNews()]);
 });
@@ -203,6 +218,10 @@ watchlistNewsEl.addEventListener("click", (event) => {
     expandedNewsTickers.add(ticker);
   }
   renderWatchlistNews(currentNews.ticker_news || []);
+});
+
+watchlistNewsSearchEl?.addEventListener("input", () => {
+  renderWatchlistNews(currentNews?.ticker_news || []);
 });
 
 runScannerButton.addEventListener("click", async () => {
@@ -289,6 +308,7 @@ resultsEl.addEventListener("dragend", () => {
 
 async function initializeApp() {
   await loadAppConfig();
+  renderReportLayoutControl();
   renderWatchlistControls();
   switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false, loadSnapshot: false });
   updateNewsInfoTooltips();
@@ -309,9 +329,45 @@ async function loadAppConfig() {
         Object.entries(config.chart_ranges).map(([range, value]) => [range, value.default_interval]),
       );
     }
+    if (Array.isArray(config.report_layouts) && config.report_layouts.length) {
+      REPORT_LAYOUTS = [...config.report_layouts].sort((left, right) => left.order - right.order);
+    }
+    if (config.default_report_layout) {
+      DEFAULT_REPORT_LAYOUT = config.default_report_layout;
+    }
+    reportLayout = normalizeReportLayout(reportLayout);
   } catch (error) {
     console.warn("Using bundled UI config because /api/config failed.", error);
   }
+}
+
+function renderReportLayoutControl() {
+  if (!reportLayoutSelectEl) return;
+  reportLayout = normalizeReportLayout(reportLayout);
+  reportLayoutSelectEl.innerHTML = REPORT_LAYOUTS
+    .map((layout) => `<option value="${escapeHtml(layout.id)}">${escapeHtml(layout.label)}</option>`)
+    .join("");
+  reportLayoutSelectEl.value = reportLayout;
+  const selected = REPORT_LAYOUTS.find((layout) => layout.id === reportLayout);
+  if (selected?.description) {
+    reportLayoutSelectEl.title = selected.description;
+  }
+}
+
+function setReportLayout(layout) {
+  reportLayout = normalizeReportLayout(layout);
+  localStorage.setItem(REPORT_LAYOUT_STORAGE_KEY, reportLayout);
+  renderReportLayoutControl();
+  renderCurrentReport();
+}
+
+function loadStoredReportLayout() {
+  return normalizeReportLayout(localStorage.getItem(REPORT_LAYOUT_STORAGE_KEY));
+}
+
+function normalizeReportLayout(layout) {
+  const fallback = REPORT_LAYOUTS.some((item) => item.id === DEFAULT_REPORT_LAYOUT) ? DEFAULT_REPORT_LAYOUT : "grid";
+  return REPORT_LAYOUTS.some((item) => item.id === layout) ? layout : fallback;
 }
 
 function switchView(view, options = {}) {
@@ -691,10 +747,8 @@ function renderCurrentReport() {
     renderCharts();
     return;
   }
-  resultsEl.className = "results";
-  resultsEl.innerHTML = currentReport.metrics
-    .map((metric, index) => renderMetricCard(metric, index, currentReport.metrics.length))
-    .join("");
+  resultsEl.className = `results report-layout-${reportLayout.replace("_", "-")}`;
+  resultsEl.innerHTML = renderMetrics(currentReport.metrics, reportLayout);
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
   renderCharts();
 }
@@ -1024,13 +1078,23 @@ function renderMarketNews(articles) {
 }
 
 function renderWatchlistNews(tickerNews) {
-  if (!tickerNews.length) {
+  const filteredNews = filterTickerNewsGroups(tickerNews, watchlistNewsSearchEl?.value);
+  const terms = normalizeTickers(watchlistNewsSearchEl?.value || "");
+  if (!filteredNews.length) {
     watchlistNewsEl.className = "ticker-news-grid empty";
-    watchlistNewsEl.textContent = "No watchlist news was returned.";
+    watchlistNewsEl.textContent = terms.length
+      ? `No ticker matching "${terms.join(", ")}".`
+      : "No watchlist news was returned.";
     return;
   }
   watchlistNewsEl.className = "ticker-news-grid";
-  watchlistNewsEl.innerHTML = tickerNews.map(renderTickerNews).join("");
+  watchlistNewsEl.innerHTML = filteredNews.map(renderTickerNews).join("");
+}
+
+function filterTickerNewsGroups(tickerNews, query) {
+  const terms = normalizeTickers(query || "");
+  if (!terms.length) return tickerNews;
+  return tickerNews.filter((group) => terms.some((term) => String(group.ticker || "").toUpperCase().includes(term)));
 }
 
 function renderTickerNews(tickerGroup) {

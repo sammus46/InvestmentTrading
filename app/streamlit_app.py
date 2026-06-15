@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from collections.abc import Callable
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.models import (
     ChartInterval,
     ChartRange,
     DEFAULT_METRICS,
+    EquityMetrics,
     GenerateRequest,
     GenerateResponse,
     MarketSnapshotRequest,
@@ -37,6 +39,7 @@ from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 from app.services.scanner import ScannerService
+from app.services.display import DEFAULT_REPORT_LAYOUT, report_layout_catalog
 from app.streamlit_ui.metrics import metric_card_html, metric_rows, render_metric, render_metric_grid
 
 
@@ -52,10 +55,12 @@ CHART_TYPE_OPTIONS = ("Line", "Candles")
 CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
 CHART_RANGE_LABELS = {"1Y": "1YR"}
 AUTO_REFRESH_SECONDS = 300
+REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
 LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
     Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
 )
+RefreshStep = tuple[str, Callable[[], None]]
 
 
 LEVELS_VIEW = "Investment Trading Levels"
@@ -201,10 +206,12 @@ def refresh_bucket(now: datetime | None = None, interval_seconds: int = AUTO_REF
     return int(current.timestamp() // interval_seconds)
 
 
-def bump_streamlit_refresh_token() -> int:
+def bump_streamlit_refresh_token(reason: str | None = None) -> int:
     """Advance the Streamlit data refresh token and return it."""
     st.session_state.streamlit_refresh_token = int(st.session_state.get("streamlit_refresh_token", 0)) + 1
     st.session_state.autoload_key = None
+    if reason:
+        st.session_state.refresh_banner_title = reason
     return int(st.session_state.streamlit_refresh_token)
 
 
@@ -870,6 +877,29 @@ def render_app_chrome() -> str:
             font-weight: 900;
             padding: 0.35rem 0.6rem;
           }
+          .streamlit-refresh-banner {
+            align-items: center;
+            background: #f0fdfa;
+            border: 1px solid #99f6e4;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 24px rgba(15, 118, 110, 0.12);
+            display: flex;
+            gap: 0.75rem;
+            justify-content: space-between;
+            margin: 0 0 1rem;
+            padding: 0.75rem 0.9rem;
+          }
+          .streamlit-refresh-banner strong {
+            color: #0f172a;
+            font-size: 0.92rem;
+          }
+          .streamlit-refresh-banner span {
+            color: #0f766e !important;
+            font-size: 0.78rem;
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+          }
           .streamlit-watchlist-row {
             align-items: center;
             background: #f8fafc;
@@ -892,6 +922,129 @@ def render_app_chrome() -> str:
             display: grid;
             gap: 0.9rem;
             grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+          }
+          .streamlit-report-layout-price-ladder,
+          .streamlit-report-layout-compact {
+            grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+          }
+          .streamlit-report-layout-compare {
+            margin-bottom: 1rem;
+            overflow-x: auto;
+          }
+          .ladder-body {
+            padding: 0.85rem;
+          }
+          .levels-table,
+          .compare-table {
+            border-collapse: collapse;
+            width: 100%;
+          }
+          .levels-table th,
+          .compare-table th {
+            color: #475569;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.06em;
+            padding: 0.5rem 0.65rem;
+            text-align: left;
+            text-transform: uppercase;
+          }
+          .levels-table th:nth-child(n + 2),
+          .levels-table td:nth-child(n + 2),
+          .compare-table td {
+            text-align: right;
+          }
+          .levels-table td,
+          .compare-table td,
+          .compare-table th {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 0.5rem 0.65rem;
+          }
+          .levels-table .current td {
+            background: #12312f;
+            color: #ffffff;
+            font-weight: 900;
+          }
+          .levels-table .above td {
+            color: #b91c1c;
+          }
+          .levels-table .below td {
+            color: #047857;
+          }
+          .levels-table .neutral td {
+            color: #0f172a;
+          }
+          .levels-table .priority td {
+            font-weight: 900;
+          }
+          .ladder-notes {
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            margin-top: 0.75rem;
+          }
+          .ladder-notes div,
+          .compact-metric {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.65rem;
+          }
+          .ladder-notes span,
+          .compact-metric span {
+            color: #64748b;
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+          }
+          .ladder-notes strong,
+          .compact-metric strong {
+            color: #0f172a;
+            display: block;
+            font-size: 0.95rem;
+            margin-top: 0.15rem;
+          }
+          .compact-body {
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            padding: 0.85rem;
+          }
+          .compact-body .warning {
+            grid-column: 1 / -1;
+          }
+          .compact-metric.priority {
+            background: #fefce8;
+            border-color: #facc15;
+          }
+          .compact-metric.current {
+            background: #ccfbf1;
+            border-color: #99f6e4;
+          }
+          .compare-wrap {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+            overflow-x: auto;
+          }
+          .compare-table {
+            min-width: 980px;
+          }
+          .compare-table th:first-child {
+            background: #12312f;
+            color: #ffffff;
+            left: 0;
+            position: sticky;
+            z-index: 1;
+          }
+          .metric-empty {
+            border: 1px dashed #cbd5e1;
+            border-radius: 0.5rem;
+            color: #64748b;
+            padding: 0.85rem;
           }
           .streamlit-chart-grid {
             grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
@@ -942,10 +1095,24 @@ def render_app_chrome() -> str:
             gap: 0.65rem;
             padding: 0.85rem;
           }
-          .streamlit-ticker-news-card h4 {
+          .streamlit-ticker-news-header {
+            align-items: center;
+            display: flex;
+            gap: 0.5rem;
+            justify-content: space-between;
+            margin-bottom: 0.65rem;
+          }
+          .streamlit-ticker-news-title h4 {
             color: #12312f;
             letter-spacing: 0.06em;
             margin: 0;
+          }
+          .streamlit-ticker-news-title span {
+            color: #64748b !important;
+            display: block;
+            font-size: 0.76rem;
+            font-weight: 800;
+            margin-top: 0.15rem;
           }
           .streamlit-news-category-details {
             background: #ffffff;
@@ -1602,45 +1769,117 @@ def render_categorized_articles(articles: list[NewsArticle]) -> None:
             render_article(article)
 
 
-def ticker_news_card_html(ticker_group: Any) -> str:
-    """Return one watchlist news card with collapsed top headlines and categorized details."""
+def ticker_news_body_html(ticker_group: Any, expanded: bool = False) -> str:
+    """Return one watchlist news card body for collapsed or expanded state."""
     articles = list(ticker_group.articles or [])
-    visible_articles = articles[:NEWS_COLLAPSED_HEADLINE_COUNT]
+    visible_count = NEWS_EXPANDED_HEADLINE_COUNT if expanded else NEWS_COLLAPSED_HEADLINE_COUNT
+    visible_articles = articles[:visible_count]
     warnings = "".join(f'<div class="inline-warning">{escape(warning)}</div>' for warning in ticker_group.warnings)
-    top_html = "".join(article_card_html(article, compact=True) for article in visible_articles)
-    if not top_html:
-        top_html = '<p class="news-empty">No recent headlines returned.</p>'
 
-    grouped = group_articles_by_category(articles[:NEWS_EXPANDED_HEADLINE_COUNT])
-    category_html = []
-    if len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
+    if expanded:
+        grouped = group_articles_by_category(visible_articles)
+        category_html = []
         for category, label in NEWS_CATEGORY_LABELS.items():
             category_articles = grouped.get(category, [])
             if not category_articles:
                 continue
             category_cards = "".join(article_card_html(article, compact=True) for article in category_articles)
             category_html.append(
-                '<details class="streamlit-news-category-details">'
+                '<details class="streamlit-news-category-details" open>'
                 f'<summary>{escape(label)} ({len(category_articles)})</summary>'
                 f"<div>{category_cards}</div>"
                 "</details>"
             )
+        body_html = "".join(category_html) or '<p class="news-empty">No categorized headlines returned.</p>'
+    else:
+        body_html = "".join(article_card_html(article, compact=True) for article in visible_articles)
+        if not body_html:
+            body_html = '<p class="news-empty">No recent headlines returned.</p>'
 
+    return f"{warnings}{body_html}"
+
+
+def ticker_news_card_html(ticker_group: Any, expanded: bool = False) -> str:
+    """Return one static HTML watchlist news card for tests and non-interactive contexts."""
+    articles = list(ticker_group.articles or [])
+    expanded_class = " expanded" if expanded else ""
     return (
-        '<article class="streamlit-ticker-news-card">'
-        f'<h4>{escape(ticker_group.ticker)} <span>{len(articles)} headline(s)</span></h4>'
-        f"{warnings}{top_html}{''.join(category_html)}"
+        f'<article class="streamlit-ticker-news-card{expanded_class}">'
+        '<div class="streamlit-ticker-news-header">'
+        f'<div class="streamlit-ticker-news-title"><h4>{escape(ticker_group.ticker)}</h4>'
+        f"<span>{len(articles)} headline(s)</span></div>"
+        "</div>"
+        f"{ticker_news_body_html(ticker_group, expanded=expanded)}"
         "</article>"
     )
 
 
-def render_ticker_news_grid(ticker_news: list[Any]) -> None:
+def ticker_news_toggle_label(ticker: str, expanded: bool, article_count: int) -> str:
+    """Return the watchlist news card toggle label."""
+    expanded_count = min(article_count, NEWS_EXPANDED_HEADLINE_COUNT)
+    return (
+        f"Show top {NEWS_COLLAPSED_HEADLINE_COUNT} headlines for {ticker}"
+        if expanded
+        else f"Show {expanded_count} headlines for {ticker}"
+    )
+
+
+def expanded_news_tickers() -> set[str]:
+    """Return mutable Streamlit session state for expanded news cards."""
+    current = st.session_state.get("expanded_news_tickers", set())
+    if not isinstance(current, set):
+        current = set(current)
+    st.session_state.expanded_news_tickers = current
+    return current
+
+
+def render_ticker_news_card(ticker_group: Any) -> None:
+    """Render one watchlist news card with a top-right expansion arrow."""
+    articles = list(ticker_group.articles or [])
+    ticker = str(ticker_group.ticker)
+    expanded_set = expanded_news_tickers()
+    expanded = ticker in expanded_set
+    with st.container(border=True):
+        header_col, toggle_col = st.columns([1, 0.16], vertical_alignment="center")
+        with header_col:
+            st.markdown(
+                (
+                    '<div class="streamlit-ticker-news-title">'
+                    f"<h4>{escape(ticker)}</h4>"
+                    f"<span>{len(articles)} headline(s)</span>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+        with toggle_col:
+            if len(articles) > NEWS_COLLAPSED_HEADLINE_COUNT:
+                label = ticker_news_toggle_label(ticker, expanded, len(articles))
+                if st.button("▴" if expanded else "▾", key=f"ticker-news-toggle-{ticker}", help=label):
+                    if expanded:
+                        expanded_set.discard(ticker)
+                    else:
+                        expanded_set.add(ticker)
+                    st.rerun()
+        st.markdown(ticker_news_body_html(ticker_group, expanded=expanded), unsafe_allow_html=True)
+
+
+def filter_ticker_news_groups(ticker_news: list[Any], query: object) -> list[Any]:
+    """Return ticker news groups whose ticker matches any search term."""
+    terms = level_search_terms(query)
+    if not terms:
+        return list(ticker_news)
+    return [group for group in ticker_news if any(term in str(group.ticker).upper() for term in terms)]
+
+
+def render_ticker_news_grid(ticker_news: list[Any], empty_message: str = "No watchlist news was returned.") -> None:
     """Render watchlist news groups in a compact responsive grid."""
     if not ticker_news:
-        st.info("No watchlist news was returned.")
+        st.info(empty_message)
         return
-    cards = "".join(ticker_news_card_html(group) for group in ticker_news)
-    st.markdown(f'<div class="streamlit-ticker-news-grid">{cards}</div>', unsafe_allow_html=True)
+    columns = st.columns(min(3, len(ticker_news)))
+    for index, group in enumerate(ticker_news):
+        with columns[index % len(columns)]:
+            render_ticker_news_card(group)
 
 
 def render_x_timeline() -> None:
@@ -1735,8 +1974,22 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
     else:
         st.info("No general market headlines were returned.")
 
-    st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
-    render_ticker_news_grid(report.ticker_news)
+    watchlist_heading_col, watchlist_search_col = st.columns([1.6, 1], vertical_alignment="center")
+    with watchlist_heading_col:
+        st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
+    with watchlist_search_col:
+        news_search = st.text_input(
+            "Search watchlist news",
+            placeholder="AAPL, MSFT",
+            key="watchlist_news_search",
+        )
+    visible_ticker_news = filter_ticker_news_groups(report.ticker_news, news_search)
+    if news_search and not visible_ticker_news:
+        render_ticker_news_grid([], f"No ticker matching '{normalize_level_search(news_search)}'.")
+    else:
+        if news_search:
+            st.caption(f"Showing {len(visible_ticker_news)} of {len(report.ticker_news)} ticker(s).")
+        render_ticker_news_grid(visible_ticker_news)
 
     st.markdown('<div class="streamlit-section-header"><h2>X.com</h2></div>', unsafe_allow_html=True)
     render_x_timeline()
@@ -1962,7 +2215,7 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
                 added = True
         if added:
             persist_session_watchlist()
-            bump_streamlit_refresh_token()
+            bump_streamlit_refresh_token("Refreshing watchlist")
         st.session_state.streamlit_ticker_add_text = ""
 
     st.text_input(
@@ -1994,7 +2247,7 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
                 st.session_state.watchlist_tickers[index - 1],
             )
             persist_session_watchlist()
-            bump_streamlit_refresh_token()
+            bump_streamlit_refresh_token("Refreshing watchlist")
             st.rerun()
         if cols[2].button(
             "↓",
@@ -2007,12 +2260,12 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
                 st.session_state.watchlist_tickers[index + 1],
             )
             persist_session_watchlist()
-            bump_streamlit_refresh_token()
+            bump_streamlit_refresh_token("Refreshing watchlist")
             st.rerun()
         if cols[3].button("×", key=f"watch-remove-{ticker}", help=f"Remove {ticker}"):
             st.session_state.watchlist_tickers.remove(ticker)
             persist_session_watchlist()
-            bump_streamlit_refresh_token()
+            bump_streamlit_refresh_token("Refreshing watchlist")
             st.rerun()
     if not st.session_state.watchlist_tickers:
         st.caption("No tickers saved.")
@@ -2031,6 +2284,76 @@ def load_streamlit_data(tickers: tuple[str, ...], metrics: tuple[MetricName, ...
     st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
 
 
+def run_refresh_steps(refresh_slot: Any, title: str, steps: list[RefreshStep]) -> None:
+    """Show a temporary top-of-page refresh banner while running refresh steps."""
+    if not steps:
+        return
+    safe_title = title or REFRESH_BANNER_DEFAULT_TITLE
+    with refresh_slot.container():
+        st.markdown(
+            (
+                '<div class="streamlit-refresh-banner">'
+                f"<strong>{escape(safe_title)}</strong>"
+                f"<span>{escape(steps[0][0])}</span>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+        progress = st.progress(0, text=steps[0][0])
+
+    total_steps = len(steps)
+    try:
+        for index, (label, action) in enumerate(steps, start=1):
+            progress.progress((index - 1) / total_steps, text=label)
+            action()
+            progress.progress(index / total_steps, text=label)
+    finally:
+        refresh_slot.empty()
+        st.session_state.pop("refresh_banner_title", None)
+
+
+def mark_streamlit_data_current(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int) -> None:
+    """Mark the current Streamlit data bundle as loaded for the active refresh token."""
+    st.session_state.autoload_key = (tuple(tickers), tuple(metrics), refresh_token)
+
+
+def load_streamlit_data_with_banner(
+    tickers: tuple[str, ...],
+    metrics: tuple[MetricName, ...],
+    refresh_token: int,
+    refresh_slot: Any,
+    title: str,
+) -> None:
+    """Load all Streamlit datasets with a temporary top banner."""
+
+    def load_levels() -> None:
+        st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
+
+    def load_scanner() -> None:
+        st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
+
+    def load_headlines() -> None:
+        st.session_state.news = build_news(
+            tickers,
+            per_ticker=NEWS_EXPANDED_HEADLINE_COUNT,
+            refresh_token=refresh_token,
+        )
+
+    def load_snapshot() -> None:
+        st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
+
+    run_refresh_steps(
+        refresh_slot,
+        title,
+        [
+            ("Calculating levels...", load_levels),
+            ("Running scanner...", load_scanner),
+            ("Loading headlines...", load_headlines),
+            ("Refreshing market snapshot...", load_snapshot),
+        ],
+    )
+
+
 @st.fragment(run_every=AUTO_REFRESH_SECONDS)
 def render_auto_refresh_fragment(enabled: bool) -> None:
     """Trigger full-app data refreshes on a native Streamlit timer."""
@@ -2043,7 +2366,7 @@ def render_auto_refresh_fragment(enabled: bool) -> None:
         return
     if current_bucket != previous_bucket:
         st.session_state.auto_refresh_bucket = current_bucket
-        bump_streamlit_refresh_token()
+        bump_streamlit_refresh_token("Auto-refreshing watchlist")
         st.rerun()
 
 
@@ -2068,9 +2391,58 @@ def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
     return chart_type, chart_range, chart_interval
 
 
+def report_layout_options() -> tuple[str, ...]:
+    """Return configured report layout IDs in display order."""
+    return tuple(layout.id for layout in report_layout_catalog())
+
+
+def report_layout_label(layout_id: str) -> str:
+    """Return the display label for a report layout ID."""
+    return next((layout.label for layout in report_layout_catalog() if layout.id == layout_id), layout_id)
+
+
+def normalize_report_layout(layout_id: object) -> str:
+    """Return a supported report layout ID."""
+    candidate = str(layout_id or "")
+    options = report_layout_options()
+    return candidate if candidate in options else DEFAULT_REPORT_LAYOUT
+
+
+def render_report_layout_selector() -> str:
+    """Render and persist the Streamlit report layout selector."""
+    st.session_state.report_layout = normalize_report_layout(st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT))
+    return str(
+        st.selectbox(
+            "View",
+            report_layout_options(),
+            format_func=report_layout_label,
+            key="report_layout",
+        )
+    )
+
+
+def normalize_level_search(query: object) -> str:
+    """Normalize a report ticker search query."""
+    return str(query or "").strip().upper()
+
+
+def level_search_terms(query: object) -> list[str]:
+    """Return comma/space separated report search terms."""
+    return normalize_ticker_list(normalize_level_search(query))
+
+
+def filter_report_metrics(metrics: list[EquityMetrics], query: object) -> list[EquityMetrics]:
+    """Return report metrics whose ticker contains the search query."""
+    terms = level_search_terms(query)
+    if not terms:
+        return list(metrics)
+    return [metric for metric in metrics if any(term in metric.ticker.upper() for term in terms)]
+
+
 def main() -> None:
     """Run the Streamlit application."""
     view = render_app_chrome()
+    refresh_banner_slot = st.empty()
 
     with st.sidebar:
         st.header("Controls")
@@ -2092,12 +2464,14 @@ def main() -> None:
         st.session_state.streamlit_refresh_token = 0
     if "auto_refresh_bucket" not in st.session_state:
         st.session_state.auto_refresh_bucket = refresh_bucket()
+    if "report_layout" not in st.session_state:
+        st.session_state.report_layout = DEFAULT_REPORT_LAYOUT
 
     sidebar_run_requested = bool(st.session_state.pop("sidebar_run_requested", False))
     render_auto_refresh_fragment(bool(tickers))
     refresh_token = int(st.session_state.streamlit_refresh_token)
     if sidebar_run_requested and tickers:
-        refresh_token = bump_streamlit_refresh_token()
+        refresh_token = bump_streamlit_refresh_token("Refreshing levels and news")
 
     autoload_metrics = tuple(DEFAULT_METRICS)
     try:
@@ -2107,10 +2481,16 @@ def main() -> None:
     if autoload_request is not None:
         autoload_key = (tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
         if st.session_state.autoload_key != autoload_key:
-            with st.spinner("Loading saved watchlist..."):
-                load_streamlit_data(tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
+            refresh_title = str(st.session_state.pop("refresh_banner_title", "Loading saved watchlist"))
+            load_streamlit_data_with_banner(
+                tuple(autoload_request.tickers),
+                tuple(autoload_request.metrics),
+                refresh_token,
+                refresh_banner_slot,
+                refresh_title,
+            )
             st.session_state.levels_status = ""
-            st.session_state.autoload_key = autoload_key
+            mark_streamlit_data_current(tuple(autoload_request.tickers), tuple(autoload_request.metrics), refresh_token)
     else:
         st.session_state.report = None
         st.session_state.scanner = None
@@ -2154,9 +2534,15 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        with st.spinner("Generating levels..."):
-            refresh_token = bump_streamlit_refresh_token()
-            load_streamlit_data(tuple(request.tickers), tuple(request.metrics), refresh_token)
+        refresh_token = bump_streamlit_refresh_token("Generating levels")
+        load_streamlit_data_with_banner(
+            tuple(request.tickers),
+            tuple(request.metrics),
+            refresh_token,
+            refresh_banner_slot,
+            "Generating levels",
+        )
+        mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), refresh_token)
         st.session_state.levels_status = ""
 
     if run_scanner:
@@ -2166,9 +2552,13 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        with st.spinner("Running scanner..."):
-            refresh_token = bump_streamlit_refresh_token()
+        refresh_token = bump_streamlit_refresh_token("Refreshing scanner")
+
+        def refresh_scanner() -> None:
             st.session_state.scanner = build_scanner(tuple(request.tickers), refresh_token=refresh_token)
+
+        run_refresh_steps(refresh_banner_slot, "Refreshing scanner", [("Running scanner...", refresh_scanner)])
+        mark_streamlit_data_current(tuple(request.tickers), autoload_metrics, refresh_token)
 
     if refresh_news:
         try:
@@ -2178,17 +2568,27 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        with st.spinner("Loading news..."):
-            refresh_token = bump_streamlit_refresh_token()
+        refresh_token = bump_streamlit_refresh_token("Refreshing news")
+
+        def refresh_headlines() -> None:
             st.session_state.news = build_news(
                 tuple(request.tickers),
                 per_ticker=request.per_ticker,
                 refresh_token=refresh_token,
             )
+
+        def refresh_snapshot() -> None:
             st.session_state.market_snapshot = build_market_snapshot(
                 tuple(snapshot_request.tickers),
                 refresh_token=refresh_token,
             )
+
+        run_refresh_steps(
+            refresh_banner_slot,
+            "Refreshing news",
+            [("Loading headlines...", refresh_headlines), ("Refreshing market snapshot...", refresh_snapshot)],
+        )
+        mark_streamlit_data_current(tuple(request.tickers), autoload_metrics, refresh_token)
 
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
@@ -2207,9 +2607,17 @@ def main() -> None:
         return
 
     with st.container(border=True):
-        header_col, download_col = st.columns([2.2, 1], vertical_alignment="center")
+        header_col, search_col, layout_col, download_col = st.columns([1.35, 1.15, 0.9, 1], vertical_alignment="center")
         with header_col:
             st.header("Report")
+        with search_col:
+            report_search = st.text_input(
+                "Search ticker",
+                placeholder="Type ticker...",
+                key="levels_report_search",
+            )
+        with layout_col:
+            report_layout = render_report_layout_selector()
         with download_col:
             pdf = pdf_report_service().build_pdf(report)
             st.download_button(
@@ -2221,10 +2629,18 @@ def main() -> None:
                 width="stretch",
             )
 
-    render_metric_grid(report.metrics)
+    visible_metrics = filter_report_metrics(report.metrics, report_search)
+    if report_search and not visible_metrics:
+        st.caption(f"No ticker matching '{normalize_level_search(report_search)}'")
+    elif report_search:
+        st.caption(f"Showing {len(visible_metrics)} of {len(report.metrics)} ticker(s).")
 
-    chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
-    render_chart_history(report, chart_range, chart_interval, chart_type, refresh_token=refresh_token)
+    render_metric_grid(visible_metrics, report_layout)
+
+    if visible_metrics:
+        chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
+        visible_report = report.model_copy(update={"metrics": visible_metrics})
+        render_chart_history(visible_report, chart_range, chart_interval, chart_type, refresh_token=refresh_token)
 
 
 if __name__ == "__main__":
