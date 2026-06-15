@@ -12,6 +12,7 @@ from app.models import (
     NewsRequest,
     TickerChartHistory,
     GenerateRequest,
+    DEFAULT_METRICS,
 )
 
 
@@ -22,9 +23,16 @@ def test_generate_request_accepts_delimited_tickers():
 
 
 def test_generate_request_accepts_and_deduplicates_metric_selection():
-    request = GenerateRequest(tickers="aapl", metrics="previous_day previous_day swing_levels")
+    request = GenerateRequest(tickers="aapl", metrics="previous_day previous_day swing_levels technical_levels")
 
-    assert request.metrics == ["previous_day", "swing_levels"]
+    assert request.metrics == ["previous_day", "swing_levels", "technical_levels"]
+
+
+def test_generate_request_defaults_include_technical_levels():
+    request = GenerateRequest(tickers="aapl")
+
+    assert request.metrics == list(DEFAULT_METRICS)
+    assert "technical_levels" in request.metrics
 
 
 def test_news_request_reuses_watchlist_normalization():

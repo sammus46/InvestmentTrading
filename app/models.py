@@ -16,6 +16,7 @@ MetricName = Literal[
     "first_five_minutes",
     "swing_levels",
     "bollinger_bands",
+    "technical_levels",
 ]
 NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
@@ -60,6 +61,7 @@ DEFAULT_METRICS: tuple[MetricName, ...] = (
     "first_five_minutes",
     "swing_levels",
     "bollinger_bands",
+    "technical_levels",
 )
 
 
@@ -151,6 +153,9 @@ class EarningsGap(BaseModel):
     date: Date | None = None
     gap: float | None = None
     gap_percent: float | None = None
+    open: float | None = None
+    previous_close: float | None = None
+    is_stale: bool = False
 
 
 class SwingLevels(BaseModel):
@@ -170,6 +175,30 @@ class BollingerLevels(BaseModel):
     lower: float | None = None
     period: int = 20
     standard_deviations: float = 2.0
+
+
+class TechnicalLevels(BaseModel):
+    """Adam-aligned technical and formula levels for the report table."""
+
+    current_price: float | None = None
+    today_vwap: float | None = None
+    one_month_high: float | None = None
+    one_month_low: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    ema_20_daily: float | None = None
+    ema_9_5m: float | None = None
+    ema_20_5m: float | None = None
+    pivot: float | None = None
+    r1: float | None = None
+    s1: float | None = None
+    r2: float | None = None
+    s2: float | None = None
+    fib_618: float | None = None
+    fib_500: float | None = None
+    fib_382: float | None = None
+    earnings_open: float | None = None
+    pre_earnings_close: float | None = None
 
 
 class PricePoint(BaseModel):
@@ -209,6 +238,7 @@ class EquityMetrics(BaseModel):
     first_five_minutes: OpeningRange
     swing_levels: SwingLevels
     bollinger_bands: BollingerLevels
+    technical_levels: TechnicalLevels
     price_history: list[PricePoint] = Field(default_factory=list)
     intraday_history: list[IntradayPricePoint] = Field(default_factory=list)
     data_timestamp: datetime

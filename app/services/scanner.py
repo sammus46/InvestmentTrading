@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import yfinance as yf
 
 from app.models import (
     PatternDayDetail,
@@ -100,7 +101,7 @@ LEVEL_TYPE_WEIGHTS = {
     "Fib 38.2%": 6,
 }
 
-SIGNAL_PRIORITY = ["VWAP", "PM High", "Prev High", "Prev Low", "R1", "S1", "9 EMA", "Pivot"]
+SIGNAL_PRIORITY = ["VWAP", "PM High", "Prev High", "Prev Low", "R1", "S1", "Pivot"]
 
 
 def _build_buckets() -> tuple[list[str], list[str]]:
@@ -206,6 +207,7 @@ class ScannerService:
         previous_vwap = self.market_data._vwap(previous_session, warnings)
         premarket = self.market_data._today_premarket_range(minute, warnings)
         opening = self.market_data._opening_range(minute, warnings)
+        swing_levels = self.market_data._swing_levels(daily, warnings)
         etf, sector = self._sector_etf(symbol)
 
         stock_pct = self.market_data._pct_from(price, previous.close)
@@ -239,9 +241,11 @@ class ScannerService:
             "fib_382": fibs["fib_382"],
             "fib_500": fibs["fib_500"],
             "fib_618": fibs["fib_618"],
-            "earn_open": None,
-            "earn_prev_close": None,
+            "earn_open": earnings.open,
+            "earn_prev_close": earnings.previous_close,
             "earn_gap": earnings.gap,
+            "swing_highs": swing_levels.highs,
+            "swing_lows": swing_levels.lows,
             "sector": sector,
             "etf": etf,
             "stock_pct": stock_pct,
@@ -275,6 +279,13 @@ class ScannerService:
         if etf:
             sector = next((name for name, sector_etf in SECTOR_ETF.items() if sector_etf == etf), "")
             return etf, sector or "Other"
+        try:
+            sector = str(yf.Ticker(symbol).info.get("sector") or "")
+            etf = SECTOR_ETF.get(sector)
+            if etf:
+                return etf, sector
+        except Exception:
+            pass
         return None, "Other"
 
     def _setup_row(self, scan_data: TickerScanData) -> ScannerSetupRow:
@@ -334,6 +345,7 @@ class ScannerService:
             "No completed earnings dates were returned",
             "was not present in daily bars",
             "Earnings gap could not be calculated",
+            "earnings gap levels were suppressed",
         )
         return any(fragment in message for fragment in optional_fragments)
 
@@ -380,8 +392,11 @@ class ScannerService:
             return {}
         session = self.market_data._today_regular_session(five_minute)
         atr_pct = self._atr_5m_pct(five_minute)
-        zone_tol = min(max(0.25, atr_pct * 100), 1.5)
+        zone_tol = min(max(0.50, atr_pct * 100 * 1.0), 1.5)
         react_tol = min(max(0.20, atr_pct * 100 * 0.75), 1.0)
+        now_et = datetime.now(EASTERN)
+        hour_et = now_et.hour + now_et.minute / 60
+        demote_previous_vwap = hour_et > 11
 
         level_map = self._scanner_level_map(data)
         support_candidates: list[dict[str, object]] = []
@@ -392,14 +407,24 @@ class ScannerService:
                 continue
             side = "support" if value < price else "resistance"
             score, evidence = self._score_level_confidence(name, value, price, session, side, react_tol)
+            if name == "VWAP (Prev Session)" and demote_previous_vwap:
+                score = min(score, 30)
             entry = {"name": name, "value": value, "score": score, "evidence": evidence}
             if side == "support":
                 support_candidates.append(entry)
             else:
                 resistance_candidates.append(entry)
 
-        support_zones = [zone for zone in self._group_levels_into_zones(support_candidates, zone_tol) if zone["high"] < price]
-        resistance_zones = [zone for zone in self._group_levels_into_zones(resistance_candidates, zone_tol) if zone["low"] > price]
+        support_zones = [
+            zone
+            for zone in self._group_levels_into_zones(support_candidates, zone_tol)
+            if zone["high"] < price and 0 <= self._zone_distance_pct(zone, price, "support") <= 8.0
+        ]
+        resistance_zones = [
+            zone
+            for zone in self._group_levels_into_zones(resistance_candidates, zone_tol)
+            if zone["low"] > price and 0 <= self._zone_distance_pct(zone, price, "resistance") <= 8.0
+        ]
         best_support = max(support_zones, key=lambda zone: zone["score"], default=None)
         best_resistance = max(resistance_zones, key=lambda zone: zone["score"], default=None)
         support_score = int(best_support["score"]) if best_support else 0
@@ -436,7 +461,7 @@ class ScannerService:
 
     @staticmethod
     def _scanner_level_map(data: dict[str, object]) -> dict[str, object]:
-        return {
+        levels: dict[str, object] = {
             "VWAP (Today)": data.get("today_vwap"),
             "VWAP (Prev Session)": data.get("vwap"),
             "PM High": data.get("pm_high"),
@@ -446,24 +471,30 @@ class ScannerService:
             "Prev Close": data.get("prev_c"),
             "5-Min High": data.get("f5_high"),
             "5-Min Low": data.get("f5_low"),
-            "9 EMA (5-Min)": data.get("ema_9_5m"),
-            "20 EMA (5-Min)": data.get("ema_20_5m"),
             "50 SMA (Daily)": data.get("sma_50"),
             "200 SMA (Daily)": data.get("sma_200"),
-            "20 EMA (Daily)": data.get("ema_20_daily"),
+            "1-Month High": data.get("monthly_h"),
+            "1-Month Low": data.get("monthly_l"),
             "Pivot": data.get("pivot"),
             "R1 (Pivot)": data.get("r1"),
             "S1 (Pivot)": data.get("s1"),
-            "R2 (Pivot)": data.get("r2"),
-            "S2 (Pivot)": data.get("s2"),
-            "1-Month High": data.get("monthly_h"),
-            "1-Month Low": data.get("monthly_l"),
-            "Fib 61.8%": data.get("fib_618"),
-            "Fib 50.0%": data.get("fib_500"),
-            "Fib 38.2%": data.get("fib_382"),
-            "Earnings Gap Open": data.get("earn_open"),
-            "Pre-Earnings Close": data.get("earn_prev_close"),
         }
+        for index, level in enumerate(data.get("swing_highs") or [], start=1):
+            if index > 3:
+                break
+            levels[f"Daily Swing High {index}"] = level
+        for index, level in enumerate(data.get("swing_lows") or [], start=1):
+            if index > 3:
+                break
+            levels[f"Daily Swing Low {index}"] = level
+        return levels
+
+    @staticmethod
+    def _zone_distance_pct(zone: dict[str, object], price: float, side: str) -> float:
+        if side == "support":
+            high = float(zone["high"])
+            return abs(((price - high) / high) * 100) if high else 999.0
+        return abs(((float(zone["low"]) - price) / price) * 100) if price else 999.0
 
     def _atr_5m_pct(self, five_minute: pd.DataFrame) -> float:
         if five_minute.empty:
@@ -484,16 +515,39 @@ class ScannerService:
         if session.empty or not level:
             return 0, 0
         tolerance = level * (tol_pct / 100)
+        depart_tolerance = tolerance * 2.0
         reactions = 0
         last_reaction = None
+        state = "waiting"
+
         for index, row in session.iterrows():
+            close = float(row["Close"])
+            low = float(row["Low"])
+            high = float(row["High"])
             if side == "support":
-                if abs(float(row["Low"]) - level) <= tolerance and float(row["Close"]) > level * 0.9985:
-                    reactions += 1
-                    last_reaction = index
-            elif abs(float(row["High"]) - level) <= tolerance and float(row["Close"]) < level * 1.0015:
-                reactions += 1
-                last_reaction = index
+                near_level = low <= level + tolerance
+                if state == "waiting" and near_level:
+                    state = "interacting"
+                elif state == "interacting":
+                    still_near = abs(close - level) <= tolerance * 2
+                    if still_near or near_level:
+                        continue
+                    if close > level + depart_tolerance:
+                        reactions += 1
+                        last_reaction = index
+                    state = "waiting"
+            else:
+                near_level = high >= level - tolerance
+                if state == "waiting" and near_level:
+                    state = "interacting"
+                elif state == "interacting":
+                    still_near = abs(close - level) <= tolerance * 2
+                    if still_near or near_level:
+                        continue
+                    if close < level - depart_tolerance:
+                        reactions += 1
+                        last_reaction = index
+                    state = "waiting"
         if last_reaction is None:
             return reactions, 0
         try:
@@ -517,33 +571,39 @@ class ScannerService:
         side: str,
         tol_pct: float,
     ) -> tuple[int, list[str]]:
-        score = LEVEL_TYPE_WEIGHTS.get(name, 5)
+        score = self._level_weight(name)
         evidence: list[str] = []
         distance_pct = abs((price - value) / value) * 100
         if distance_pct <= 0.25:
-            score += 20
-        elif distance_pct <= 0.50:
             score += 15
+        elif distance_pct <= 0.50:
+            score += 12
         elif distance_pct <= 1.00:
-            score += 10
+            score += 8
         elif distance_pct <= 2.00:
-            score += 5
+            score += 4
         else:
-            score -= 10
+            score -= 5
 
         reactions, recency = self._count_level_reactions(session, value, side, tol_pct)
-        score += recency
+        score += min(recency, 15)
         verb = "held" if side == "support" else "rejected"
         if reactions >= 3:
-            score += 25
+            score += 30
             evidence.append(f"{verb} {reactions}x")
         elif reactions == 2:
-            score += 18
+            score += 20
             evidence.append(f"{verb} 2x")
         elif reactions == 1:
-            score += 8
+            score += 10
             evidence.append(f"{verb} 1x")
-        return min(max(score, 0), 100), evidence
+        return min(max(score, 0), 92), evidence
+
+    @staticmethod
+    def _level_weight(name: str) -> int:
+        if name.startswith("Daily Swing High") or name.startswith("Daily Swing Low"):
+            return 24
+        return LEVEL_TYPE_WEIGHTS.get(name, 5)
 
     @staticmethod
     def _group_levels_into_zones(levels: list[dict[str, object]], tolerance_pct: float) -> list[dict[str, object]]:
@@ -564,7 +624,7 @@ class ScannerService:
         for zone in zones:
             members = zone["members"]
             base_score = max(int(member["score"]) for member in members)
-            zone["score"] = min(base_score + 8 * (len(members) - 1), 100)
+            zone["score"] = min(base_score + 5 * (len(members) - 1), 92)
             zone["names"] = [str(member["name"]) for member in members]
             zone["evidence"] = sorted({evidence for member in members for evidence in member["evidence"]})
         return zones
@@ -603,7 +663,6 @@ class ScannerService:
             "Prev Low": data.get("prev_l"),
             "R1": data.get("r1"),
             "S1": data.get("s1"),
-            "9 EMA": data.get("ema_9_5m"),
             "Pivot": data.get("pivot"),
         }
         reclaims: list[str] = []

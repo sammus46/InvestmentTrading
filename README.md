@@ -16,7 +16,7 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
 - Organized metric sections for session levels, ranges, technical indicators, and events.
-- Metrics currently include previous-session OHLC, premarket and opening ranges, previous-session VWAP, 52-week range, earnings gap, swing highs/lows, and Bollinger Bands.
+- Metrics currently include previous-session OHLC, premarket and opening ranges, previous-session VWAP, 52-week range, earnings gap, swing highs/lows, Adam-aligned technical levels, and Bollinger Bands.
 - Streamlit app entry point for remote-friendly deployment and browser access.
 - Streamlit watchlists persist to `~/.investment_trading/streamlit_state.json` by default and auto-refresh loaded data every 5 minutes.
 
@@ -185,14 +185,15 @@ For Streamlit Community Cloud, push this repository to GitHub, choose `app/strea
 Each JSON and PDF report includes the following levels for every requested ticker when the free data source returns enough data:
 
 - Previous completed session open, high, low, and close.
-- Latest available session premarket high and low from 1-minute extended-hours bars.
+- Today's premarket high and low from 1-minute extended-hours bars.
 - Previous completed regular-session VWAP from 5-minute bars.
 - Completed-session 52-week high and low.
-- Most recent earnings date plus the earnings-day opening gap from the prior close.
-- Latest available session first five-minute regular-session high and low.
-- Major daily swing highs and lows, with nearby levels merged, prioritized by distance from the latest completed close, and displayed in numerical order.
-- Daily Bollinger Bands.
-- Scanner-only calculations include latest price, today VWAP, 1-month high/low, SMA/EMA levels, classic pivots, Fibonacci retracements, VWAP extension, relative strength versus SPY/sector ETF, support/resistance confidence zones, reclaim/rejection signals, and intraday pattern summaries.
+- Most recent earnings date plus the earnings-day opening gap from the prior close when earnings are no more than 30 days old.
+- Today's first five-minute regular-session high and low.
+- Major daily swing highs and lows, with nearby levels merged, swing highs ordered high-to-low, and swing lows ordered low-to-high.
+- Adam-aligned technical levels: latest price, today VWAP, 1-month high/low, 50/200 SMA, 20 EMA daily, 9/20 EMA on 5-minute bars, classic pivots, Fibonacci retracements, earnings open, and pre-earnings close.
+- Daily Bollinger Bands. These remain an app-specific display metric and do not feed scanner support/resistance scoring.
+- Scanner calculations include VWAP extension, relative strength versus SPY/sector ETF, support/resistance confidence zones, reclaim/rejection signals, setup scoring, and intraday pattern summaries.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
 - Browser-style web charts using app-owned OHLC data, with global and per-ticker controls for line versus candlestick view, supported range, and interval. Charts are compact, follow the same ticker order as the draggable metric cards, and no longer overlay trading levels. PDF charts continue to use completed daily closes.
 
@@ -200,38 +201,25 @@ Each JSON and PDF report includes the following levels for every requested ticke
 
 Comparison source: `/Users/sam/Library/CloudStorage/Dropbox/Mac (3)/Documents/Coding projects/adam/trading-levels`, primarily `trading_app.py` plus `pattern_analysis.py`.
 
-Most core formulas already match Adam's implementation: previous-day OHLC, 52-week high/low, 1-month high/low, previous-session VWAP typical-price math, premarket range, first-five-minute range, SMA/EMA, classic pivots, Fibonacci retracements, VWAP extension, relative strength labels, setup scoring, reclaim/rejection scanning, and intraday pattern-analysis thresholds are conceptually the same. The remaining differences are mostly data-source settings, session-date behavior, stale earnings filtering, swing-level selection, and support/resistance scoring details.
+The backend level calculations have been aligned to Adam's implementation for the formulas and scanner behavior that drive trading levels: adjusted yfinance history, 400-day daily lookback, strict today-only intraday calculations for day-trading levels, 30-day earnings-gap freshness, Adam swing-level ordering, and Adam support/resistance scoring. Bollinger Bands remain an app-specific display-only level.
 
 Verified differences:
 
 | Area | This app | Adam implementation | Alignment change |
 | --- | --- | --- | --- |
-| yfinance adjustment mode | Uses `yf.download(..., auto_adjust=False)` for backend history. | Uses `yf.Ticker(...).history(..., auto_adjust=True)` for price history. | Decide whether backend levels should become adjusted. If yes, change downloads or add an adjustment setting and update expected test values. |
-| Daily lookback | JSON/PDF metrics use 365 calendar days; scanner uses 400 days. | Level loader uses 400 days for daily bars. | Use 400 days anywhere Adam-matched daily levels need a full scanner-compatible history. |
-| Latest session vs today | Premarket, first-five-minute range, today's VWAP, and intraday EMA use the latest available session when today's bars are missing. | These calculations require bars whose Eastern date is exactly today. | Change scanner/day-trading calculations to strict today-only behavior if the goal is exact Adam parity; keep latest-session fallback only where weekend/holiday display is preferred. |
-| Previous-session VWAP window | Filters 9:30 ET inclusive to 16:00 ET exclusive. | Filters 9:30 ET to 16:00 ET with pandas default endpoint inclusivity. | Usually equivalent for 5-minute bars ending at 15:55. If exact parity is required, use Adam's endpoint handling. |
-| Earnings gap recency | Returns the most recent completed earnings gap regardless of age and only returns date/gap/% in the API model. | Suppresses gap levels older than 30 days and keeps earnings open plus pre-earnings close as levels. | Add the 30-day staleness cutoff and expose/store earnings open and pre-earnings close if they should participate in scanner support/resistance. |
-| Swing levels | Merges swing highs/lows within 0.3%, then keeps the five levels nearest the latest completed close. | Merges within 0.3%, then keeps the first five sorted swing highs descending and swing lows ascending. | Change swing-level selection ordering if Adam parity matters. |
-| Scanner swing levels | Scanner support/resistance does not include daily swing highs/lows. | Scanner adds the first three daily swing highs/lows as structural support/resistance candidates. | Add `swing_highs` and `swing_lows` to scanner data and include the first three of each in the support/resistance candidate map. |
-| Support/resistance candidate set | Includes EMAs, Fibonacci levels, R2/S2, and earnings placeholders in the scored candidate map. | Excludes EMAs, Fibonacci levels, R2/S2, and stale earnings from scanner-quality support/resistance; includes swing highs/lows. | Trim the scanner candidate map to Adam's signal-focused set. |
-| Support/resistance zone tolerance | Minimum zone tolerance is 0.25%; max is 1.5%. | Minimum zone tolerance is 0.50%; max is 1.5%. | Raise minimum zone tolerance to 0.50%. |
-| Previous VWAP scoring | Previous-session VWAP always keeps its normal weight. | Previous-session VWAP is demoted after 11:00 ET because today's VWAP is established. | Add time-of-day demotion for previous-session VWAP. |
-| Level reaction counting | Counts each nearby bar that closes on the expected side of the level, so adjacent bars can inflate reaction count. | Uses a state machine: approach, interact, then depart meaningfully before one reaction is counted. | Replace reaction counting with Adam's distinct-test state machine. |
-| Confidence scoring | Distance contributes 20/15/10/5/-10; reactions add 25/18/8; recency can add up to 25; scores cap at 100. | Distance contributes 15/12/8/4/-5; reactions add 30/20/10; recency is capped at 15; scores cap at 92. | Adopt Adam's scoring weights and score cap. |
-| Zone confluence bonus | Adds 8 points per extra level in a zone and caps at 100. | Adds 5 points per extra level and caps at 92. | Adopt Adam's lower confluence bonus and cap. |
-| Zone distance filter | Any support below price or resistance above price can win. | Zones must be within 8% of current price to be day-trading relevant. | Add Adam's 8% max-distance filter. |
-| Reclaim/rejection signals | Includes 9 EMA as a signal level and priority item. | Uses VWAP, PM high, previous high/low, R1, S1, and pivot; no 9 EMA. | Remove 9 EMA from reclaim/rejection parity mode. |
-| Sector ETF fallback | Uses a hardcoded ticker-to-ETF map only; unknown tickers become `Other`. | Uses the hardcoded map first, then falls back to yfinance sector lookup. | Add yfinance sector fallback for unknown tickers if sector-relative strength should match Adam. |
-| Bollinger Bands | Included as a report metric. | Not calculated or displayed in Adam's level table. | Keep as an app-specific extra, or remove/hide from Adam-parity output. |
-| Adam-only displayed levels | Some are scanner-only or absent from JSON/PDF report output: today VWAP, 1-month high/low, SMA/EMA, pivots, Fibonacci, earnings open, and pre-earnings close. | Displays these in the main levels table. | Promote selected scanner-only levels into shared models/UI/PDF if the primary report should match Adam's table. |
-
-Planned alignment path:
-
-1. Add tests that lock Adam parity for stale earnings, swing-level ordering, strict today-only intraday calculations, and support/resistance scoring.
-2. Update `app/services/market_data.py` for data adjustment mode, daily lookback, earnings cutoff/details, swing selection, and intraday session-date behavior.
-3. Update `app/services/scanner.py` for Adam's scanner candidate set, swing levels, zone tolerance, previous-VWAP demotion, reaction state machine, confidence weights, confluence cap, distance filter, and sector fallback.
-4. Extend `app/models.py`, `app/static/app.js`, `app/streamlit_app.py`, and `app/services/pdf_report.py` only if Adam-only levels should become first-class report outputs.
-5. Keep Bollinger Bands as an app-specific optional metric unless the product goal is exact Adam table parity.
+| yfinance adjustment mode | Uses `yf.download(..., auto_adjust=True)`. | Uses `yf.Ticker(...).history(..., auto_adjust=True)`. | Aligned on adjusted prices; provider call style remains app-specific. |
+| Daily lookback | JSON/PDF metrics and scanner daily levels use 400 calendar days. | Level loader uses 400 days for daily bars. | Aligned. |
+| Latest session vs today | Premarket, first-five-minute range, today's VWAP, scanner setup, scanner signals, and intraday EMA require bars whose Eastern date is today. | Same. | Aligned. |
+| Previous-session VWAP window | Filters regular-session 5-minute bars from 9:30 ET inclusive to 16:00 ET exclusive. | Filters 9:30 ET to 16:00 ET with pandas default endpoint handling. | Effectively equivalent for normal 5-minute bars ending at 15:55; minor endpoint-style difference remains. |
+| Earnings gap recency | Returns the latest earnings date, suppresses gap/open/previous-close levels when older than 30 days, and marks the gap stale. | Suppresses gap levels older than 30 days and keeps earnings open plus pre-earnings close as levels. | Aligned, with an explicit API `is_stale` flag. Earnings levels are display-only in this app's scanner support/resistance candidate set. |
+| Swing levels | Merges swing highs/lows within 0.3%, keeps up to five swing highs descending and swing lows ascending. | Same. | Aligned. |
+| Scanner swing levels | Adds the first three daily swing highs/lows as support/resistance candidates. | Same. | Aligned. |
+| Support/resistance candidate set | Uses Adam's scanner-quality set: today/previous VWAP, PM high/low, previous high/low/close, first-five high/low, 50/200 SMA, 1-month high/low, pivot/R1/S1, and daily swing highs/lows. | Same. | Aligned. EMAs, Fibonacci levels, R2/S2, earnings levels, and Bollinger Bands remain display-only. |
+| Support/resistance scoring | Uses Adam's 0.50%-1.50% zone tolerance, previous-VWAP demotion after 11:00 ET, state-machine reaction counting, distance/reaction/recency weights, 5-point confluence bonus, 92 score cap, and 8% max distance filter. | Same. | Aligned. |
+| Reclaim/rejection signals | Uses VWAP, PM high, previous high/low, R1, S1, and pivot; no 9 EMA signal. | Same. | Aligned. |
+| Sector ETF fallback | Uses the hardcoded ticker map first, then yfinance sector lookup. | Same. | Aligned. |
+| Adam-only displayed levels | Exposed through the `technical_levels` API model and rendered in static UI, Streamlit UI, and PDFs. | Displays these in the main levels table. | Aligned for report visibility. |
+| Bollinger Bands | Included as a report metric and PDF chart overlay. | Not calculated or displayed in Adam's level table. | Deliberate app-specific extra; it does not feed scanner scoring or nearest scanner support/resistance. |
 
 ## API usage
 
@@ -240,10 +228,10 @@ Generate a JSON report:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/levels \
   -H 'Content-Type: application/json' \
-  -d '{"tickers":"AAPL, MSFT, NVDA","metrics":["previous_day","swing_levels","bollinger_bands"]}'
+  -d '{"tickers":"AAPL, MSFT, NVDA","metrics":["previous_day","swing_levels","technical_levels","bollinger_bands"]}'
 ```
 
-Omit `metrics` to calculate every available metric. Supported metric IDs are `previous_day`, `premarket`, `previous_session_vwap_5m`, `fifty_two_week`, `earnings_gap`, `first_five_minutes`, `swing_levels`, and `bollinger_bands`.
+Omit `metrics` to calculate every available metric. Supported metric IDs are `previous_day`, `premarket`, `previous_session_vwap_5m`, `fifty_two_week`, `earnings_gap`, `first_five_minutes`, `swing_levels`, `technical_levels`, and `bollinger_bands`.
 
 Generate watchlist and market news:
 
