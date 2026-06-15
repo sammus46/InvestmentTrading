@@ -1088,8 +1088,33 @@ def metric_rows(metric: EquityMetrics) -> list[dict[str, str]]:
     if "swing_levels" in selected:
         rows.extend(
             [
-                ("Swing Highs", ", ".join(fmt(level) for level in sorted(metric.swing_levels.highs))),
-                ("Swing Lows", ", ".join(fmt(level) for level in sorted(metric.swing_levels.lows, reverse=True))),
+                ("Swing Highs", ", ".join(fmt(level) for level in metric.swing_levels.highs)),
+                ("Swing Lows", ", ".join(fmt(level) for level in metric.swing_levels.lows)),
+            ]
+        )
+    if "technical_levels" in selected:
+        tech = metric.technical_levels
+        rows.extend(
+            [
+                ("Current Price", tech.current_price),
+                ("VWAP Today", tech.today_vwap),
+                ("1-Month High", tech.one_month_high),
+                ("1-Month Low", tech.one_month_low),
+                ("50 SMA", tech.sma_50),
+                ("200 SMA", tech.sma_200),
+                ("20 EMA Daily", tech.ema_20_daily),
+                ("9 EMA 5m", tech.ema_9_5m),
+                ("20 EMA 5m", tech.ema_20_5m),
+                ("Pivot", tech.pivot),
+                ("R1", tech.r1),
+                ("S1", tech.s1),
+                ("R2", tech.r2),
+                ("S2", tech.s2),
+                ("Fib 61.8%", tech.fib_618),
+                ("Fib 50.0%", tech.fib_500),
+                ("Fib 38.2%", tech.fib_382),
+                ("Earnings Open", tech.earnings_open),
+                ("Pre-Earnings Close", tech.pre_earnings_close),
             ]
         )
     if "bollinger_bands" in selected:
@@ -1157,12 +1182,41 @@ def metric_sections(metric: EquityMetrics) -> list[dict[str, list[tuple[str, Any
     if "swing_levels" in selected:
         level_rows.extend(
             [
-                ("Swing Highs", ", ".join(fmt(level) for level in sorted(metric.swing_levels.highs))),
-                ("Swing Lows", ", ".join(fmt(level) for level in sorted(metric.swing_levels.lows, reverse=True))),
+                ("Swing Highs", ", ".join(fmt(level) for level in metric.swing_levels.highs)),
+                ("Swing Lows", ", ".join(fmt(level) for level in metric.swing_levels.lows)),
             ]
         )
     if level_rows:
         sections.append({"Range & Levels": level_rows})
+
+    technical_rows: list[tuple[str, Any]] = []
+    if "technical_levels" in selected:
+        tech = metric.technical_levels
+        technical_rows.extend(
+            [
+                ("Current Price", tech.current_price),
+                ("VWAP Today", tech.today_vwap),
+                ("1M High", tech.one_month_high),
+                ("1M Low", tech.one_month_low),
+                ("50 SMA", tech.sma_50),
+                ("200 SMA", tech.sma_200),
+                ("20 EMA Daily", tech.ema_20_daily),
+                ("9 EMA 5m", tech.ema_9_5m),
+                ("20 EMA 5m", tech.ema_20_5m),
+                ("Pivot", tech.pivot),
+                ("R1", tech.r1),
+                ("S1", tech.s1),
+                ("R2", tech.r2),
+                ("S2", tech.s2),
+                ("Fib 61.8%", tech.fib_618),
+                ("Fib 50.0%", tech.fib_500),
+                ("Fib 38.2%", tech.fib_382),
+                ("Earnings Open", tech.earnings_open),
+                ("Pre-Earnings Close", tech.pre_earnings_close),
+            ]
+        )
+    if technical_rows:
+        sections.append({"Technical Levels": technical_rows})
 
     indicator_rows: list[tuple[str, Any]] = []
     if "bollinger_bands" in selected:

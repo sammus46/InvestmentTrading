@@ -46,14 +46,14 @@ def test_group_levels_into_zones_adds_confluence_score():
 
     assert len(zones) == 2
     assert zones[0]["names"] == ["VWAP (Today)", "Prev High"]
-    assert zones[0]["score"] == 63
+    assert zones[0]["score"] == 60
 
 
 def test_score_level_confidence_counts_reactions():
     service = ScannerService()
     session = intraday_frame()
 
-    score, evidence = service._score_level_confidence("Prev Low", 10.0, 10.5, session, "support", 0.75)
+    score, evidence = service._score_level_confidence("Prev Low", 10.0, 10.04, session, "support", 0.75)
 
     assert score >= 45
     assert any("held" in item for item in evidence)
@@ -70,7 +70,7 @@ def test_analyze_setup_scores_level_hold_and_momentum():
     assert setup["nearest_name"] in {"PM High", "VWAP", "Prev Low", "PM Low"}
 
 
-def test_intraday_ema_uses_recent_regular_bars_when_latest_session_is_short():
+def test_intraday_ema_requires_today_regular_session_bars():
     service = MarketDataService()
     today = datetime.now(EASTERN).date()
     yesterday = today - timedelta(days=1)
@@ -85,8 +85,126 @@ def test_intraday_ema_uses_recent_regular_bars_when_latest_session_is_short():
 
     ema = service._intraday_ema(frame, 20, warnings)
 
-    assert ema is not None
-    assert warnings == []
+    assert ema is None
+    assert warnings == ["At least 20 intraday closes are required for 20 EMA."]
+
+
+def test_scanner_candidate_map_excludes_display_only_levels_and_includes_swings():
+    data = {
+        "today_vwap": 100.0,
+        "ema_9_5m": 99.9,
+        "ema_20_5m": 99.8,
+        "ema_20_daily": 99.7,
+        "fib_618": 99.6,
+        "r2": 101.0,
+        "s2": 98.0,
+        "earn_open": 97.0,
+        "earn_prev_close": 96.0,
+        "swing_highs": [105.0, 106.0, 107.0, 108.0],
+        "swing_lows": [95.0, 94.0, 93.0, 92.0],
+    }
+
+    level_map = ScannerService._scanner_level_map(data)
+
+    assert "VWAP (Today)" in level_map
+    assert "9 EMA (5-Min)" not in level_map
+    assert "20 EMA (5-Min)" not in level_map
+    assert "20 EMA (Daily)" not in level_map
+    assert "Fib 61.8%" not in level_map
+    assert "R2 (Pivot)" not in level_map
+    assert "S2 (Pivot)" not in level_map
+    assert "Earnings Gap Open" not in level_map
+    assert list(name for name in level_map if name.startswith("Daily Swing High")) == [
+        "Daily Swing High 1",
+        "Daily Swing High 2",
+        "Daily Swing High 3",
+    ]
+    assert list(name for name in level_map if name.startswith("Daily Swing Low")) == [
+        "Daily Swing Low 1",
+        "Daily Swing Low 2",
+        "Daily Swing Low 3",
+    ]
+
+
+def test_display_only_levels_do_not_create_scanner_support_or_resistance():
+    service = ScannerService()
+    data = {
+        "price": 100.0,
+        "ema_9_5m": 99.9,
+        "ema_20_5m": 100.1,
+        "ema_20_daily": 100.2,
+        "fib_618": 99.8,
+        "r2": 100.3,
+        "s2": 99.7,
+        "earn_open": 99.6,
+        "earn_prev_close": 100.4,
+    }
+
+    result = service._best_support_resistance(data, intraday_frame())
+
+    assert result["support_zone"] == "No clean support"
+    assert result["resistance_zone"] == "No clean resistance"
+
+
+def test_daily_swing_levels_can_feed_scanner_support():
+    service = ScannerService()
+    today = datetime.now(EASTERN).date()
+    level = 99.8
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 100.0, 100.2],
+            "High": [99.9, 100.45, 100.5],
+            "Low": [99.78, 100.0, 100.1],
+            "Close": [99.85, 100.35, 100.4],
+            "Volume": [100, 100, 100],
+        },
+        index=pd.DatetimeIndex(
+            [
+                datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 35), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 40), tzinfo=EASTERN),
+            ]
+        ),
+    )
+    data = {"price": 100.0, "swing_lows": [level]}
+
+    result = service._best_support_resistance(data, frame)
+
+    assert result["support_zone"] == "$99.80"
+    assert "Daily Swing Low 1" in str(result["support_reason"])
+
+
+def test_previous_session_vwap_is_demoted_after_11am(monkeypatch):
+    class FakeDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            today = datetime.now(EASTERN).date()
+            return datetime.combine(today, time(12, 0), tzinfo=tz or EASTERN)
+
+    monkeypatch.setattr("app.services.scanner.datetime", FakeDateTime)
+    service = ScannerService()
+    today = datetime.now(EASTERN).date()
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 100.0, 100.2],
+            "High": [100.0, 100.45, 100.5],
+            "Low": [99.85, 100.0, 100.1],
+            "Close": [99.9, 100.35, 100.4],
+            "Volume": [100, 100, 100],
+        },
+        index=pd.DatetimeIndex(
+            [
+                datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 35), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 40), tzinfo=EASTERN),
+            ]
+        ),
+    )
+
+    result = service._best_support_resistance({"price": 100.0, "vwap": 99.9}, frame)
+
+    assert result["support_score"] == 30
+    assert result["support_zone"] == "No clean support"
 
 
 def test_scanner_splits_optional_data_notes_from_visible_warnings():

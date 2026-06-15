@@ -79,8 +79,33 @@ class PdfReportService:
             if "swing_levels" in selected:
                 table_data.extend(
                     [
-                        ["Swing Highs", self._fmt_levels(sorted(metric.swing_levels.highs))],
-                        ["Swing Lows", self._fmt_levels(sorted(metric.swing_levels.lows, reverse=True))],
+                        ["Swing Highs", self._fmt_levels(metric.swing_levels.highs)],
+                        ["Swing Lows", self._fmt_levels(metric.swing_levels.lows)],
+                    ]
+                )
+            if "technical_levels" in selected:
+                technical = metric.technical_levels
+                table_data.extend(
+                    [
+                        ["Current Price", self._fmt(technical.current_price)],
+                        ["VWAP Today", self._fmt(technical.today_vwap)],
+                        ["1-Month High", self._fmt(technical.one_month_high)],
+                        ["1-Month Low", self._fmt(technical.one_month_low)],
+                        ["50 SMA", self._fmt(technical.sma_50)],
+                        ["200 SMA", self._fmt(technical.sma_200)],
+                        ["20 EMA Daily", self._fmt(technical.ema_20_daily)],
+                        ["9 EMA 5m", self._fmt(technical.ema_9_5m)],
+                        ["20 EMA 5m", self._fmt(technical.ema_20_5m)],
+                        ["Pivot", self._fmt(technical.pivot)],
+                        ["R1", self._fmt(technical.r1)],
+                        ["S1", self._fmt(technical.s1)],
+                        ["R2", self._fmt(technical.r2)],
+                        ["S2", self._fmt(technical.s2)],
+                        ["Fib 61.8%", self._fmt(technical.fib_618)],
+                        ["Fib 50.0%", self._fmt(technical.fib_500)],
+                        ["Fib 38.2%", self._fmt(technical.fib_382)],
+                        ["Earnings Open", self._fmt(technical.earnings_open)],
+                        ["Pre-Earnings Close", self._fmt(technical.pre_earnings_close)],
                     ]
                 )
             if "bollinger_bands" in selected:
@@ -210,9 +235,9 @@ class PdfReportService:
             add("52W High", metric.fifty_two_week.high, "fifty_two")
             add("52W Low", metric.fifty_two_week.low, "fifty_two")
         if "swing_levels" in selected:
-            for index, value in enumerate(sorted(metric.swing_levels.highs), start=1):
+            for index, value in enumerate(metric.swing_levels.highs, start=1):
                 add(f"SwH {index}", value, "swing_high")
-            for index, value in enumerate(sorted(metric.swing_levels.lows, reverse=True), start=1):
+            for index, value in enumerate(metric.swing_levels.lows, start=1):
                 add(f"SwL {index}", value, "swing_low")
         if "bollinger_bands" in selected:
             add("BB U", metric.bollinger_bands.upper, "bollinger")

@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from app.models import EarningsGap, Ohlc
 from app.services import market_data
 from app.services.market_data import MarketDataService, MarketDataSettings
 
@@ -143,6 +144,34 @@ def test_opening_range_uses_first_five_regular_session_minutes():
     assert opening.minutes == 5
 
 
+def test_today_session_calculations_ignore_prior_available_day():
+    today = datetime.now(EASTERN).date()
+    yesterday = today - timedelta(days=1)
+    index = pd.DatetimeIndex(
+        [
+            datetime.combine(yesterday, time(4, 0), tzinfo=EASTERN),
+            datetime.combine(yesterday, time(9, 30), tzinfo=EASTERN),
+        ]
+    )
+    intraday = pd.DataFrame(
+        {
+            "Open": [9.0, 10.0],
+            "High": [12.0, 15.0],
+            "Low": [8.0, 9.0],
+            "Close": [11.0, 14.0],
+            "Volume": [100, 200],
+        },
+        index=index,
+    )
+    warnings: list[str] = []
+
+    service = MarketDataService()
+
+    assert service._today_regular_session(intraday).empty
+    assert service._today_premarket_range(intraday, warnings).bars == 0
+    assert service._opening_range(intraday, warnings).bars == 0
+
+
 def test_swing_levels_find_and_merge_daily_support_resistance():
     service = MarketDataService(MarketDataSettings(swing_window=1, level_merge_percent=0.003, max_swing_levels=5))
     daily = pd.DataFrame(
@@ -155,11 +184,11 @@ def test_swing_levels_find_and_merge_daily_support_resistance():
 
     levels = service._swing_levels(daily, [])
 
-    assert levels.highs == [15.0, 20.0]
-    assert levels.lows == [8.0, 7.0]
+    assert levels.highs == [20.0, 15.0]
+    assert levels.lows == [7.0, 8.0]
 
 
-def test_swing_levels_prefer_levels_nearest_latest_close():
+def test_swing_levels_keep_first_sorted_merged_levels():
     service = MarketDataService(MarketDataSettings(swing_window=1, level_merge_percent=0.003, max_swing_levels=2))
     daily = pd.DataFrame(
         {
@@ -172,17 +201,21 @@ def test_swing_levels_prefer_levels_nearest_latest_close():
 
     levels = service._swing_levels(daily, [])
 
-    assert levels.highs == [110.0, 121.0]
-    assert levels.lows == [98.0, 76.0]
+    assert levels.highs == [121.0, 110.0]
+    assert levels.lows == [45.0, 76.0]
 
 
 def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
+    today = datetime.now(EASTERN).date()
+    earnings_day = today - timedelta(days=5)
+    prior_day = earnings_day - timedelta(days=1)
+
     class FakeTicker:
         @property
         def earnings_dates(self):
             return pd.DataFrame(
                 {"EPS Estimate": [1.0]},
-                index=pd.DatetimeIndex([datetime(2026, 5, 15, 12, 0, tzinfo=EASTERN)]),
+                index=pd.DatetimeIndex([datetime.combine(earnings_day, time(12, 0), tzinfo=EASTERN)]),
             )
 
     monkeypatch.setattr("app.services.market_data.yf.Ticker", lambda symbol: FakeTicker())
@@ -191,14 +224,47 @@ def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
             "Open": [90.0, 110.0],
             "Close": [100.0, 120.0],
         },
-        index=pd.DatetimeIndex(["2026-05-14", "2026-05-15"]),
+        index=pd.DatetimeIndex([prior_day, earnings_day]),
     )
 
-    gap = MarketDataService._earnings_gap("AAPL", daily, [])
+    gap = MarketDataService()._earnings_gap("AAPL", daily, [])
 
-    assert gap.date == datetime(2026, 5, 15).date()
+    assert gap.date == earnings_day
     assert gap.gap == 10.0
     assert gap.gap_percent == 10.0
+    assert gap.open == 110.0
+    assert gap.previous_close == 100.0
+    assert gap.is_stale is False
+
+
+def test_earnings_gap_suppresses_levels_older_than_30_days(monkeypatch):
+    today = datetime.now(EASTERN).date()
+    earnings_day = today - timedelta(days=45)
+
+    class FakeTicker:
+        @property
+        def earnings_dates(self):
+            return pd.DataFrame(
+                {"EPS Estimate": [1.0]},
+                index=pd.DatetimeIndex([datetime.combine(earnings_day, time(12, 0), tzinfo=EASTERN)]),
+            )
+
+    monkeypatch.setattr("app.services.market_data.yf.Ticker", lambda symbol: FakeTicker())
+    daily = pd.DataFrame(
+        {
+            "Open": [90.0, 110.0],
+            "Close": [100.0, 120.0],
+        },
+        index=pd.DatetimeIndex([earnings_day - timedelta(days=1), earnings_day]),
+    )
+
+    gap = MarketDataService()._earnings_gap("AAPL", daily, [])
+
+    assert gap.date == earnings_day
+    assert gap.gap is None
+    assert gap.open is None
+    assert gap.previous_close is None
+    assert gap.is_stale is True
 
 
 def test_earnings_gap_suppresses_provider_stderr(monkeypatch, capsys):
@@ -218,7 +284,7 @@ def test_earnings_gap_suppresses_provider_stderr(monkeypatch, capsys):
     )
     warnings: list[str] = []
 
-    gap = MarketDataService._earnings_gap("SPY", daily, warnings)
+    gap = MarketDataService()._earnings_gap("SPY", daily, warnings)
 
     assert gap.date is None
     assert "No earnings dates" in warnings[0]
@@ -280,6 +346,78 @@ def test_current_price_uses_latest_minute_close_before_fallback():
     assert price == 105.5
 
 
+def test_download_uses_adjusted_yfinance_history(monkeypatch):
+    captured = {}
+
+    def fake_download(symbol, **query):
+        captured["symbol"] = symbol
+        captured["query"] = query
+        return pd.DataFrame({"Close": [100.0]}, index=pd.DatetimeIndex(["2026-06-01"]))
+
+    monkeypatch.setattr("app.services.market_data.yf.download", fake_download)
+
+    frame = MarketDataService._download("AAPL", period="1d", interval="1d", prepost=False)
+
+    assert not frame.empty
+    assert captured["symbol"] == "AAPL"
+    assert captured["query"]["auto_adjust"] is True
+
+
+def test_technical_levels_bundle_adam_display_values():
+    today = datetime.now(EASTERN).date()
+    dates = pd.date_range(today - timedelta(days=220), periods=220, freq="D")
+    daily = pd.DataFrame(
+        {
+            "Open": [float(value) for value in range(1, 221)],
+            "High": [float(value + 1) for value in range(1, 221)],
+            "Low": [float(value - 1) for value in range(1, 221)],
+            "Close": [float(value) for value in range(1, 221)],
+        },
+        index=dates,
+    )
+    minute = pd.DataFrame(
+        {
+            "High": [101.0, 102.0],
+            "Low": [99.0, 100.0],
+            "Close": [100.0, 101.0],
+            "Volume": [100, 300],
+        },
+        index=pd.DatetimeIndex(
+            [
+                datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 31), tzinfo=EASTERN),
+            ]
+        ),
+    )
+    five_minute = pd.DataFrame(
+        {"Close": [float(value) for value in range(1, 21)]},
+        index=pd.DatetimeIndex(
+            [datetime.combine(today, time(9, 30), tzinfo=EASTERN) + timedelta(minutes=5 * index) for index in range(20)]
+        ),
+    )
+    previous = Ohlc(high=221.0, low=219.0, close=220.0)
+    earnings = EarningsGap(open=110.0, previous_close=100.0)
+
+    levels = MarketDataService()._technical_levels(
+        symbol="AAPL",
+        daily=daily,
+        minute=minute,
+        five_minute=five_minute,
+        previous_day=previous,
+        earnings_gap=earnings,
+        warnings=[],
+    )
+
+    assert levels.current_price == 101.0
+    assert levels.today_vwap == 100.75
+    assert levels.pivot == 220.0
+    assert levels.r1 == 221.0
+    assert levels.s1 == 219.0
+    assert levels.ema_20_5m is not None
+    assert levels.earnings_open == 110.0
+    assert levels.pre_earnings_close == 100.0
+
+
 def test_build_metrics_skips_unselected_downloads(monkeypatch):
     downloads = []
 
@@ -305,7 +443,7 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
     ]
     assert downloads[0][3] is not None
     assert downloads[0][4] is not None
-    assert (downloads[0][4] - downloads[0][3]).days == 365
+    assert (downloads[0][4] - downloads[0][3]).days == 400
     assert [point.close for point in metric.price_history] == [11.0]
     assert [point.close for point in metric.intraday_history] == [11.5]
 

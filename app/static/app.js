@@ -62,6 +62,7 @@ const METRIC_DEFINITIONS = [
   { id: "fifty_two_week", label: "52-week range", group: "Levels" },
   { id: "swing_levels", label: "Swing highs/lows", group: "Levels" },
   { id: "bollinger_bands", label: "Bollinger Bands", group: "Indicators" },
+  { id: "technical_levels", label: "Technical levels", group: "Indicators" },
   { id: "earnings_gap", label: "Earnings gap", group: "Events" },
 ];
 
@@ -1190,6 +1191,7 @@ function renderArticleCard(article, options = {}) {
 
 function renderMetricCard(metric, index) {
   const selected = metric.selected_metrics || readSelectedMetrics();
+  const technical = metric.technical_levels || {};
   const sections = [
     {
       title: "Session Levels",
@@ -1212,9 +1214,33 @@ function renderMetricCard(metric, index) {
         selected.includes("fifty_two_week") && ["52W Low", metric.fifty_two_week.low],
       ].filter(Boolean),
       lists: selected.includes("swing_levels") ? [
-        ["Swing Highs", sortLevels(metric.swing_levels.highs, "asc")],
-        ["Swing Lows", sortLevels(metric.swing_levels.lows, "desc")],
+        ["Swing Highs", metric.swing_levels.highs],
+        ["Swing Lows", metric.swing_levels.lows],
       ] : [],
+    },
+    {
+      title: "Technical Levels",
+      rows: [
+        selected.includes("technical_levels") && ["Current Price", technical.current_price],
+        selected.includes("technical_levels") && ["VWAP Today", technical.today_vwap],
+        selected.includes("technical_levels") && ["1M High", technical.one_month_high],
+        selected.includes("technical_levels") && ["1M Low", technical.one_month_low],
+        selected.includes("technical_levels") && ["50 SMA", technical.sma_50],
+        selected.includes("technical_levels") && ["200 SMA", technical.sma_200],
+        selected.includes("technical_levels") && ["20 EMA Daily", technical.ema_20_daily],
+        selected.includes("technical_levels") && ["9 EMA 5m", technical.ema_9_5m],
+        selected.includes("technical_levels") && ["20 EMA 5m", technical.ema_20_5m],
+        selected.includes("technical_levels") && ["Pivot", technical.pivot],
+        selected.includes("technical_levels") && ["R1", technical.r1],
+        selected.includes("technical_levels") && ["S1", technical.s1],
+        selected.includes("technical_levels") && ["R2", technical.r2],
+        selected.includes("technical_levels") && ["S2", technical.s2],
+        selected.includes("technical_levels") && ["Fib 61.8%", technical.fib_618],
+        selected.includes("technical_levels") && ["Fib 50.0%", technical.fib_500],
+        selected.includes("technical_levels") && ["Fib 38.2%", technical.fib_382],
+        selected.includes("technical_levels") && ["Earnings Open", technical.earnings_open],
+        selected.includes("technical_levels") && ["Pre-Earnings Close", technical.pre_earnings_close],
+      ].filter(Boolean),
     },
     {
       title: "Indicators & Events",
@@ -1715,11 +1741,6 @@ function heatmapColor(value) {
     return `rgba(185, 28, 28, ${0.12 + intensity * 0.62})`;
   }
   return `rgba(15, 118, 110, ${0.12 + intensity * 0.62})`;
-}
-
-function sortLevels(levels, direction) {
-  const sorted = [...(levels || [])].sort((left, right) => left - right);
-  return direction === "desc" ? sorted.reverse() : sorted;
 }
 
 function formatValue(value) {

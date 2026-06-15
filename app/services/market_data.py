@@ -38,6 +38,7 @@ from app.models import (
     OpeningRange,
     PremarketRange,
     SwingLevels,
+    TechnicalLevels,
     TickerChartHistory,
 )
 
@@ -118,7 +119,7 @@ class MarketDataSettings:
 
     bollinger_period: int = 20
     bollinger_standard_deviations: float = 2.0
-    daily_history_days: int = 365
+    daily_history_days: int = 400
     intraday_history_period: str = "5d"
     intraday_interval: str = "5m"
     opening_history_period: str = "1d"
@@ -130,6 +131,7 @@ class MarketDataSettings:
     chart_history_days: int = 365
     scanner_daily_history_days: int = 400
     pattern_history_period: str = "58d"
+    earnings_gap_max_age_days: int = 30
 
 
 class MarketDataService:
@@ -189,7 +191,8 @@ class MarketDataService:
 
         needs_daily = True
         needs_intraday = True
-        needs_opening_intraday = bool({"premarket", "first_five_minutes"} & set(selected_metrics))
+        selected = set(selected_metrics)
+        needs_opening_intraday = bool({"premarket", "first_five_minutes", "technical_levels"} & selected)
 
         daily = (
             self._download_daily_history(symbol)
@@ -217,29 +220,52 @@ class MarketDataService:
             else pd.DataFrame()
         )
 
-        previous_day = self._previous_day_ohlc(daily, warnings) if "previous_day" in selected_metrics else Ohlc()
-        bollinger = self._bollinger_bands(daily, warnings) if "bollinger_bands" in selected_metrics else BollingerLevels()
-        fifty_two_week = (
-            self._fifty_two_week_range(daily, warnings) if "fifty_two_week" in selected_metrics else FiftyTwoWeekRange()
+        previous_day_source = (
+            self._previous_day_ohlc(daily, warnings)
+            if {"previous_day", "technical_levels"} & selected
+            else Ohlc()
         )
-        earnings_gap = self._earnings_gap(symbol, daily, warnings) if "earnings_gap" in selected_metrics else EarningsGap()
+        previous_day = previous_day_source if "previous_day" in selected else Ohlc()
+        bollinger = self._bollinger_bands(daily, warnings) if "bollinger_bands" in selected else BollingerLevels()
+        fifty_two_week = (
+            self._fifty_two_week_range(daily, warnings) if "fifty_two_week" in selected else FiftyTwoWeekRange()
+        )
+        earnings_source = (
+            self._earnings_gap(symbol, daily, warnings)
+            if {"earnings_gap", "technical_levels"} & selected
+            else EarningsGap()
+        )
+        earnings_gap = earnings_source if "earnings_gap" in selected else EarningsGap()
         previous_session = (
             self._previous_regular_session(intraday, warnings)
-            if "previous_session_vwap_5m" in selected_metrics
+            if "previous_session_vwap_5m" in selected
             else pd.DataFrame()
         )
         premarket = (
             self._today_premarket_range(opening_intraday, warnings)
-            if "premarket" in selected_metrics
+            if "premarket" in selected
             else PremarketRange()
         )
         first_five_minutes = (
             self._opening_range(opening_intraday, warnings)
-            if "first_five_minutes" in selected_metrics
+            if "first_five_minutes" in selected
             else OpeningRange(minutes=self.settings.opening_range_minutes)
         )
-        vwap = self._vwap(previous_session, warnings) if "previous_session_vwap_5m" in selected_metrics else None
-        swing_levels = self._swing_levels(daily, warnings) if "swing_levels" in selected_metrics else SwingLevels()
+        vwap = self._vwap(previous_session, warnings) if "previous_session_vwap_5m" in selected else None
+        swing_levels = self._swing_levels(daily, warnings) if "swing_levels" in selected else SwingLevels()
+        technical_levels = (
+            self._technical_levels(
+                symbol=symbol,
+                daily=daily,
+                minute=opening_intraday,
+                five_minute=intraday,
+                previous_day=previous_day_source,
+                earnings_gap=earnings_source,
+                warnings=warnings,
+            )
+            if "technical_levels" in selected
+            else TechnicalLevels()
+        )
         price_history = self._price_history(daily, warnings)
         intraday_history = self._intraday_price_history(intraday, warnings)
 
@@ -259,6 +285,7 @@ class MarketDataService:
             first_five_minutes=first_five_minutes,
             swing_levels=swing_levels,
             bollinger_bands=bollinger,
+            technical_levels=technical_levels,
             price_history=price_history,
             intraday_history=intraday_history,
             data_timestamp=datetime.now(timezone.utc),
@@ -507,7 +534,7 @@ class MarketDataService:
             "interval": interval,
             "prepost": prepost,
             "progress": False,
-            "auto_adjust": False,
+            "auto_adjust": True,
             "threads": False,
         }
         if period is not None:
@@ -631,8 +658,7 @@ class MarketDataService:
             return None, None
         return round(float(completed["High"].astype(float).max()), 2), round(float(completed["Low"].astype(float).min()), 2)
 
-    @staticmethod
-    def _earnings_gap(symbol: str, daily: pd.DataFrame, warnings: list[str]) -> EarningsGap:
+    def _earnings_gap(self, symbol: str, daily: pd.DataFrame, warnings: list[str]) -> EarningsGap:
         if daily.empty:
             warnings.append("Daily data was unavailable for earnings gap calculations.")
             return EarningsGap()
@@ -661,6 +687,13 @@ class MarketDataService:
             return EarningsGap()
 
         earnings_date = past_earnings.sort_index(ascending=False).index[0].date()
+        if (today - earnings_date).days > self.settings.earnings_gap_max_age_days:
+            warnings.append(
+                f"Most recent earnings date {earnings_date.isoformat()} is older than "
+                f"{self.settings.earnings_gap_max_age_days} days; earnings gap levels were suppressed."
+            )
+            return EarningsGap(date=earnings_date, is_stale=True)
+
         completed = daily.dropna(subset=["Open", "Close"]).copy()
         completed_index = pd.DatetimeIndex(completed.index)
         if completed_index.tz is not None:
@@ -687,6 +720,8 @@ class MarketDataService:
             date=earnings_date,
             gap=round(gap, 2),
             gap_percent=round((gap / previous_close) * 100, 2),
+            open=round(earnings_open, 2),
+            previous_close=round(previous_close, 2),
         )
 
     def _previous_regular_session(self, intraday: pd.DataFrame, warnings: list[str]) -> pd.DataFrame:
@@ -706,12 +741,12 @@ class MarketDataService:
         return regular[regular.index.date == previous_date]
 
     def _today_regular_session(self, intraday: pd.DataFrame) -> pd.DataFrame:
-        """Return latest available regular-session bars from today-like intraday data."""
+        """Return today's regular-session bars only."""
         if intraday.empty:
             return intraday
         localized = self._with_eastern_index(intraday)
-        latest = self._latest_session_bars(localized)
-        return latest.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left")
+        today_bars = self._today_session_bars(localized)
+        return today_bars.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left")
 
     def _today_premarket_range(self, intraday: pd.DataFrame, warnings: list[str]) -> PremarketRange:
         if intraday.empty:
@@ -719,10 +754,10 @@ class MarketDataService:
             return PremarketRange()
 
         localized = self._with_eastern_index(intraday)
-        today_bars = self._latest_session_bars(localized)
+        today_bars = self._today_session_bars(localized)
         premarket = today_bars.between_time(PREMARKET_OPEN, MARKET_OPEN, inclusive="left")
         if premarket.empty:
-            warnings.append("No premarket bars were returned by the data source for the latest available session.")
+            warnings.append("No premarket bars were returned by the data source for today.")
             return PremarketRange()
 
         return PremarketRange(
@@ -738,9 +773,9 @@ class MarketDataService:
             return OpeningRange(minutes=minutes)
 
         localized = self._with_eastern_index(intraday)
-        today_bars = self._latest_session_bars(localized)
+        today_bars = self._today_session_bars(localized)
         if today_bars.empty:
-            warnings.append("No intraday bars were returned for the latest available opening range.")
+            warnings.append("No intraday bars were returned for today's opening range.")
             return OpeningRange(minutes=minutes)
 
         end_hour = MARKET_OPEN.hour
@@ -748,7 +783,7 @@ class MarketDataService:
         end_time = time(end_hour + end_minute // 60, end_minute % 60)
         opening = today_bars.between_time(MARKET_OPEN, end_time, inclusive="left")
         if opening.empty:
-            warnings.append("No first-five-minute regular-session bars were returned for the latest available session.")
+            warnings.append("No first-five-minute regular-session bars were returned for today.")
             return OpeningRange(minutes=minutes)
 
         return OpeningRange(
@@ -766,6 +801,13 @@ class MarketDataService:
         if not session_dates:
             return frame.iloc[0:0]
         return frame[frame.index.date == session_dates[-1]]
+
+    @staticmethod
+    def _today_session_bars(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return frame
+        today = datetime.now(EASTERN).date()
+        return frame[pd.DatetimeIndex(frame.index).date == today]
 
     @staticmethod
     def _vwap(session: pd.DataFrame, warnings: list[str]) -> float | None:
@@ -815,18 +857,52 @@ class MarketDataService:
             warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
             return None
 
-        localized = self._with_eastern_index(intraday)
-        regular = localized.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left").dropna(subset=["Close"])
+        regular = self._today_regular_session(intraday).dropna(subset=["Close"])
         if regular.empty:
             warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
             return None
 
-        latest = self._latest_session_bars(regular)
-        closes = latest["Close"].dropna().astype(float) if len(latest.dropna(subset=["Close"])) >= period else regular["Close"].dropna().astype(float)
+        closes = regular["Close"].dropna().astype(float)
         if len(closes) < period:
             warnings.append(f"At least {period} intraday closes are required for {period} EMA.")
             return None
         return round(float(closes.ewm(span=period, adjust=False).mean().iloc[-1]), 2)
+
+    def _technical_levels(
+        self,
+        *,
+        symbol: str,
+        daily: pd.DataFrame,
+        minute: pd.DataFrame,
+        five_minute: pd.DataFrame,
+        previous_day: Ohlc,
+        earnings_gap: EarningsGap,
+        warnings: list[str],
+    ) -> TechnicalLevels:
+        monthly_high, monthly_low = self._monthly_range(daily, warnings)
+        pivots = self._pivot_points(previous_day)
+        fibs = self._fibonacci_levels(monthly_high, monthly_low)
+        return TechnicalLevels(
+            current_price=self._current_price(symbol, minute, warnings),
+            today_vwap=self._today_vwap(minute, warnings),
+            one_month_high=monthly_high,
+            one_month_low=monthly_low,
+            sma_50=self._sma(daily, 50, warnings),
+            sma_200=self._sma(daily, 200, warnings),
+            ema_20_daily=self._daily_ema(daily, 20, warnings),
+            ema_9_5m=self._intraday_ema(five_minute, 9, warnings),
+            ema_20_5m=self._intraday_ema(five_minute, 20, warnings),
+            pivot=pivots["pivot"],
+            r1=pivots["r1"],
+            s1=pivots["s1"],
+            r2=pivots["r2"],
+            s2=pivots["s2"],
+            fib_618=fibs["fib_618"],
+            fib_500=fibs["fib_500"],
+            fib_382=fibs["fib_382"],
+            earnings_open=earnings_gap.open,
+            pre_earnings_close=earnings_gap.previous_close,
+        )
 
     @staticmethod
     def _pivot_points(previous_day: Ohlc) -> dict[str, float | None]:
@@ -887,50 +963,22 @@ class MarketDataService:
             if lows[index] == lows[lower_bound:upper_bound].min():
                 swing_lows.append(round(float(lows[index]), 2))
 
-        latest_close = self._latest_completed_close(completed)
         return SwingLevels(
-            highs=self._select_swing_levels(
+            highs=self._merge_levels(
                 swing_highs,
                 max_levels=max_levels,
                 merge_percent=merge_percent,
-                descending=False,
-                latest_close=latest_close,
+                descending=True,
             ),
-            lows=self._select_swing_levels(
+            lows=self._merge_levels(
                 swing_lows,
                 max_levels=max_levels,
                 merge_percent=merge_percent,
-                descending=True,
-                latest_close=latest_close,
+                descending=False,
             ),
             window=window,
             merge_percent=merge_percent,
         )
-
-    @classmethod
-    def _select_swing_levels(
-        cls,
-        levels: list[float],
-        max_levels: int,
-        merge_percent: float,
-        descending: bool,
-        latest_close: float | None,
-    ) -> list[float]:
-        merged = cls._merge_levels(levels, max_levels=len(levels), merge_percent=merge_percent, descending=descending)
-        if latest_close is None:
-            return merged[:max_levels]
-
-        nearest = sorted(merged, key=lambda level: (abs(level - latest_close), level))[:max_levels]
-        return sorted(nearest, reverse=descending)
-
-    @staticmethod
-    def _latest_completed_close(completed: pd.DataFrame) -> float | None:
-        if "Close" not in completed.columns:
-            return None
-        closes = completed["Close"].dropna().astype(float)
-        if closes.empty:
-            return None
-        return float(closes.iloc[-1])
 
     @staticmethod
     def _merge_levels(levels: list[float], max_levels: int, merge_percent: float, descending: bool) -> list[float]:
