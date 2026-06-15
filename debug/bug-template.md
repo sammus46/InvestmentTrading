@@ -1,10 +1,10 @@
 # BUG-XXXX: Short Title
 
-Status: Known  
-Severity: P2 Medium  
-Surface: Static UI | Streamlit UI | Backend | PDF | Scanner | News  
-Created: YYYY-MM-DD  
-Last updated: YYYY-MM-DD  
+Status: Known
+Severity: P2 Medium
+Surface: Static UI | Streamlit UI | Backend | PDF | Scanner | News
+Created: YYYY-MM-DD
+Last updated: YYYY-MM-DD
 Related PR/commit: TBD
 
 ## Summary

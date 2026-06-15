@@ -7,6 +7,7 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Browser-persisted ticker/watchlist input and metric selections using `localStorage`.
 - Two main app views: investment trading levels and stock news.
 - Shared watchlist input that drives both generated price-level reports and ticker-specific news.
+- Shared ticker validation across API requests, static watchlists, and Streamlit watchlists.
 - Saved watchlists automatically load levels, scanner output, news, and market performance when the app opens.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
 - Shared backend display sections keep the FastAPI static UI, Streamlit UI, and PDF report aligned.
@@ -181,6 +182,16 @@ For public internet access, put the app behind authentication or a private tunne
 
 For Streamlit Community Cloud, push this repository to GitHub, choose `app/streamlit_app.py` as the main file, and let the platform install dependencies from `pyproject.toml`.
 
+## Ticker input
+
+Ticker input accepts a comma, space, or newline-separated watchlist. Symbols are normalized before use:
+
+- `AAPL`, `MSFT`, and `NVDA` stay unchanged.
+- `$TSLA` becomes `TSLA`.
+- `BRK.B` and `BRK/B` become `BRK-B`.
+- Yahoo-style symbols such as `^GSPC`, `GC=F`, and `BTC-USD` are supported.
+
+Invalid tokens are rejected before provider calls. This includes empty tokens, emoji, HTML/script-like text, shell punctuation, malformed `=` suffixes, and normalized symbols over 20 characters. Backend API requests return `422` validation errors for invalid tickers; the static and Streamlit watchlist controls skip invalid tokens and show a short warning instead of saving them.
 
 ## Generated metrics
 
@@ -253,6 +264,7 @@ curl -X POST http://127.0.0.1:8000/api/news \
 
 The news endpoint works without extra configuration through Yahoo Finance data. If `FINNHUB_API_KEY` is set in the environment, the app tries Finnhub first for general market news and watchlist company news, then falls back to Yahoo Finance when Finnhub is unavailable or returns no articles.
 Use `per_ticker` from 1 to 20; the static and Streamlit UIs request 10 headlines per ticker, show the top 5 by default, and group the expanded ticker view into price rating changes, company contract announcements, earnings reports, and general news.
+Article and thumbnail URLs are normalized before rendering; only absolute `http` and `https` URLs are shown as links or images.
 
 Generate major market and watchlist performance snapshots:
 

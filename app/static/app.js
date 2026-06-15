@@ -10,6 +10,8 @@ const REPORT_LAYOUT_STORAGE_KEY = "equity-levels-report-layout";
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
+const TICKER_MAX_LENGTH = 20;
+const TICKER_PATTERN = /^(?:\^[A-Z0-9][A-Z0-9-]*|[A-Z0-9][A-Z0-9-]*(?:=[A-Z0-9]+)?)$/;
 
 const NEWS_CATEGORY_LABELS = {
   rating_changes: "Price Rating Changes",
@@ -84,6 +86,7 @@ const watchlistListEl = document.querySelector("#watchlist-list");
 const generateButton = document.querySelector("#generate");
 const pdfButton = document.querySelector("#download-pdf");
 const reportLayoutSelectEl = document.querySelector("#report-layout");
+const reportSearchEl = document.querySelector("#report-search");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
@@ -132,6 +135,14 @@ const chartDataCache = new Map();
 const chartInstances = new Map();
 const chartResizeObservers = new Map();
 const statusTimers = new WeakMap();
+const requestState = {
+  levels: { controller: null, seq: 0 },
+  news: { controller: null, seq: 0 },
+  scanner: { controller: null, seq: 0 },
+  snapshot: { controller: null, seq: 0 },
+  chart: { controller: null, seq: 0 },
+};
+const tickerChartRequests = new Map();
 
 initializeApp();
 
@@ -202,6 +213,10 @@ pdfButton.addEventListener("click", async () => {
 
 reportLayoutSelectEl?.addEventListener("change", () => {
   setReportLayout(reportLayoutSelectEl.value);
+});
+
+reportSearchEl?.addEventListener("input", () => {
+  renderCurrentReport();
 });
 
 refreshNewsButton.addEventListener("click", async () => {
@@ -426,13 +441,47 @@ function loadStoredWatchlist() {
 }
 
 function normalizeTickers(value) {
+  return parseTickers(value).valid;
+}
+
+function parseTickers(value) {
   const candidates = Array.isArray(value) ? value : String(value || "").replace(/,/g, " ").split(/\s+/);
-  const cleaned = [];
+  const valid = [];
+  const invalid = [];
   candidates.forEach((candidate) => {
-    const ticker = String(candidate).trim().toUpperCase();
-    if (ticker && !cleaned.includes(ticker)) cleaned.push(ticker);
+    const raw = String(candidate).trim();
+    if (!raw) return;
+    const ticker = normalizeTickerToken(raw);
+    if (ticker && !valid.includes(ticker)) {
+      valid.push(ticker);
+    } else if (!ticker && !invalid.includes(raw)) {
+      invalid.push(raw);
+    }
   });
-  return cleaned;
+  return { valid, invalid };
+}
+
+function normalizeTickerToken(value) {
+  let ticker = String(value || "").trim().toUpperCase();
+  if (!ticker) return null;
+  if (ticker.startsWith("$")) ticker = ticker.slice(1);
+  ticker = ticker.replace(/[./]/g, "-");
+  if (!ticker || ticker.length > TICKER_MAX_LENGTH) return null;
+  if (/[<>"'`;&|\\]/.test(ticker)) return null;
+  if ((ticker.match(/=/g) || []).length > 1 || ticker.startsWith("=") || ticker.endsWith("=")) return null;
+  return TICKER_PATTERN.test(ticker) ? ticker : null;
+}
+
+function searchTickerTerms(value) {
+  const candidates = String(value || "").replace(/,/g, " ").split(/\s+/);
+  const terms = [];
+  candidates.forEach((candidate) => {
+    const raw = String(candidate).trim().toUpperCase();
+    if (!raw) return;
+    const term = normalizeTickerToken(raw) || raw;
+    if (!terms.includes(term)) terms.push(term);
+  });
+  return terms;
 }
 
 function persistWatchlist() {
@@ -456,7 +505,13 @@ function renderWatchlistControls() {
 }
 
 function addTickersFromInput() {
-  const nextTickers = normalizeTickers(tickersInput.value);
+  const { valid: nextTickers, invalid } = parseTickers(tickersInput.value);
+  const invalidMessage = invalid.length
+    ? `Skipped invalid ticker${invalid.length === 1 ? "" : "s"}: ${invalid.slice(0, 4).join(", ")}.`
+    : "";
+  if (invalid.length) {
+    setStatus(invalidMessage, "error");
+  }
   if (!nextTickers.length) return;
   const beforeLength = watchlistTickers.length;
   nextTickers.forEach((ticker) => {
@@ -467,6 +522,7 @@ function addTickersFromInput() {
     persistWatchlist();
     renderWatchlistControls();
     scheduleWatchlistRefresh();
+    if (invalidMessage) setStatus(invalidMessage, "error");
   }
 }
 
@@ -506,6 +562,7 @@ function scheduleWatchlistRefresh() {
 }
 
 function clearLoadedData() {
+  abortAllRequests();
   currentReport = null;
   currentNews = null;
   currentScanner = null;
@@ -625,7 +682,53 @@ function buildChartHistoryPayload(settings = chartSettings, tickers = orderedPay
   };
 }
 
-async function withBusyState(message, callback) {
+function startRequest(key) {
+  const state = requestState[key];
+  state.controller?.abort();
+  const controller = new AbortController();
+  state.controller = controller;
+  state.seq += 1;
+  const seq = state.seq;
+  return {
+    signal: controller.signal,
+    isCurrent: () => requestState[key]?.seq === seq && requestState[key]?.controller === controller,
+    complete: () => {
+      if (requestState[key]?.seq === seq && requestState[key]?.controller === controller) {
+        requestState[key].controller = null;
+      }
+    },
+  };
+}
+
+function startTickerChartRequest(ticker) {
+  const existing = tickerChartRequests.get(ticker);
+  existing?.controller.abort();
+  const controller = new AbortController();
+  const seq = (existing?.seq || 0) + 1;
+  const request = {
+    signal: controller.signal,
+    isCurrent: () => tickerChartRequests.get(ticker)?.seq === seq && tickerChartRequests.get(ticker)?.controller === controller,
+    complete: () => {
+      if (tickerChartRequests.get(ticker)?.seq === seq && tickerChartRequests.get(ticker)?.controller === controller) {
+        tickerChartRequests.delete(ticker);
+      }
+    },
+  };
+  tickerChartRequests.set(ticker, { controller, seq });
+  return request;
+}
+
+function abortAllRequests() {
+  Object.values(requestState).forEach((state) => state.controller?.abort());
+  tickerChartRequests.forEach((request) => request.controller.abort());
+  tickerChartRequests.clear();
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+async function withBusyState(message, callback, request = null) {
   if (!watchlistTickers.length) {
     setStatus("Enter at least one ticker symbol.", "error");
     return;
@@ -636,14 +739,18 @@ async function withBusyState(message, callback) {
   try {
     await callback();
   } catch (error) {
+    if (isAbortError(error)) return;
     setStatus(readableError(error), "error");
   } finally {
-    generateButton.disabled = false;
-    pdfButton.disabled = false;
+    if (!request || request.isCurrent()) {
+      generateButton.disabled = false;
+      pdfButton.disabled = false;
+      request?.complete();
+    }
   }
 }
 
-async function withNewsBusyState(message, callback) {
+async function withNewsBusyState(message, callback, request = null) {
   if (!watchlistTickers.length) {
     setNewsStatus("Enter at least one ticker symbol.", "error");
     return;
@@ -653,13 +760,17 @@ async function withNewsBusyState(message, callback) {
   try {
     await callback();
   } catch (error) {
+    if (isAbortError(error)) return;
     setNewsStatus(readableError(error), "error");
   } finally {
-    refreshNewsButton.disabled = false;
+    if (!request || request.isCurrent()) {
+      refreshNewsButton.disabled = false;
+      request?.complete();
+    }
   }
 }
 
-async function withScannerBusyState(message, callback) {
+async function withScannerBusyState(message, callback, request = null) {
   if (!watchlistTickers.length) {
     setScannerStatus("Enter at least one ticker symbol.", "error");
     return;
@@ -669,37 +780,48 @@ async function withScannerBusyState(message, callback) {
   try {
     await callback();
   } catch (error) {
+    if (isAbortError(error)) return;
     setScannerStatus(readableError(error), "error");
   } finally {
-    runScannerButton.disabled = false;
+    if (!request || request.isCurrent()) {
+      runScannerButton.disabled = false;
+      request?.complete();
+    }
   }
 }
 
 async function loadNews() {
+  const request = startRequest("news");
   await withNewsBusyState("Loading market and watchlist news...", async () => {
-    const news = await postJson("/api/news", buildNewsPayload());
+    const news = await postJson("/api/news", buildNewsPayload(), { signal: request.signal });
+    if (!request.isCurrent()) return;
     renderNews(news);
     if (!news.warnings?.length) {
       setNewsStatus("", "");
     }
-  });
+  }, request);
 }
 
 async function loadLevels() {
+  const request = startRequest("levels");
   await withBusyState("Generating levels...", async () => {
-    const report = await postJson("/api/levels", buildPayload());
+    const report = await postJson("/api/levels", buildPayload(), { signal: request.signal });
+    if (!request.isCurrent()) return;
     renderReport(report);
     await loadChartHistory();
+    if (!request.isCurrent()) return;
     setStatus("", "");
-  });
+  }, request);
 }
 
 async function loadScanner() {
+  const request = startRequest("scanner");
   await withScannerBusyState("Running scanner for the shared watchlist...", async () => {
-    const scanner = await postJson("/api/scanner", buildScannerPayload());
+    const scanner = await postJson("/api/scanner", buildScannerPayload(), { signal: request.signal });
+    if (!request.isCurrent()) return;
     renderScanner(scanner);
     setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "", scanner.warnings?.length ? "error" : "");
-  });
+  }, request);
 }
 
 async function loadMarketSnapshot() {
@@ -707,16 +829,21 @@ async function loadMarketSnapshot() {
     renderMarketSnapshotEmptyState();
     return;
   }
+  const request = startRequest("snapshot");
   renderMarketSnapshotLoadingState();
   try {
-    const snapshot = await postJson("/api/market-snapshot", buildMarketSnapshotPayload());
+    const snapshot = await postJson("/api/market-snapshot", buildMarketSnapshotPayload(), { signal: request.signal });
+    if (!request.isCurrent()) return;
     renderMarketSnapshot(snapshot);
   } catch (error) {
+    if (isAbortError(error)) return;
     currentMarketSnapshot = null;
     marketSnapshotEl.className = "market-strip empty";
     marketSnapshotEl.textContent = readableError(error);
     watchlistPerformanceEl.className = "performance-grid empty";
     watchlistPerformanceEl.textContent = "Watchlist performance could not be loaded.";
+  } finally {
+    request.complete();
   }
 }
 
@@ -747,10 +874,25 @@ function renderCurrentReport() {
     renderCharts();
     return;
   }
+  const visibleMetrics = filteredReportMetrics();
+  if (!visibleMetrics.length) {
+    resultsEl.className = "results empty";
+    const terms = searchTickerTerms(reportSearchEl?.value || "");
+    resultsEl.textContent = terms.length ? `No ticker matching "${terms.join(", ")}".` : "";
+    renderCharts();
+    return;
+  }
   resultsEl.className = `results report-layout-${reportLayout.replace("_", "-")}`;
-  resultsEl.innerHTML = renderMetrics(currentReport.metrics, reportLayout);
+  resultsEl.innerHTML = renderMetrics(visibleMetrics, reportLayout);
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
   renderCharts();
+}
+
+function filteredReportMetrics() {
+  const metrics = currentReport?.metrics || [];
+  const terms = searchTickerTerms(reportSearchEl?.value || "");
+  if (!terms.length) return metrics;
+  return metrics.filter((metric) => terms.some((term) => String(metric.ticker || "").toUpperCase().includes(term)));
 }
 
 function renderNews(news) {
@@ -1079,7 +1221,7 @@ function renderMarketNews(articles) {
 
 function renderWatchlistNews(tickerNews) {
   const filteredNews = filterTickerNewsGroups(tickerNews, watchlistNewsSearchEl?.value);
-  const terms = normalizeTickers(watchlistNewsSearchEl?.value || "");
+  const terms = searchTickerTerms(watchlistNewsSearchEl?.value || "");
   if (!filteredNews.length) {
     watchlistNewsEl.className = "ticker-news-grid empty";
     watchlistNewsEl.textContent = terms.length
@@ -1092,7 +1234,7 @@ function renderWatchlistNews(tickerNews) {
 }
 
 function filterTickerNewsGroups(tickerNews, query) {
-  const terms = normalizeTickers(query || "");
+  const terms = searchTickerTerms(query || "");
   if (!terms.length) return tickerNews;
   return tickerNews.filter((group) => terms.some((term) => String(group.ticker || "").toUpperCase().includes(term)));
 }
@@ -1248,11 +1390,13 @@ function renderArticleCard(article, options = {}) {
   const related = article.related_tickers?.length
     ? `<div class="related-tickers">${article.related_tickers.slice(0, 6).map((ticker) => `<span>${escapeHtml(ticker)}</span>`).join("")}</div>`
     : "";
-  const image = article.thumbnail_url && !options.compact
-    ? `<img src="${escapeHtml(article.thumbnail_url)}" alt="" loading="lazy" />`
+  const imageUrl = safeUrl(article.thumbnail_url);
+  const articleUrl = safeUrl(article.url);
+  const image = imageUrl && !options.compact
+    ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" />`
     : "";
-  const title = article.url
-    ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
+  const title = articleUrl
+    ? `<a href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
     : `<span>${escapeHtml(article.title)}</span>`;
 
   return `
@@ -1271,8 +1415,19 @@ function renderArticleCard(article, options = {}) {
   `;
 }
 
+function safeUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function renderCharts() {
-  if (!currentReport?.metrics?.length) {
+  const metrics = filteredReportMetrics();
+  if (!currentReport?.metrics?.length || !metrics.length) {
     disposeCharts();
     chartsSectionEl.hidden = true;
     chartsSectionEl.className = "charts-section empty";
@@ -1288,7 +1443,7 @@ function renderCharts() {
       ${renderGlobalChartToolbar()}
     </div>
     <div class="charts-grid">
-      ${currentReport.metrics.map(renderTickerChart).join("")}
+      ${metrics.map(renderTickerChart).join("")}
     </div>
     <p class="chart-attribution">Charts use Lightweight Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>.</p>
   `;
@@ -1358,18 +1513,30 @@ async function loadChartHistory(settings = chartSettings, tickers = orderedPaylo
     renderCharts();
     return;
   }
-  const response = await postJson("/api/chart-history", buildChartHistoryPayload(settings, tickers));
-  currentChartHistory = response;
-  cacheChartResponse(response);
-  renderCharts();
+  const request = startRequest("chart");
+  try {
+    const response = await postJson("/api/chart-history", buildChartHistoryPayload(settings, tickers), { signal: request.signal });
+    if (!request.isCurrent()) return;
+    currentChartHistory = response;
+    cacheChartResponse(response);
+    renderCharts();
+  } finally {
+    request.complete();
+  }
 }
 
 async function loadTickerChartHistory(ticker, settings) {
   const key = chartCacheKey(ticker, settings);
   if (chartDataCache.has(key)) return;
-  const response = await postJson("/api/chart-history", buildChartHistoryPayload(settings, [ticker]));
-  cacheChartResponse(response);
-  renderCharts();
+  const request = startTickerChartRequest(ticker);
+  try {
+    const response = await postJson("/api/chart-history", buildChartHistoryPayload(settings, [ticker]), { signal: request.signal });
+    if (!request.isCurrent()) return;
+    cacheChartResponse(response);
+    renderCharts();
+  } finally {
+    request.complete();
+  }
 }
 
 function cacheChartResponse(response) {
@@ -1418,6 +1585,7 @@ async function updateGlobalChartSetting(key, value) {
     await loadChartHistory(chartSettings);
     setStatus("", "");
   } catch (error) {
+    if (isAbortError(error)) return;
     setStatus(readableError(error), "error");
   }
 }
@@ -1429,6 +1597,7 @@ async function updateChartOverride(ticker, key, value) {
     await loadTickerChartHistory(ticker, chartOverrides[ticker]);
     setStatus("", "");
   } catch (error) {
+    if (isAbortError(error)) return;
     setStatus(readableError(error), "error");
   }
 }
@@ -1446,7 +1615,7 @@ function hydrateAllCharts() {
     });
     return;
   }
-  currentReport?.metrics?.forEach((metric) => hydrateTickerChart(metric.ticker));
+  filteredReportMetrics().forEach((metric) => hydrateTickerChart(metric.ticker));
 }
 
 function hydrateTickerChart(ticker) {
@@ -1758,7 +1927,13 @@ function filenameFromDisposition(header) {
 function readableError(error) {
   try {
     const parsed = JSON.parse(error.message);
-    if (parsed.detail) return typeof parsed.detail === "string" ? parsed.detail : JSON.stringify(parsed.detail);
+    if (typeof parsed.detail === "string") return parsed.detail;
+    if (Array.isArray(parsed.detail)) {
+      return parsed.detail
+        .map((item) => item.msg || item.message || String(item))
+        .join(" ");
+    }
+    if (parsed.detail) return JSON.stringify(parsed.detail);
   } catch (_) {
     // Keep the original message below when the server did not return JSON.
   }

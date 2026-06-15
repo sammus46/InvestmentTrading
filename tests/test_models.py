@@ -22,6 +22,29 @@ def test_generate_request_accepts_delimited_tickers():
     assert request.tickers == ["AAPL", "MSFT", "NVDA"]
 
 
+def test_ticker_normalization_supports_yahoo_style_symbols():
+    request = GenerateRequest(tickers="$tsla brk.b brk/b ^gspc gc=f btc-usd")
+
+    assert request.tickers == ["TSLA", "BRK-B", "^GSPC", "GC=F", "BTC-USD"]
+
+
+@pytest.mark.parametrize(
+    "ticker",
+    [
+        "<script>alert(1)</script>",
+        "💥",
+        "AAPL;",
+        "AAPL|MSFT",
+        "GC==F",
+        "A=",
+        "REALLYREALLYREALLYREALLYLONG",
+    ],
+)
+def test_ticker_normalization_rejects_unsafe_or_malformed_symbols(ticker):
+    with pytest.raises(ValidationError):
+        GenerateRequest(tickers=[ticker])
+
+
 def test_generate_request_accepts_and_deduplicates_metric_selection():
     request = GenerateRequest(tickers="aapl", metrics="previous_day previous_day swing_levels technical_levels")
 
@@ -36,9 +59,9 @@ def test_generate_request_defaults_include_technical_levels():
 
 
 def test_news_request_reuses_watchlist_normalization():
-    request = NewsRequest(tickers="aapl, msft\nAAPL")
+    request = NewsRequest(tickers="aapl, msft\nAAPL $tsla brk.b")
 
-    assert request.tickers == ["AAPL", "MSFT"]
+    assert request.tickers == ["AAPL", "MSFT", "TSLA", "BRK-B"]
 
 
 def test_news_request_accepts_expanded_headline_count():

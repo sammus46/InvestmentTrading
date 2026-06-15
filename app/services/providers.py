@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from datetime import datetime
 from typing import Protocol
@@ -67,7 +69,8 @@ class YFinanceProvider:
         if end is not None:
             query["end"] = end
 
-        frame = yf.download(symbol, **query)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            frame = yf.download(symbol, **query)
         if frame.empty:
             return frame
         if isinstance(frame.columns, pd.MultiIndex):
@@ -75,7 +78,8 @@ class YFinanceProvider:
         return frame.dropna(how="all")
 
     def fast_price(self, symbol: str) -> float | None:
-        price = yf.Ticker(symbol).fast_info.get("last_price")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            price = yf.Ticker(symbol).fast_info.get("last_price")
         return float(price) if price else None
 
     def finnhub_quote(self, symbol: str, api_key: str) -> float | None:
@@ -89,5 +93,6 @@ class YFinanceProvider:
         return yf.Ticker(symbol)
 
     def sector(self, symbol: str) -> str | None:
-        sector = yf.Ticker(symbol).info.get("sector")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            sector = yf.Ticker(symbol).info.get("sector")
         return str(sector) if sector else None

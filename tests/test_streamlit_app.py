@@ -17,9 +17,11 @@ from app.models import (
     TickerNews,
 )
 from app.streamlit_app import (
+    dataset_refresh_token,
     filter_report_metrics,
     filter_ticker_news_groups,
     load_streamlit_watchlist,
+    mark_streamlit_data_current,
     metric_card_html,
     metric_rows,
     normalize_level_search,
@@ -28,9 +30,9 @@ from app.streamlit_app import (
     report_layout_label,
     refresh_bucket,
     save_streamlit_watchlist,
+    streamlit_dataset_current,
     ticker_news_body_html,
     ticker_news_card_html,
-    ticker_news_toggle_label,
 )
 from app.streamlit_ui.metrics import compare_table_html, insert_current_price, ladder_rows
 
@@ -71,7 +73,17 @@ def test_refresh_bucket_changes_on_interval_boundary():
 
 
 def test_normalize_ticker_list_accepts_multiple_delimiters():
-    assert normalize_ticker_list("aapl, msft\nnvda AAPL") == ["AAPL", "MSFT", "NVDA"]
+    assert normalize_ticker_list("aapl, msft\nnvda AAPL $tsla brk.b brk/b") == [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+        "BRK-B",
+    ]
+
+
+def test_normalize_ticker_list_skips_invalid_tokens():
+    assert normalize_ticker_list("aapl <script> 💥 msft") == ["AAPL", "MSFT"]
 
 
 def test_streamlit_metric_rendering_uses_display_sections():
@@ -140,9 +152,11 @@ def test_streamlit_level_search_filters_report_metrics():
     assert [metric.ticker for metric in filter_report_metrics(metrics, "aap")] == ["AAPL"]
     assert [metric.ticker for metric in filter_report_metrics(metrics, "aap, ms")] == ["AAPL", "MSFT"]
     assert [metric.ticker for metric in filter_report_metrics(metrics, "ms aap")] == ["AAPL", "MSFT"]
+    assert [metric.ticker for metric in filter_report_metrics(metrics, "$aap")] == ["AAPL"]
     assert [metric.ticker for metric in filter_report_metrics(metrics, "ms\nzz")] == ["MSFT"]
     assert filter_report_metrics(metrics, "") == metrics
     assert filter_report_metrics(metrics, "zz") == []
+    assert filter_report_metrics(metrics, "<script>") == []
 
 
 def test_streamlit_watchlist_news_search_filters_ticker_groups():
@@ -154,8 +168,10 @@ def test_streamlit_watchlist_news_search_filters_ticker_groups():
 
     assert [group.ticker for group in filter_ticker_news_groups(groups, "aap, nv")] == ["AAPL", "NVDA"]
     assert [group.ticker for group in filter_ticker_news_groups(groups, "ms nv")] == ["MSFT", "NVDA"]
+    assert [group.ticker for group in filter_ticker_news_groups(groups, "$aap")] == ["AAPL"]
     assert filter_ticker_news_groups(groups, "") == groups
     assert filter_ticker_news_groups(groups, "zz") == []
+    assert filter_ticker_news_groups(groups, "<script>") == []
 
 
 def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
@@ -175,9 +191,21 @@ def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
     assert "Headline 5" not in collapsed
     assert "Headline 5" in expanded
     assert "streamlit-news-category-details" in expanded
-    assert "streamlit-ticker-news-card expanded" in card
-    assert ticker_news_toggle_label("AAPL", False, 8) == "Show 8 headlines for AAPL"
-    assert ticker_news_toggle_label("AAPL", True, 8) == "Show top 5 headlines for AAPL"
+    assert "streamlit-news-toggle-details" in card
+    assert "streamlit-news-toggle-arrow" in card
+    assert "open" in ticker_news_card_html(group, expanded=True)
+    assert "st.button" not in card
+
+
+def test_streamlit_loaded_state_tracks_datasets_independently():
+    tickers = ("AAPL",)
+    metrics = ("previous_day",)
+
+    mark_streamlit_data_current(tickers, metrics, datasets=("report",))
+
+    assert streamlit_dataset_current("report", tickers, metrics)
+    assert not streamlit_dataset_current("scanner", tickers, metrics)
+    assert dataset_refresh_token("report") == 0
 
 
 def test_price_ladder_rows_sort_and_insert_current_price():

@@ -7,6 +7,7 @@ Use this checklist when changing layout, filters, expand/collapse controls, news
 - [ ] Report cards are visible after load and use the saved watchlist order.
 - [ ] `Grid`, `Price Ladder`, `Compact`, and `Compare` layouts switch without refetching data.
 - [ ] The report search box supports one ticker and multiple tickers separated by commas, spaces, or newlines.
+- [ ] Static and Streamlit report search behave the same for the same ticker tokens.
 - [ ] Search filtering does not change PDF output or saved watchlist order.
 - [ ] Charts follow the filtered report tickers and hide cleanly when there are no matches.
 - [ ] Warning/details areas are collapsed or compact enough that they do not dominate the decision view.
@@ -19,6 +20,7 @@ Use this checklist when changing layout, filters, expand/collapse controls, news
 - [ ] Ticker news cards show a compact top-headlines state by default.
 - [ ] Expansion arrows reveal additional categorized headlines without losing scroll position or triggering a long grey overlay.
 - [ ] Collapsing an expanded card returns to the compact state quickly.
+- [ ] Article links and thumbnails render only for normal `http` or `https` provider URLs.
 - [ ] Empty results show a clear message and do not leave stale cards on screen.
 
 ## Refresh Confidence
