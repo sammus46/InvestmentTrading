@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -236,7 +237,7 @@ def test_pattern_analysis_builds_summary_heatmap_and_details(monkeypatch):
             close = 100.0 - 1.0 if time(11, 0) <= stamp.time() <= time(12, 55) else 100.5
             rows.append({"Open": 100.0, "High": max(100.6, close), "Low": min(99.0, close), "Close": close})
     frame = pd.DataFrame(rows, index=pd.DatetimeIndex(index))
-    monkeypatch.setattr(service.market_data, "_download", lambda *args, **kwargs: frame)
+    monkeypatch.setattr(service.market_data, "download_pattern_history", lambda symbol: frame)
 
     result = service._pattern_analysis("AAPL", 8)
 
@@ -262,3 +263,9 @@ def test_scanner_endpoint_uses_shared_watchlist(monkeypatch):
 
     assert response.watchlist == ["AAPL", "MSFT"]
     assert response.setup_rows[0].ticker == "AAPL"
+
+
+def test_scanner_does_not_depend_on_market_data_private_methods():
+    source = Path("app/services/scanner.py").read_text(encoding="utf-8")
+
+    assert "market_data._" not in source

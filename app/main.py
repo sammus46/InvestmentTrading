@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.models import (
+    AppConfigResponse,
     ChartHistoryRequest,
     ChartHistoryResponse,
     GenerateRequest,
@@ -20,6 +21,7 @@ from app.models import (
     ScannerRequest,
     ScannerResponse,
 )
+from app.services.display import app_config
 from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
@@ -40,6 +42,12 @@ scanner_service = ScannerService(market_data)
 def health() -> dict[str, str]:
     """Return a lightweight service health check."""
     return {"status": "ok"}
+
+
+@app.get("/api/config", response_model=AppConfigResponse)
+def get_config() -> AppConfigResponse:
+    """Return shared frontend configuration."""
+    return app_config()
 
 
 @app.post("/api/levels", response_model=GenerateResponse)

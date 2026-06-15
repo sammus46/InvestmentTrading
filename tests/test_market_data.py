@@ -7,8 +7,41 @@ import pandas as pd
 from app.models import EarningsGap, Ohlc
 from app.services import market_data
 from app.services.market_data import MarketDataService, MarketDataSettings
+from app.services.providers import YFinanceProvider
 
 EASTERN = ZoneInfo("America/New_York")
+
+
+class FakeProvider:
+    def __init__(self, *, ticker=None, download_frame: pd.DataFrame | None = None) -> None:
+        self.ticker_obj = ticker
+        self.download_frame = download_frame if download_frame is not None else pd.DataFrame()
+        self.downloads: list[dict[str, object]] = []
+
+    def download(self, symbol, *, period, interval, prepost, start=None, end=None):
+        self.downloads.append(
+            {
+                "symbol": symbol,
+                "period": period,
+                "interval": interval,
+                "prepost": prepost,
+                "start": start,
+                "end": end,
+            }
+        )
+        return self.download_frame
+
+    def fast_price(self, symbol):
+        return None
+
+    def finnhub_quote(self, symbol, api_key):
+        return None
+
+    def ticker(self, symbol):
+        return self.ticker_obj
+
+    def sector(self, symbol):
+        return None
 
 
 def test_vwap_uses_typical_price_weighted_by_volume():
@@ -205,7 +238,7 @@ def test_swing_levels_keep_first_sorted_merged_levels():
     assert levels.lows == [45.0, 76.0]
 
 
-def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
+def test_earnings_gap_uses_earnings_open_and_prior_close():
     today = datetime.now(EASTERN).date()
     earnings_day = today - timedelta(days=5)
     prior_day = earnings_day - timedelta(days=1)
@@ -218,7 +251,6 @@ def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
                 index=pd.DatetimeIndex([datetime.combine(earnings_day, time(12, 0), tzinfo=EASTERN)]),
             )
 
-    monkeypatch.setattr("app.services.market_data.yf.Ticker", lambda symbol: FakeTicker())
     daily = pd.DataFrame(
         {
             "Open": [90.0, 110.0],
@@ -227,7 +259,7 @@ def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
         index=pd.DatetimeIndex([prior_day, earnings_day]),
     )
 
-    gap = MarketDataService()._earnings_gap("AAPL", daily, [])
+    gap = MarketDataService(provider=FakeProvider(ticker=FakeTicker()))._earnings_gap("AAPL", daily, [])
 
     assert gap.date == earnings_day
     assert gap.gap == 10.0
@@ -237,7 +269,7 @@ def test_earnings_gap_uses_earnings_open_and_prior_close(monkeypatch):
     assert gap.is_stale is False
 
 
-def test_earnings_gap_suppresses_levels_older_than_30_days(monkeypatch):
+def test_earnings_gap_suppresses_levels_older_than_30_days():
     today = datetime.now(EASTERN).date()
     earnings_day = today - timedelta(days=45)
 
@@ -249,7 +281,6 @@ def test_earnings_gap_suppresses_levels_older_than_30_days(monkeypatch):
                 index=pd.DatetimeIndex([datetime.combine(earnings_day, time(12, 0), tzinfo=EASTERN)]),
             )
 
-    monkeypatch.setattr("app.services.market_data.yf.Ticker", lambda symbol: FakeTicker())
     daily = pd.DataFrame(
         {
             "Open": [90.0, 110.0],
@@ -258,7 +289,7 @@ def test_earnings_gap_suppresses_levels_older_than_30_days(monkeypatch):
         index=pd.DatetimeIndex([earnings_day - timedelta(days=1), earnings_day]),
     )
 
-    gap = MarketDataService()._earnings_gap("AAPL", daily, [])
+    gap = MarketDataService(provider=FakeProvider(ticker=FakeTicker()))._earnings_gap("AAPL", daily, [])
 
     assert gap.date == earnings_day
     assert gap.gap is None
@@ -267,14 +298,13 @@ def test_earnings_gap_suppresses_levels_older_than_30_days(monkeypatch):
     assert gap.is_stale is True
 
 
-def test_earnings_gap_suppresses_provider_stderr(monkeypatch, capsys):
+def test_earnings_gap_suppresses_provider_stderr(capsys):
     class FakeTicker:
         @property
         def earnings_dates(self):
             print("SPY: No earnings dates found, symbol may be delisted", file=sys.stderr)
             return pd.DataFrame()
 
-    monkeypatch.setattr("app.services.market_data.yf.Ticker", lambda symbol: FakeTicker())
     daily = pd.DataFrame(
         {
             "Open": [100.0],
@@ -284,7 +314,7 @@ def test_earnings_gap_suppresses_provider_stderr(monkeypatch, capsys):
     )
     warnings: list[str] = []
 
-    gap = MarketDataService()._earnings_gap("SPY", daily, warnings)
+    gap = MarketDataService(provider=FakeProvider(ticker=FakeTicker()))._earnings_gap("SPY", daily, warnings)
 
     assert gap.date is None
     assert "No earnings dates" in warnings[0]
@@ -354,9 +384,9 @@ def test_download_uses_adjusted_yfinance_history(monkeypatch):
         captured["query"] = query
         return pd.DataFrame({"Close": [100.0]}, index=pd.DatetimeIndex(["2026-06-01"]))
 
-    monkeypatch.setattr("app.services.market_data.yf.download", fake_download)
+    monkeypatch.setattr("app.services.providers.yf.download", fake_download)
 
-    frame = MarketDataService._download("AAPL", period="1d", interval="1d", prepost=False)
+    frame = YFinanceProvider().download("AAPL", period="1d", interval="1d", prepost=False)
 
     assert not frame.empty
     assert captured["symbol"] == "AAPL"
@@ -446,6 +476,23 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
     assert (downloads[0][4] - downloads[0][3]).days == 400
     assert [point.close for point in metric.price_history] == [11.0]
     assert [point.close for point in metric.intraday_history] == [11.5]
+
+
+def test_build_metrics_uses_provider_download_interface():
+    frame = pd.DataFrame(
+        {"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [11.0], "Volume": [100]},
+        index=pd.DatetimeIndex(["2026-05-15"]),
+    )
+    provider = FakeProvider(download_frame=frame)
+
+    [metric] = MarketDataService(provider=provider).build_metrics(["aapl"], ["previous_day"])
+
+    assert metric.ticker == "AAPL"
+    assert metric.previous_day.close == 11.0
+    assert [(call["period"], call["interval"], call["prepost"]) for call in provider.downloads] == [
+        (None, "1d", False),
+        ("5d", "5m", True),
+    ]
 
 
 def test_price_history_uses_latest_completed_daily_closes():

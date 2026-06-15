@@ -1,3 +1,7 @@
+import { getJson, postJson } from "./modules/api.js";
+import { escapeHtml } from "./modules/formatters.js";
+import { renderMetricCard } from "./modules/levels.js";
+
 const STORAGE_KEY = "equity-levels-watchlist";
 const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
@@ -15,7 +19,7 @@ const NEWS_CATEGORY_LABELS = {
 
 const CHART_TYPES = ["line", "candles"];
 const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
-const RANGE_INTERVALS = {
+let RANGE_INTERVALS = {
   "1D": ["1m", "2m", "5m", "15m", "30m", "1h"],
   "WTD": ["1m", "2m", "5m", "15m", "30m", "1h"],
   "5D": ["1m", "2m", "5m", "15m", "30m", "1h"],
@@ -29,7 +33,7 @@ const RANGE_INTERVALS = {
   "2Y": ["1d", "1wk", "1mo"],
   "5Y": ["1d", "1wk", "1mo"],
 };
-const RANGE_DEFAULT_INTERVAL = {
+let RANGE_DEFAULT_INTERVAL = {
   "1D": "5m",
   "WTD": "5m",
   "5D": "5m",
@@ -54,7 +58,7 @@ const EASTERN_CHART_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
   hourCycle: "h23",
 });
 
-const METRIC_DEFINITIONS = [
+let METRIC_DEFINITIONS = [
   { id: "previous_day", label: "Previous day OHLC", group: "Session" },
   { id: "premarket", label: "Premarket range", group: "Session" },
   { id: "first_five_minutes", label: "Opening range", group: "Session" },
@@ -118,10 +122,7 @@ const chartInstances = new Map();
 const chartResizeObservers = new Map();
 const statusTimers = new WeakMap();
 
-renderWatchlistControls();
-switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false, loadSnapshot: false });
-updateNewsInfoTooltips();
-autoloadSavedWatchlist();
+initializeApp();
 
 viewNavButtons.forEach((button) => {
   button.addEventListener("click", () => switchView(button.dataset.view));
@@ -285,6 +286,33 @@ resultsEl.addEventListener("dragend", () => {
   draggedTicker = null;
   document.querySelectorAll(".dragging, .drag-over").forEach((el) => el.classList.remove("dragging", "drag-over"));
 });
+
+async function initializeApp() {
+  await loadAppConfig();
+  renderWatchlistControls();
+  switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false, loadSnapshot: false });
+  updateNewsInfoTooltips();
+  autoloadSavedWatchlist();
+}
+
+async function loadAppConfig() {
+  try {
+    const config = await getJson("/api/config");
+    if (Array.isArray(config.metrics) && config.metrics.length) {
+      METRIC_DEFINITIONS = [...config.metrics].sort((left, right) => left.order - right.order);
+    }
+    if (config.chart_ranges) {
+      RANGE_INTERVALS = Object.fromEntries(
+        Object.entries(config.chart_ranges).map(([range, value]) => [range, value.intervals || []]),
+      );
+      RANGE_DEFAULT_INTERVAL = Object.fromEntries(
+        Object.entries(config.chart_ranges).map(([range, value]) => [range, value.default_interval]),
+      );
+    }
+  } catch (error) {
+    console.warn("Using bundled UI config because /api/config failed.", error);
+  }
+}
 
 function switchView(view, options = {}) {
   const nextView = viewPanels[view] ? view : "levels";
@@ -541,18 +569,6 @@ function buildChartHistoryPayload(settings = chartSettings, tickers = orderedPay
   };
 }
 
-async function postJson(url, payload) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 async function withBusyState(message, callback) {
   if (!watchlistTickers.length) {
     setStatus("Enter at least one ticker symbol.", "error");
@@ -676,7 +692,9 @@ function renderCurrentReport() {
     return;
   }
   resultsEl.className = "results";
-  resultsEl.innerHTML = currentReport.metrics.map((metric, index) => renderMetricCard(metric, index)).join("");
+  resultsEl.innerHTML = currentReport.metrics
+    .map((metric, index) => renderMetricCard(metric, index, currentReport.metrics.length))
+    .join("");
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
   renderCharts();
 }
@@ -1189,119 +1207,6 @@ function renderArticleCard(article, options = {}) {
   `;
 }
 
-function renderMetricCard(metric, index) {
-  const selected = metric.selected_metrics || readSelectedMetrics();
-  const technical = metric.technical_levels || {};
-  const sections = [
-    {
-      title: "Session Levels",
-      rows: [
-        selected.includes("previous_day") && ["Prev Open", metric.previous_day.open],
-        selected.includes("previous_day") && ["Prev High", metric.previous_day.high],
-        selected.includes("previous_day") && ["Prev Low", metric.previous_day.low],
-        selected.includes("previous_day") && ["Prev Close", metric.previous_day.close],
-        selected.includes("premarket") && ["Premarket High", metric.premarket.high],
-        selected.includes("premarket") && ["Premarket Low", metric.premarket.low],
-        selected.includes("first_five_minutes") && ["First 5m High", metric.first_five_minutes.high],
-        selected.includes("first_five_minutes") && ["First 5m Low", metric.first_five_minutes.low],
-      ].filter(Boolean),
-    },
-    {
-      title: "Range & Levels",
-      rows: [
-        selected.includes("previous_session_vwap_5m") && ["VWAP 5m", metric.previous_session_vwap_5m],
-        selected.includes("fifty_two_week") && ["52W High", metric.fifty_two_week.high],
-        selected.includes("fifty_two_week") && ["52W Low", metric.fifty_two_week.low],
-      ].filter(Boolean),
-      lists: selected.includes("swing_levels") ? [
-        ["Swing Highs", metric.swing_levels.highs],
-        ["Swing Lows", metric.swing_levels.lows],
-      ] : [],
-    },
-    {
-      title: "Technical Levels",
-      rows: [
-        selected.includes("technical_levels") && ["Current Price", technical.current_price],
-        selected.includes("technical_levels") && ["VWAP Today", technical.today_vwap],
-        selected.includes("technical_levels") && ["1M High", technical.one_month_high],
-        selected.includes("technical_levels") && ["1M Low", technical.one_month_low],
-        selected.includes("technical_levels") && ["50 SMA", technical.sma_50],
-        selected.includes("technical_levels") && ["200 SMA", technical.sma_200],
-        selected.includes("technical_levels") && ["20 EMA Daily", technical.ema_20_daily],
-        selected.includes("technical_levels") && ["9 EMA 5m", technical.ema_9_5m],
-        selected.includes("technical_levels") && ["20 EMA 5m", technical.ema_20_5m],
-        selected.includes("technical_levels") && ["Pivot", technical.pivot],
-        selected.includes("technical_levels") && ["R1", technical.r1],
-        selected.includes("technical_levels") && ["S1", technical.s1],
-        selected.includes("technical_levels") && ["R2", technical.r2],
-        selected.includes("technical_levels") && ["S2", technical.s2],
-        selected.includes("technical_levels") && ["Fib 61.8%", technical.fib_618],
-        selected.includes("technical_levels") && ["Fib 50.0%", technical.fib_500],
-        selected.includes("technical_levels") && ["Fib 38.2%", technical.fib_382],
-        selected.includes("technical_levels") && ["Earnings Open", technical.earnings_open],
-        selected.includes("technical_levels") && ["Pre-Earnings Close", technical.pre_earnings_close],
-      ].filter(Boolean),
-    },
-    {
-      title: "Indicators & Events",
-      rows: [
-        selected.includes("bollinger_bands") && ["BB Upper", metric.bollinger_bands.upper],
-        selected.includes("bollinger_bands") && ["BB Middle", metric.bollinger_bands.middle],
-        selected.includes("bollinger_bands") && ["BB Lower", metric.bollinger_bands.lower],
-        selected.includes("earnings_gap") && ["Earnings Date", formatDate(metric.earnings_gap.date)],
-        selected.includes("earnings_gap") && ["Earnings Gap", metric.earnings_gap.gap],
-        selected.includes("earnings_gap") && ["Earnings Gap %", metric.earnings_gap.gap_percent],
-      ].filter(Boolean),
-    },
-  ].filter((section) => section.rows.length || section.lists?.length);
-
-  const warningHtml = metric.warnings.length
-    ? `<details class="warning"><summary>${metric.warnings.length} data warning${metric.warnings.length === 1 ? "" : "s"}</summary><ul>${metric.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></details>`
-    : "";
-
-  return `
-    <article class="card" draggable="true" data-ticker="${escapeHtml(metric.ticker)}">
-      <div class="card-header">
-        <div>
-          <span class="drag-handle" aria-hidden="true">&vellip;&vellip;</span>
-          <h3>${escapeHtml(metric.ticker)}</h3>
-        </div>
-        <div class="card-actions" aria-label="Reorder ${escapeHtml(metric.ticker)} card">
-          <button type="button" data-move="up" data-ticker="${escapeHtml(metric.ticker)}" ${index === 0 ? "disabled" : ""} aria-label="Move ${escapeHtml(metric.ticker)} up">&uarr;</button>
-          <button type="button" data-move="down" data-ticker="${escapeHtml(metric.ticker)}" ${index === currentReport.metrics.length - 1 ? "disabled" : ""} aria-label="Move ${escapeHtml(metric.ticker)} down">&darr;</button>
-        </div>
-      </div>
-      <div class="card-body">
-        ${sections.map(renderMetricSection).join("")}
-        ${warningHtml}
-      </div>
-    </article>
-  `;
-}
-
-function renderMetricSection(section) {
-  return `
-    <section class="metric-section">
-      <h4>${escapeHtml(section.title)}</h4>
-      ${section.rows.length ? `<div class="metric-grid">${section.rows.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${formatValue(value)}</strong></div>`).join("")}</div>` : ""}
-      ${section.lists?.length ? `<div class="level-lists">${section.lists.map(([label, levels]) => renderLevelList(label, levels)).join("")}</div>` : ""}
-    </section>
-  `;
-}
-
-function renderLevelList(label, levels) {
-  if (!levels?.length) return "";
-  return `
-    <section class="level-list">
-      <h5>${escapeHtml(label)}</h5>
-      <div class="chips">
-        ${levels.map((level) => `<span>${formatValue(level)}</span>`).join("")}
-      </div>
-    </section>
-  `;
-}
-
-
 function renderCharts() {
   if (!currentReport?.metrics?.length) {
     disposeCharts();
@@ -1794,14 +1699,4 @@ function readableError(error) {
     // Keep the original message below when the server did not return JSON.
   }
   return error.message || "Request failed.";
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>'"]/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  })[char]);
 }
