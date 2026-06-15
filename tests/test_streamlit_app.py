@@ -15,9 +15,11 @@ from app.models import (
     TechnicalLevels,
 )
 from app.streamlit_app import (
+    filter_report_metrics,
     load_streamlit_watchlist,
     metric_card_html,
     metric_rows,
+    normalize_level_search,
     normalize_report_layout,
     normalize_ticker_list,
     report_layout_label,
@@ -94,6 +96,44 @@ def test_streamlit_report_layout_helpers_use_catalog():
     assert normalize_report_layout("price_ladder") == "price_ladder"
     assert normalize_report_layout("bad-layout") == "grid"
     assert report_layout_label("compare") == "Compare"
+
+
+def test_streamlit_level_search_filters_report_metrics():
+    metrics = [
+        EquityMetrics(
+            ticker="AAPL",
+            selected_metrics=["previous_day"],
+            previous_day=Ohlc(),
+            premarket=PremarketRange(),
+            previous_session_vwap_5m=None,
+            fifty_two_week=FiftyTwoWeekRange(),
+            earnings_gap=EarningsGap(),
+            first_five_minutes=OpeningRange(),
+            swing_levels=SwingLevels(),
+            bollinger_bands=BollingerLevels(),
+            technical_levels=TechnicalLevels(),
+            data_timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        ),
+        EquityMetrics(
+            ticker="MSFT",
+            selected_metrics=["previous_day"],
+            previous_day=Ohlc(),
+            premarket=PremarketRange(),
+            previous_session_vwap_5m=None,
+            fifty_two_week=FiftyTwoWeekRange(),
+            earnings_gap=EarningsGap(),
+            first_five_minutes=OpeningRange(),
+            swing_levels=SwingLevels(),
+            bollinger_bands=BollingerLevels(),
+            technical_levels=TechnicalLevels(),
+            data_timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        ),
+    ]
+
+    assert normalize_level_search(" aap ") == "AAP"
+    assert [metric.ticker for metric in filter_report_metrics(metrics, "aap")] == ["AAPL"]
+    assert filter_report_metrics(metrics, "") == metrics
+    assert filter_report_metrics(metrics, "zz") == []
 
 
 def test_price_ladder_rows_sort_and_insert_current_price():
