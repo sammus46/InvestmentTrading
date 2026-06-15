@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from io import BytesIO
 from typing import Any
 
@@ -13,6 +12,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.models import EquityMetrics, GenerateResponse
+from app.services.display import build_metric_display_sections
 
 
 LEVEL_STYLES: dict[str, dict[str, Any]] = {
@@ -42,88 +42,11 @@ class PdfReportService:
 
         for metric in report.metrics:
             story.append(Paragraph(metric.ticker, styles["Heading2"]))
-            selected = set(metric.selected_metrics)
             table_data = [["Metric", "Value"]]
-            if "previous_day" in selected:
-                table_data.extend(
-                    [
-                        ["Previous Open", self._fmt(metric.previous_day.open)],
-                        ["Previous High", self._fmt(metric.previous_day.high)],
-                        ["Previous Low", self._fmt(metric.previous_day.low)],
-                        ["Previous Close", self._fmt(metric.previous_day.close)],
-                    ]
-                )
-            if "premarket" in selected:
-                table_data.extend(
-                    [
-                        ["Premarket High", self._fmt(metric.premarket.high)],
-                        ["Premarket Low", self._fmt(metric.premarket.low)],
-                    ]
-                )
-            if "first_five_minutes" in selected:
-                table_data.extend(
-                    [
-                        ["First 5-Minute High", self._fmt(metric.first_five_minutes.high)],
-                        ["First 5-Minute Low", self._fmt(metric.first_five_minutes.low)],
-                    ]
-                )
-            if "previous_session_vwap_5m" in selected:
-                table_data.append(["Previous Session VWAP (5m)", self._fmt(metric.previous_session_vwap_5m)])
-            if "fifty_two_week" in selected:
-                table_data.extend(
-                    [
-                        ["52-Week High", self._fmt(metric.fifty_two_week.high)],
-                        ["52-Week Low", self._fmt(metric.fifty_two_week.low)],
-                    ]
-                )
-            if "swing_levels" in selected:
-                table_data.extend(
-                    [
-                        ["Swing Highs", self._fmt_levels(metric.swing_levels.highs)],
-                        ["Swing Lows", self._fmt_levels(metric.swing_levels.lows)],
-                    ]
-                )
-            if "technical_levels" in selected:
-                technical = metric.technical_levels
-                table_data.extend(
-                    [
-                        ["Current Price", self._fmt(technical.current_price)],
-                        ["VWAP Today", self._fmt(technical.today_vwap)],
-                        ["1-Month High", self._fmt(technical.one_month_high)],
-                        ["1-Month Low", self._fmt(technical.one_month_low)],
-                        ["50 SMA", self._fmt(technical.sma_50)],
-                        ["200 SMA", self._fmt(technical.sma_200)],
-                        ["20 EMA Daily", self._fmt(technical.ema_20_daily)],
-                        ["9 EMA 5m", self._fmt(technical.ema_9_5m)],
-                        ["20 EMA 5m", self._fmt(technical.ema_20_5m)],
-                        ["Pivot", self._fmt(technical.pivot)],
-                        ["R1", self._fmt(technical.r1)],
-                        ["S1", self._fmt(technical.s1)],
-                        ["R2", self._fmt(technical.r2)],
-                        ["S2", self._fmt(technical.s2)],
-                        ["Fib 61.8%", self._fmt(technical.fib_618)],
-                        ["Fib 50.0%", self._fmt(technical.fib_500)],
-                        ["Fib 38.2%", self._fmt(technical.fib_382)],
-                        ["Earnings Open", self._fmt(technical.earnings_open)],
-                        ["Pre-Earnings Close", self._fmt(technical.pre_earnings_close)],
-                    ]
-                )
-            if "bollinger_bands" in selected:
-                table_data.extend(
-                    [
-                        ["Bollinger Upper", self._fmt(metric.bollinger_bands.upper)],
-                        ["Bollinger Middle", self._fmt(metric.bollinger_bands.middle)],
-                        ["Bollinger Lower", self._fmt(metric.bollinger_bands.lower)],
-                    ]
-                )
-            if "earnings_gap" in selected:
-                table_data.extend(
-                    [
-                        ["Earnings Date", self._fmt_date(metric.earnings_gap.date)],
-                        ["Earnings Gap", self._fmt(metric.earnings_gap.gap)],
-                        ["Earnings Gap %", self._fmt(metric.earnings_gap.gap_percent)],
-                    ]
-                )
+            for section in metric.display_sections or build_metric_display_sections(metric):
+                table_data.append([section.title, ""])
+                table_data.extend([row.label, row.value or "-"] for row in section.rows)
+                table_data.extend([row.label, ", ".join(row.values) or "-"] for row in section.lists)
             table = Table(table_data, colWidths=[220, 220])
             table.setStyle(
                 TableStyle(
@@ -270,11 +193,3 @@ class PdfReportService:
     @staticmethod
     def _fmt(value: float | int | None) -> str:
         return "—" if value is None else f"{value:,.2f}" if isinstance(value, float) else str(value)
-
-    @staticmethod
-    def _fmt_date(value: date | None) -> str:
-        return "—" if value is None else value.isoformat()
-
-    @staticmethod
-    def _fmt_levels(values: list[float]) -> str:
-        return "—" if not values else ", ".join(f"{value:,.2f}" for value in values)

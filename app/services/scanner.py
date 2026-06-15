@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-import yfinance as yf
 
 from app.models import (
     PatternDayDetail,
@@ -119,12 +119,87 @@ def _build_buckets() -> tuple[list[str], list[str]]:
 BUCKETS_ET, BUCKET_LABELS = _build_buckets()
 
 
+class SetupAnalysis(TypedDict):
+    """Typed setup-scoring result used before serializing scanner rows."""
+
+    nearest_name: str
+    nearest_val: float
+    nearest_pct: float
+    consec: int
+    hold_count: int
+    level_held: bool
+    is_tight: bool
+    off_high_pct: float | None
+    good_pullback: bool
+    momentum: str
+    score: int
+
+
+class SupportResistanceResult(TypedDict, total=False):
+    """Typed support/resistance scoring result."""
+
+    support_zone: str
+    support_score: int
+    support_reason: str | None
+    resistance_zone: str
+    resistance_score: int
+    resistance_reason: str | None
+    room_up_pct: float | None
+    risk_down_pct: float | None
+    rr: float | None
+
+
+class ScannerLevelData(TypedDict, total=False):
+    """Intermediate level and signal data for one ticker scan."""
+
+    ticker: str
+    price: float | None
+    prev_h: float | None
+    prev_l: float | None
+    prev_c: float | None
+    pm_high: float | None
+    pm_low: float | None
+    f5_high: float | None
+    f5_low: float | None
+    monthly_h: float | None
+    monthly_l: float | None
+    today_vwap: float | None
+    vwap: float | None
+    sma_50: float | None
+    sma_200: float | None
+    ema_20_daily: float | None
+    ema_9_5m: float | None
+    ema_20_5m: float | None
+    pivot: float | None
+    r1: float | None
+    s1: float | None
+    r2: float | None
+    s2: float | None
+    fib_382: float | None
+    fib_500: float | None
+    fib_618: float | None
+    earn_open: float | None
+    earn_prev_close: float | None
+    earn_gap: float | None
+    swing_highs: list[float]
+    swing_lows: list[float]
+    sector: str
+    etf: str | None
+    stock_pct: float | None
+    rs_vs_spy: float | None
+    rs_vs_sector: float | None
+    vwap_ext: float | None
+    setup: SetupAnalysis | None
+    signal: str | None
+    sr: SupportResistanceResult
+
+
 @dataclass
 class TickerScanData:
     """Intermediate scanner data for one ticker."""
 
     symbol: str
-    data: dict[str, object]
+    data: ScannerLevelData
     daily: pd.DataFrame
     minute: pd.DataFrame
     five_minute: pd.DataFrame
@@ -196,25 +271,25 @@ class ScannerService:
         minute = self.market_data.download_today_minute_history(symbol)
         five_minute = self.market_data.download_five_minute_history(symbol)
 
-        previous = self.market_data._previous_day_ohlc(daily, warnings)
-        monthly_high, monthly_low = self.market_data._monthly_range(daily, warnings)
-        previous_session = self.market_data._previous_regular_session(five_minute, warnings)
-        pivots = self.market_data._pivot_points(previous)
-        fibs = self.market_data._fibonacci_levels(monthly_high, monthly_low)
-        earnings = self.market_data._earnings_gap(symbol, daily, warnings)
-        price = self.market_data._current_price(symbol, minute, warnings)
-        today_vwap = self.market_data._today_vwap(minute, warnings)
-        previous_vwap = self.market_data._vwap(previous_session, warnings)
-        premarket = self.market_data._today_premarket_range(minute, warnings)
-        opening = self.market_data._opening_range(minute, warnings)
-        swing_levels = self.market_data._swing_levels(daily, warnings)
+        previous = self.market_data.previous_day_ohlc(daily, warnings)
+        monthly_high, monthly_low = self.market_data.monthly_range(daily, warnings)
+        previous_session = self.market_data.previous_regular_session(five_minute, warnings)
+        pivots = self.market_data.pivot_points(previous)
+        fibs = self.market_data.fibonacci_levels(monthly_high, monthly_low)
+        earnings = self.market_data.earnings_gap(symbol, daily, warnings)
+        price = self.market_data.current_price(symbol, minute, warnings)
+        today_vwap = self.market_data.today_vwap(minute, warnings)
+        previous_vwap = self.market_data.vwap(previous_session, warnings)
+        premarket = self.market_data.today_premarket_range(minute, warnings)
+        opening = self.market_data.opening_range(minute, warnings)
+        swing_levels = self.market_data.swing_levels(daily, warnings)
         etf, sector = self._sector_etf(symbol)
 
-        stock_pct = self.market_data._pct_from(price, previous.close)
+        stock_pct = self.market_data.pct_from(price, previous.close)
         spy_pct = self._benchmark_pct("SPY", benchmark_cache)
         sector_pct = self._benchmark_pct(etf, benchmark_cache) if etf else None
 
-        data: dict[str, object] = {
+        data: ScannerLevelData = {
             "ticker": symbol,
             "price": price,
             "prev_h": previous.high,
@@ -228,11 +303,11 @@ class ScannerService:
             "monthly_l": monthly_low,
             "today_vwap": today_vwap,
             "vwap": previous_vwap,
-            "sma_50": self.market_data._sma(daily, 50, warnings),
-            "sma_200": self.market_data._sma(daily, 200, warnings),
-            "ema_20_daily": self.market_data._daily_ema(daily, 20, warnings),
-            "ema_9_5m": self.market_data._intraday_ema(five_minute, 9, warnings),
-            "ema_20_5m": self.market_data._intraday_ema(five_minute, 20, warnings),
+            "sma_50": self.market_data.sma(daily, 50, warnings),
+            "sma_200": self.market_data.sma(daily, 200, warnings),
+            "ema_20_daily": self.market_data.daily_ema(daily, 20, warnings),
+            "ema_9_5m": self.market_data.intraday_ema(five_minute, 9, warnings),
+            "ema_20_5m": self.market_data.intraday_ema(five_minute, 20, warnings),
             "pivot": pivots["pivot"],
             "r1": pivots["r1"],
             "s1": pivots["s1"],
@@ -254,7 +329,7 @@ class ScannerService:
             if stock_pct is not None and sector_pct is not None
             else None,
         }
-        data["vwap_ext"] = self.market_data._pct_from(price, today_vwap or previous_vwap)
+        data["vwap_ext"] = self.market_data.pct_from(price, today_vwap or previous_vwap)
         data["setup"] = self._analyze_setup(data, five_minute)
         data["signal"] = self._detect_reclaim_rejection(data, five_minute)
         data["sr"] = self._best_support_resistance(data, five_minute)
@@ -268,19 +343,18 @@ class ScannerService:
         warnings: list[str] = []
         daily = self.market_data.download_scanner_daily_history(symbol)
         minute = self.market_data.download_today_minute_history(symbol)
-        previous = self.market_data._previous_day_ohlc(daily, warnings)
-        price = self.market_data._current_price(symbol, minute, warnings)
-        cache[symbol] = self.market_data._pct_from(price, previous.close)
+        previous = self.market_data.previous_day_ohlc(daily, warnings)
+        price = self.market_data.current_price(symbol, minute, warnings)
+        cache[symbol] = self.market_data.pct_from(price, previous.close)
         return cache[symbol]
 
-    @staticmethod
-    def _sector_etf(symbol: str) -> tuple[str | None, str]:
+    def _sector_etf(self, symbol: str) -> tuple[str | None, str]:
         etf = TICKER_ETF.get(symbol)
         if etf:
             sector = next((name for name, sector_etf in SECTOR_ETF.items() if sector_etf == etf), "")
             return etf, sector or "Other"
         try:
-            sector = str(yf.Ticker(symbol).info.get("sector") or "")
+            sector = str(self.market_data.ticker_sector(symbol) or "")
             etf = SECTOR_ETF.get(sector)
             if etf:
                 return etf, sector
@@ -386,11 +460,11 @@ class ScannerService:
             return f"{rs_pct:.1f}% Weak"
         return f"{rs_pct:.1f}% Very Weak"
 
-    def _best_support_resistance(self, data: dict[str, object], five_minute: pd.DataFrame) -> dict[str, object]:
+    def _best_support_resistance(self, data: ScannerLevelData, five_minute: pd.DataFrame) -> SupportResistanceResult:
         price = self._float(data.get("price"))
         if price is None:
             return {}
-        session = self.market_data._today_regular_session(five_minute)
+        session = self.market_data.today_regular_session(five_minute)
         atr_pct = self._atr_5m_pct(five_minute)
         zone_tol = min(max(0.50, atr_pct * 100 * 1.0), 1.5)
         react_tol = min(max(0.20, atr_pct * 100 * 0.75), 1.0)
@@ -432,12 +506,12 @@ class ScannerService:
         min_confidence = 50
 
         room_up = (
-            self.market_data._pct_from(price, self._float(best_resistance["low"]))
+            self.market_data.pct_from(price, self._float(best_resistance["low"]))
             if best_resistance and resistance_score >= min_confidence
             else None
         )
         risk_down = (
-            self.market_data._pct_from(price, self._float(best_support["high"]))
+            self.market_data.pct_from(price, self._float(best_support["high"]))
             if best_support and support_score >= min_confidence
             else None
         )
@@ -460,7 +534,7 @@ class ScannerService:
         }
 
     @staticmethod
-    def _scanner_level_map(data: dict[str, object]) -> dict[str, object]:
+    def _scanner_level_map(data: ScannerLevelData) -> dict[str, object]:
         levels: dict[str, object] = {
             "VWAP (Today)": data.get("today_vwap"),
             "VWAP (Prev Session)": data.get("vwap"),
@@ -500,7 +574,7 @@ class ScannerService:
         if five_minute.empty:
             return 0.003
         try:
-            session = self.market_data._today_regular_session(five_minute)
+            session = self.market_data.today_regular_session(five_minute)
             bars = session if len(session) >= 5 else five_minute.tail(30)
             if bars.empty:
                 return 0.003
@@ -647,8 +721,8 @@ class ScannerService:
         evidence = [str(item) for item in zone["evidence"][:2]]
         return f"{', '.join(names)} ({', '.join(evidence)})" if evidence else ", ".join(names)
 
-    def _detect_reclaim_rejection(self, data: dict[str, object], five_minute: pd.DataFrame) -> str | None:
-        session = self.market_data._today_regular_session(five_minute)
+    def _detect_reclaim_rejection(self, data: ScannerLevelData, five_minute: pd.DataFrame) -> str | None:
+        session = self.market_data.today_regular_session(five_minute)
         if len(session) < 5:
             return None
         last_five = session.tail(5)
@@ -693,11 +767,11 @@ class ScannerService:
                 return priority
         return signals[0] if signals else None
 
-    def _analyze_setup(self, data: dict[str, object], five_minute: pd.DataFrame) -> dict[str, object] | None:
+    def _analyze_setup(self, data: ScannerLevelData, five_minute: pd.DataFrame) -> SetupAnalysis | None:
         price = self._float(data.get("price"))
         if price is None:
             return None
-        session = self.market_data._today_regular_session(five_minute)
+        session = self.market_data.today_regular_session(five_minute)
         if len(session) < 3:
             return None
         level_map = {
@@ -715,7 +789,7 @@ class ScannerService:
         nearest_pct = 999.0
         for name, raw_value in level_map.items():
             value = self._float(raw_value)
-            pct = abs(self.market_data._pct_from(price, value) or 999)
+            pct = abs(self.market_data.pct_from(price, value) or 999)
             if value is not None and pct < nearest_pct:
                 nearest_name = name
                 nearest_value = value
@@ -747,7 +821,7 @@ class ScannerService:
         avg_session = (session["High"].astype(float) - session["Low"].astype(float)).mean()
         is_tight = (avg_recent / avg_session) < 0.65 if avg_session > 0 else False
         session_high = float(session["High"].astype(float).max())
-        off_high_pct = self.market_data._pct_from(price, session_high)
+        off_high_pct = self.market_data.pct_from(price, session_high)
         good_pullback = off_high_pct is not None and -3.0 <= off_high_pct <= -0.5
         closes = session["Close"].astype(float).to_numpy()
         c1, c2, c3 = closes[-3], closes[-2], closes[-1]
@@ -796,16 +870,10 @@ class ScannerService:
         symbol: str,
         lookback_days: int,
     ) -> tuple[PatternSummaryRow, PatternHeatmapRow, list[PatternDayDetail]] | None:
-        frame = self.market_data._download(
-            symbol,
-            period=self.market_data.settings.pattern_history_period,
-            interval="5m",
-            prepost=False,
-        )
+        frame = self.market_data.download_pattern_history(symbol)
         if frame.empty:
             return None
-        localized = self.market_data._with_eastern_index(frame)
-        regular = localized.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left")
+        regular = self.market_data.regular_session(frame)
         trading_days = sorted(set(regular.index.date))[-lookback_days:]
         if len(trading_days) < 5:
             return None

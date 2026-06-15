@@ -114,6 +114,46 @@ class GenerateRequest(BaseModel):
         return cleaned
 
 
+class MetricDefinition(BaseModel):
+    """Frontend-facing metadata for one selectable metric."""
+
+    id: MetricName
+    label: str
+    group: str
+    default: bool = True
+    order: int
+
+
+class DisplayRow(BaseModel):
+    """Formatted report display value for web, Streamlit, and PDF renderers."""
+
+    label: str
+    value: str | None = None
+    values: list[str] = Field(default_factory=list)
+
+
+class DisplaySection(BaseModel):
+    """Formatted report display section with scalar rows and level lists."""
+
+    title: str
+    rows: list[DisplayRow] = Field(default_factory=list)
+    lists: list[DisplayRow] = Field(default_factory=list)
+
+
+class ChartRangeConfig(BaseModel):
+    """Frontend-facing chart interval configuration for one range."""
+
+    intervals: list[ChartInterval]
+    default_interval: ChartInterval
+
+
+class AppConfigResponse(BaseModel):
+    """Configuration values shared by backend and browser clients."""
+
+    metrics: list[MetricDefinition]
+    chart_ranges: dict[ChartRange, ChartRangeConfig]
+
+
 class Ohlc(BaseModel):
     """Open/high/low/close pricing for a session."""
 
@@ -243,6 +283,7 @@ class EquityMetrics(BaseModel):
     intraday_history: list[IntradayPricePoint] = Field(default_factory=list)
     data_timestamp: datetime
     warnings: list[str] = Field(default_factory=list)
+    display_sections: list[DisplaySection] = Field(default_factory=list)
 
 
 class GenerateResponse(BaseModel):
