@@ -311,6 +311,8 @@ pytest
 
 On Windows Command Prompt, activate with `.venv\Scripts\activate.bat` and install the development extra with `python -m pip install -e ".[dev]"`.
 
+For bug triage, known issue records, and manual refresh/UI reliability checks, see [`debug/README.md`](debug/README.md).
+
 ## Dependency audit
 
 The runtime dependency list is intentionally small and maps to imports used by the app:
