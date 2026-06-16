@@ -20,6 +20,8 @@ from app.models import (
     NewsResponse,
     ScannerRequest,
     ScannerResponse,
+    SectorAnalyticsRequest,
+    SectorAnalyticsResponse,
 )
 from app.services.display import app_config
 from app.services.market_data import MarketDataService
@@ -76,6 +78,15 @@ def generate_scanner(request: ScannerRequest) -> ScannerResponse:
         request.tickers,
         include_setup=request.include_setup,
         include_patterns=request.include_patterns,
+        pattern_lookback_days=request.pattern_lookback_days,
+    )
+
+
+@app.post("/api/sector-analytics", response_model=SectorAnalyticsResponse)
+def generate_sector_analytics(request: SectorAnalyticsRequest) -> SectorAnalyticsResponse:
+    """Generate sector trend and intraday pattern analytics."""
+    return scanner_service.build_sector_analytics(
+        request.tickers,
         pattern_lookback_days=request.pattern_lookback_days,
     )
 

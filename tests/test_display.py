@@ -17,6 +17,7 @@ from app.models import (
 from app.services.display import (
     build_metric_display_sections,
     is_scanner_level_label,
+    level_type_weight_defaults,
     level_matches_filter,
     load_level_type_weights,
     level_type_weight,
@@ -91,6 +92,9 @@ def test_config_endpoint_returns_catalog_and_chart_ranges():
     assert "1m" in config.chart_ranges["1D"].intervals
     assert config.default_report_layout == "price_ladder"
     assert [layout.id for layout in config.report_layouts] == ["grid", "price_ladder", "compact", "compare"]
+    assert config.level_type_weights["VWAP (Today)"] == 30
+    assert config.level_type_weights["Daily Swing High"] == 24
+    assert config.level_type_weights["Daily Swing Low"] == 24
 
 
 def test_report_layout_catalog_defaults_to_price_ladder():
@@ -102,11 +106,14 @@ def test_report_layout_catalog_defaults_to_price_ladder():
 
 def test_level_weights_and_filters_match_adam_semantics():
     weights = load_level_type_weights()
+    defaults = level_type_weight_defaults()
 
     assert weights["VWAP (Today)"] == 30
     assert weights["PM High"] == 28
     assert weights["Pivot"] == 10
     assert weights["R1 (Pivot)"] == 10
+    assert defaults["Daily Swing High"] == 24
+    assert defaults["Daily Swing Low"] == 24
     assert level_type_weight("VWAP Today") == 30
     assert level_type_weight("Premarket High") == 28
     assert level_type_weight("Swing Highs 1") == 24

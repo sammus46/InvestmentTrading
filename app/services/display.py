@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from app.models import (
     DEFAULT_METRICS,
@@ -162,14 +162,18 @@ def load_level_type_weights() -> dict[str, int]:
 
 
 LEVEL_TYPE_WEIGHTS = load_level_type_weights()
+SWING_LEVEL_WEIGHT = 24
 
 
-def level_type_weight(label: str) -> int:
+def level_type_weight(label: str, level_type_weights: Mapping[str, int] | None = None) -> int:
     """Return Adam-compatible trust weight for a display level label."""
-    if label.startswith(("Daily Swing High", "Daily Swing Low", "Swing Highs", "Swing Lows")):
-        return 24
+    weights = {**LEVEL_TYPE_WEIGHTS, **(level_type_weights or {})}
+    if label.startswith(("Daily Swing High", "Swing Highs")):
+        return int(weights.get("Daily Swing High", SWING_LEVEL_WEIGHT))
+    if label.startswith(("Daily Swing Low", "Swing Lows")):
+        return int(weights.get("Daily Swing Low", SWING_LEVEL_WEIGHT))
     canonical_label = LEVEL_TYPE_WEIGHT_ALIASES.get(label, label)
-    return LEVEL_TYPE_WEIGHTS.get(canonical_label, 5)
+    return int(weights.get(canonical_label, 5))
 
 
 def is_scanner_level_label(label: str) -> bool:
@@ -179,13 +183,17 @@ def is_scanner_level_label(label: str) -> bool:
     )
 
 
-def level_matches_filter(label: str, level_filter: object) -> bool:
+def level_matches_filter(
+    label: str,
+    level_filter: object,
+    level_type_weights: Mapping[str, int] | None = None,
+) -> bool:
     """Return whether a level label should be shown for the selected filter."""
     normalized = normalize_level_filter(level_filter)
     if normalized == "scanner":
         return is_scanner_level_label(label)
     if normalized == "weight_20":
-        return level_type_weight(label) >= 20
+        return level_type_weight(label, level_type_weights) >= 20
     return True
 
 
@@ -197,6 +205,15 @@ def metric_catalog() -> list[MetricDefinition]:
 def report_layout_catalog() -> list[ReportLayoutDefinition]:
     """Return report layout metadata in display order."""
     return [layout.model_copy() for layout in REPORT_LAYOUT_CATALOG]
+
+
+def level_type_weight_defaults() -> dict[str, int]:
+    """Return browser-facing level type weight defaults, including implied swing levels."""
+    return {
+        **LEVEL_TYPE_WEIGHTS,
+        "Daily Swing High": SWING_LEVEL_WEIGHT,
+        "Daily Swing Low": SWING_LEVEL_WEIGHT,
+    }
 
 
 def app_config() -> AppConfigResponse:
@@ -212,6 +229,7 @@ def app_config() -> AppConfigResponse:
         },
         report_layouts=report_layout_catalog(),
         default_report_layout=DEFAULT_REPORT_LAYOUT,
+        level_type_weights=level_type_weight_defaults(),
     )
 
 

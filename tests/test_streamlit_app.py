@@ -24,26 +24,32 @@ from app.models import (
     TickerNews,
 )
 from app.streamlit_app import (
+    ANALYTICS_VIEW,
     dataset_refresh_token,
     filter_report_metrics,
     filter_ticker_news_groups,
     load_streamlit_watchlist,
+    load_streamlit_settings,
     mark_streamlit_data_current,
     merge_streamlit_datasets,
     metric_card_html,
     metric_rows,
     normalize_level_search,
+    normalize_level_weights,
     normalize_report_layout,
+    normalize_streamlit_settings,
     normalize_ticker_list,
     progressive_report_responses,
     report_layout_label,
     refresh_bucket,
     replace_report_metrics,
+    save_streamlit_settings,
     save_streamlit_watchlist,
     split_scanner_global_messages,
     start_pipelined_levels_scanner_loader,
     streamlit_autoload_datasets,
     streamlit_dataset_current,
+    STREAMLIT_VIEWS,
     ticker_news_body_html,
     ticker_news_card_html,
 )
@@ -187,7 +193,96 @@ def test_save_streamlit_watchlist_writes_expected_shape(tmp_path):
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["watchlist"] == ["AAPL", "MSFT"]
+    assert payload["settings"]["report_layout"] == "price_ladder"
     assert "updated_at" in payload
+
+
+def test_streamlit_settings_load_from_watchlist_only_state(tmp_path):
+    path = tmp_path / "streamlit_state.json"
+    path.write_text(json.dumps({"watchlist": ["AAPL"]}), encoding="utf-8")
+
+    settings = load_streamlit_settings(path)
+
+    assert settings["report_layout"] == "price_ladder"
+    assert settings["level_filter"] == "all"
+    assert settings["chart_range"] == "1D"
+    assert settings["chart_interval"] == "5m"
+    assert settings["auto_load"] is True
+    assert settings["auto_refresh"] is True
+    assert settings["news_per_ticker"] == 10
+    assert settings["level_weights"] == {}
+
+
+def test_streamlit_settings_normalize_invalid_values():
+    settings = normalize_streamlit_settings(
+        {
+            "default_view": "bad",
+            "report_layout": "bad",
+            "level_filter": "bad",
+            "chart_type": "Bars",
+            "chart_range": "5Y",
+            "chart_interval": "1m",
+            "auto_load": False,
+            "auto_refresh": False,
+            "news_per_ticker": 999,
+            "level_weights": {"PM High": "19", "Bad Level": 40, "PM Low": 28, "Prev Close": 51},
+        }
+    )
+
+    assert settings["default_view"] == "Investment Trading Levels"
+    assert settings["report_layout"] == "price_ladder"
+    assert settings["level_filter"] == "all"
+    assert settings["chart_type"] == "Line"
+    assert settings["chart_range"] == "5Y"
+    assert settings["chart_interval"] == "1mo"
+    assert settings["auto_load"] is False
+    assert settings["auto_refresh"] is False
+    assert settings["news_per_ticker"] == 20
+    assert settings["level_weights"] == {"PM High": 19, "Prev Close": 50}
+
+
+def test_streamlit_level_weight_normalization_drops_defaults_and_unknowns():
+    assert normalize_level_weights({"PM High": 19, "PM Low": 28, "Bad": 50, "Prev Close": -2}) == {
+        "PM High": 19,
+        "Prev Close": 0,
+    }
+
+
+def test_streamlit_settings_accept_sector_analytics_view():
+    settings = normalize_streamlit_settings({"default_view": ANALYTICS_VIEW})
+
+    assert settings["default_view"] == ANALYTICS_VIEW
+    assert ANALYTICS_VIEW in STREAMLIT_VIEWS
+
+
+def test_save_streamlit_settings_preserves_watchlist(tmp_path):
+    path = tmp_path / "streamlit_state.json"
+    save_streamlit_watchlist(["aapl", "msft"], path)
+
+    save_streamlit_settings(
+        {
+            "default_view": "Stock News",
+            "report_layout": "compact",
+            "level_filter": "scanner",
+            "chart_type": "Candles",
+            "chart_range": "1Y",
+            "chart_interval": "1d",
+            "auto_load": False,
+            "auto_refresh": False,
+            "news_per_ticker": 6,
+            "level_weights": {"PM High": 19},
+        },
+        path,
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["watchlist"] == ["AAPL", "MSFT"]
+    assert payload["settings"]["default_view"] == "Stock News"
+    assert payload["settings"]["report_layout"] == "compact"
+    assert payload["settings"]["level_filter"] == "scanner"
+    assert payload["settings"]["chart_type"] == "Candles"
+    assert payload["settings"]["news_per_ticker"] == 6
+    assert payload["settings"]["level_weights"] == {"PM High": 19}
 
 
 def test_refresh_bucket_changes_on_interval_boundary():
@@ -523,7 +618,7 @@ def test_streamlit_app_initial_load_renders_levels_and_scanner(tmp_path):
     assert not app.exception
     assert "Levels" in [header.value for header in app.header]
     assert "Report" not in [header.value for header in app.header]
-    assert any("AAPL" in str(dataframe.value) for dataframe in app.dataframe)
+    assert any("AAPL" in markdown.value for markdown in app.markdown)
     assert not any("Loading levels and scanner" in markdown.value for markdown in app.markdown)
 
 
@@ -539,12 +634,23 @@ def test_merge_streamlit_datasets_keeps_load_order_and_dedupes():
 def test_streamlit_autoload_datasets_prioritize_levels_before_news():
     assert streamlit_autoload_datasets("Investment Trading Levels") == ("report", "scanner")
     assert streamlit_autoload_datasets("Stock News") == ("report", "scanner", "market_snapshot", "news")
+    assert streamlit_autoload_datasets("Sector Analytics") == ("sector_analytics",)
     assert streamlit_autoload_datasets("Investment Trading Levels", include_news=True) == (
         "report",
         "scanner",
         "market_snapshot",
         "news",
     )
+
+
+def test_streamlit_scanner_no_longer_owns_pattern_tabs():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    scanner_start = source.index("def render_scanner(")
+    scanner_end = source.index("def render_pattern_analysis(", scanner_start)
+    scanner_source = source[scanner_start:scanner_end]
+
+    assert "st.tabs" not in scanner_source
+    assert "Intraday Pattern Analysis" not in scanner_source
 
 
 def test_scanner_global_pattern_absences_render_as_notes():
@@ -622,8 +728,14 @@ def test_price_ladder_level_filters_match_scanner_and_weight_buckets():
 
     scanner_rows, _, scanner_notes = ladder_rows(metric, "scanner")
     weight_rows, _, weight_notes = ladder_rows(metric, "weight_20")
+    custom_weight_rows, _, _ = ladder_rows(
+        metric,
+        "weight_20",
+        {"PM High": 19, "Daily Swing High": 24, "Daily Swing Low": 24, "Prev Close": 20},
+    )
     scanner_labels = [row["label"] for row in scanner_rows]
     weight_labels = [row["label"] for row in weight_rows]
+    custom_weight_labels = [row["label"] for row in custom_weight_rows]
 
     assert "Prev Close" in scanner_labels
     assert "R1" in scanner_labels
@@ -634,9 +746,28 @@ def test_price_ladder_level_filters_match_scanner_and_weight_buckets():
     assert "1M High" in weight_labels
     assert "Prev Close" not in weight_labels
     assert "Pivot" not in weight_labels
+    assert "Premarket High" not in custom_weight_labels
+    assert "Prev Close" in custom_weight_labels
     assert scanner_notes == []
     assert weight_notes == []
     assert 'class="ladder-row above priority"' in metric_card_html(metric, "price_ladder", level_filter="weight_20")
+    assert "Premarket High" not in metric_card_html(
+        metric,
+        "grid",
+        level_filter="weight_20",
+        level_type_weights={"PM High": 19, "Daily Swing High": 24, "Daily Swing Low": 24, "Prev Close": 20},
+    )
+    assert "Prev Close" in metric_card_html(
+        metric,
+        "compact",
+        level_filter="weight_20",
+        level_type_weights={"PM High": 19, "Daily Swing High": 24, "Daily Swing Low": 24, "Prev Close": 20},
+    )
+    assert "Prev Close" in compare_table_html(
+        [metric],
+        level_filter="weight_20",
+        level_type_weights={"PM High": 19, "Daily Swing High": 24, "Daily Swing Low": 24, "Prev Close": 20},
+    )
 
 
 def test_streamlit_metric_rendering_supports_all_report_layouts():

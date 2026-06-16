@@ -4,20 +4,22 @@ A simple web application that pulls free market data with `yfinance`, calculates
 
 ## Features
 
-- Browser-persisted ticker/watchlist input and metric selections using `localStorage`.
+- Browser-persisted ticker/watchlist input, advanced level-weight controls, and durable UI settings using `localStorage`.
 - Two main app views: investment trading levels and stock news.
 - Shared watchlist input that drives both generated price-level reports and ticker-specific news.
 - Shared ticker validation across API requests, static watchlists, and Streamlit watchlists.
 - Saved watchlists automatically load levels, scanner output, news, and market performance when the app opens.
+- Collapsible Settings panels in both the browser and Streamlit UIs persist the default view, report layout, level filter, chart defaults, auto-load/auto-refresh behavior, and watchlist news headline count.
 - `Generate Levels` button that requests only the selected metrics from the Python backend.
 - Shared backend display sections keep the FastAPI static UI, Streamlit UI, and PDF report aligned.
-- `GET /api/config` exposes the metric catalog and chart range/interval defaults used by the static UI.
+- `GET /api/config` exposes the metric catalog, chart range/interval defaults, report layouts, and default level weights used by the static UI.
 - `Refresh News` button that retrieves watchlist headlines, categorized expanded ticker news cards, and general US stock market news.
 - Yahoo-style market and watchlist day-to-date performance snapshots on the Stock News view.
 - X.com section embedding public `@unusual_whales` posts below the watchlist news.
 - `Run Scanner` button that manually scans the shared watchlist for setup scores, support/resistance zones, risk/reward, and recurring intraday dip patterns.
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
+- Advanced Controls in the static watchlist drawer and Streamlit sidebar let users test custom level weights against the `Weight 20+` report filter in real time, with reset back to backend defaults.
 - Organized metric sections for session levels, ranges, technical indicators, and events.
 - Metrics currently include previous-session OHLC, premarket and opening ranges, previous-session VWAP, 52-week range, earnings gap, swing highs/lows, Adam-aligned technical levels, and Bollinger Bands.
 - Streamlit app entry point for remote-friendly deployment and browser access.

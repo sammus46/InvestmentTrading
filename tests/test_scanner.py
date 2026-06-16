@@ -4,8 +4,17 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app.main import generate_scanner
-from app.models import PatternDayDetail, PatternHeatmapRow, PatternSummaryRow, ScannerRequest, ScannerResponse, ScannerSetupRow
+from app.main import generate_scanner, generate_sector_analytics
+from app.models import (
+    PatternDayDetail,
+    PatternHeatmapRow,
+    PatternSummaryRow,
+    ScannerRequest,
+    ScannerResponse,
+    ScannerSetupRow,
+    SectorAnalyticsRequest,
+    SectorAnalyticsResponse,
+)
 from app.services.market_data import MarketDataService
 from app.services.scanner import BUCKETS_ET, ScannerService
 
@@ -284,6 +293,103 @@ def test_pattern_analysis_builds_summary_heatmap_and_details(monkeypatch):
     assert details
 
 
+def test_sector_rows_group_tickers_and_compute_averages():
+    rows = ScannerService._sector_rows(
+        ["AAPL", "MSFT", "TSLA"],
+        [
+            (
+                {
+                    "ticker": "AAPL",
+                    "sector": "Technology",
+                    "etf": "XLK",
+                    "stock_pct": 1.0,
+                    "sector_pct": 0.3,
+                    "rs_vs_spy": 0.6,
+                    "rs_vs_sector": 0.7,
+                },
+                ScannerSetupRow(ticker="AAPL", score=6),
+            ),
+            (
+                {
+                    "ticker": "MSFT",
+                    "sector": "Technology",
+                    "etf": "XLK",
+                    "stock_pct": 2.0,
+                    "sector_pct": 0.3,
+                    "rs_vs_spy": 1.4,
+                    "rs_vs_sector": 1.7,
+                },
+                ScannerSetupRow(ticker="MSFT", score=4),
+            ),
+            (
+                {
+                    "ticker": "TSLA",
+                    "sector": "Consumer Cyclical",
+                    "etf": "XLY",
+                    "stock_pct": -1.0,
+                    "sector_pct": -0.4,
+                    "rs_vs_spy": -1.2,
+                    "rs_vs_sector": -0.6,
+                },
+                ScannerSetupRow(ticker="TSLA", score=2),
+            ),
+        ],
+        [
+            PatternSummaryRow(
+                sector="Technology",
+                ticker="AAPL",
+                total_days=10,
+                dip_days=6,
+                consistency_percent=60,
+                average_dip_percent=-0.8,
+                average_recovery_percent=0.7,
+                top_low_times=["10:00 AM MT (2x)"],
+            )
+        ],
+    )
+
+    technology = next(row for row in rows if row.sector == "Technology")
+
+    assert technology.ticker_count == 2
+    assert technology.weight_percent == 66.7
+    assert technology.average_day_change_percent == 1.5
+    assert technology.average_rs_vs_spy_percent == 1.0
+    assert technology.average_setup_score == 5.0
+    assert technology.strong_setup_count == 1
+    assert technology.average_pattern_consistency_percent == 60.0
+    assert technology.common_low_times == ["10:00 AM MT (2x)"]
+
+
+def test_sector_recommendations_include_concentration_and_tones():
+    rows = ScannerService._sector_rows(
+        ["AAPL", "MSFT", "TSLA"],
+        [
+            ({"ticker": "AAPL", "sector": "Technology", "rs_vs_spy": 0.5}, ScannerSetupRow(ticker="AAPL", score=4)),
+            ({"ticker": "MSFT", "sector": "Technology", "rs_vs_spy": 0.1}, ScannerSetupRow(ticker="MSFT", score=4)),
+            ({"ticker": "TSLA", "sector": "Consumer Cyclical", "rs_vs_spy": -1.0}, ScannerSetupRow(ticker="TSLA", score=2)),
+        ],
+        [
+            PatternSummaryRow(
+                sector="Consumer Cyclical",
+                ticker="TSLA",
+                total_days=10,
+                dip_days=3,
+                consistency_percent=30,
+                average_dip_percent=-0.5,
+                average_recovery_percent=0.1,
+            )
+        ],
+    )
+
+    recommendations = ScannerService._sector_recommendations(rows, 3)
+    tones = {item.sector: item.tone for item in recommendations if item.sector}
+
+    assert recommendations[0].tone == "note"
+    assert recommendations[0].sector == "Technology"
+    assert tones["Technology"] == "focus"
+    assert tones["Consumer Cyclical"] == "wait"
+
+
 def test_merge_scanner_responses_sorts_and_preserves_output_shape():
     generated_at = datetime(2026, 6, 15, tzinfo=timezone.utc)
     first = ScannerResponse(
@@ -429,6 +535,34 @@ def test_scanner_endpoint_uses_shared_watchlist(monkeypatch):
 
     assert response.watchlist == ["AAPL", "MSFT"]
     assert response.setup_rows[0].ticker == "AAPL"
+
+
+def test_sector_analytics_endpoint_uses_shared_watchlist(monkeypatch):
+    class FakeScanner:
+        def build_sector_analytics(self, tickers, pattern_lookback_days=30):
+            del pattern_lookback_days
+            return SectorAnalyticsResponse(
+                generated_at=datetime.now(EASTERN),
+                watchlist=tickers,
+            )
+
+    monkeypatch.setattr("app.main.scanner_service", FakeScanner())
+    response = generate_sector_analytics(SectorAnalyticsRequest(tickers="aapl msft"))
+
+    assert response.watchlist == ["AAPL", "MSFT"]
+
+
+def test_scanner_can_request_setup_without_patterns(monkeypatch):
+    service = ScannerService()
+    monkeypatch.setattr(service.market_data, "prefetch_scanner_downloads", lambda tickers, include_setup=True, include_patterns=True: None)
+    monkeypatch.setattr(service, "_load_ticker_data", lambda symbol, benchmark_cache, include_earnings=True: symbol)
+    monkeypatch.setattr(service, "_setup_row", lambda scan_data: ScannerSetupRow(ticker=scan_data, score=5))
+
+    response = service.build_scanner(["AAPL"], include_setup=True, include_patterns=False)
+
+    assert response.setup_rows[0].ticker == "AAPL"
+    assert response.pattern_summary == []
+    assert response.pattern_heatmap == []
 
 
 def test_scanner_does_not_depend_on_market_data_private_methods():
