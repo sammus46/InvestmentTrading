@@ -1,0 +1,405 @@
+{
+  "generated_at": "2026-06-16T04:33:20.893334+00:00",
+  "tickers": [
+    "PWR",
+    "NVT",
+    "BKSY",
+    "RKLB",
+    "STRL",
+    "NVDA",
+    "MU",
+    "GEV",
+    "MYRG",
+    "ASTS",
+    "FIX",
+    "PLTR"
+  ],
+  "mine": {
+    "app": "mine",
+    "tickers": [
+      "PWR",
+      "NVT",
+      "BKSY",
+      "RKLB",
+      "STRL",
+      "NVDA",
+      "MU",
+      "GEV",
+      "MYRG",
+      "ASTS",
+      "FIX",
+      "PLTR"
+    ],
+    "ticker_count": 12,
+    "batch_size": 3,
+    "batches": [
+      {
+        "index": 1,
+        "tickers": [
+          "PWR",
+          "NVT",
+          "BKSY"
+        ],
+        "levels_seconds": 2.429,
+        "scanner_seconds": 2.163,
+        "levels_render_seconds": 0.0015,
+        "batch_seconds": 4.594,
+        "level_rows": 105,
+        "level_tags": {
+          "article": 3,
+          "div": 15,
+          "span": 6,
+          "h3": 3,
+          "table": 3,
+          "thead": 3,
+          "tr": 105,
+          "th": 9,
+          "tbody": 3,
+          "td": 306,
+          "strong": 3,
+          "details": 3,
+          "summary": 3,
+          "ul": 3,
+          "li": 18
+        },
+        "scanner_rows": 3,
+        "pattern_summary_rows": 3,
+        "pattern_detail_rows": 90
+      },
+      {
+        "index": 2,
+        "tickers": [
+          "RKLB",
+          "STRL",
+          "NVDA"
+        ],
+        "levels_seconds": 2.237,
+        "scanner_seconds": 0.734,
+        "levels_render_seconds": 0.0015,
+        "batch_seconds": 2.973,
+        "level_rows": 107,
+        "level_tags": {
+          "article": 3,
+          "div": 17,
+          "span": 8,
+          "h3": 3,
+          "table": 3,
+          "thead": 3,
+          "tr": 107,
+          "th": 9,
+          "tbody": 3,
+          "td": 312,
+          "strong": 5,
+          "details": 3,
+          "summary": 3,
+          "ul": 3,
+          "li": 17
+        },
+        "scanner_rows": 3,
+        "pattern_summary_rows": 3,
+        "pattern_detail_rows": 90
+      },
+      {
+        "index": 3,
+        "tickers": [
+          "MU",
+          "GEV",
+          "MYRG"
+        ],
+        "levels_seconds": 2.823,
+        "scanner_seconds": 0.85,
+        "levels_render_seconds": 0.0015,
+        "batch_seconds": 3.675,
+        "level_rows": 105,
+        "level_tags": {
+          "article": 3,
+          "div": 15,
+          "span": 6,
+          "h3": 3,
+          "table": 3,
+          "thead": 3,
+          "tr": 105,
+          "th": 9,
+          "tbody": 3,
+          "td": 306,
+          "strong": 3,
+          "details": 3,
+          "summary": 3,
+          "ul": 3,
+          "li": 18
+        },
+        "scanner_rows": 3,
+        "pattern_summary_rows": 3,
+        "pattern_detail_rows": 90
+      },
+      {
+        "index": 4,
+        "tickers": [
+          "ASTS",
+          "FIX",
+          "PLTR"
+        ],
+        "levels_seconds": 2.449,
+        "scanner_seconds": 1.21,
+        "levels_render_seconds": 0.0016,
+        "batch_seconds": 3.661,
+        "level_rows": 105,
+        "level_tags": {
+          "article": 3,
+          "div": 15,
+          "span": 6,
+          "h3": 3,
+          "table": 3,
+          "thead": 3,
+          "tr": 105,
+          "th": 9,
+          "tbody": 3,
+          "td": 306,
+          "strong": 3,
+          "details": 3,
+          "summary": 3,
+          "ul": 3,
+          "li": 18
+        },
+        "scanner_rows": 3,
+        "pattern_summary_rows": 3,
+        "pattern_detail_rows": 90
+      }
+    ],
+    "first_levels_visible_seconds": 2.429,
+    "first_scanner_visible_seconds": 4.594,
+    "final_levels_and_scanner_seconds": 14.902,
+    "chart_query_seconds": 0.249,
+    "end_to_end_with_charts_seconds": 15.151,
+    "per_ticker": [
+      {
+        "ticker": "PWR",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "NVT",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "BKSY",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "RKLB",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "STRL",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "NVDA",
+        "warning_count": 5,
+        "level_rows": 37
+      },
+      {
+        "ticker": "MU",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "GEV",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "MYRG",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "ASTS",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "FIX",
+        "warning_count": 6,
+        "level_rows": 35
+      },
+      {
+        "ticker": "PLTR",
+        "warning_count": 6,
+        "level_rows": 35
+      }
+    ],
+    "rendered_view_elements": {
+      "level_cards": 12,
+      "level_rows": 422,
+      "scanner_rows": 12,
+      "pattern_summary_rows": 12,
+      "pattern_heatmap_rows": 12,
+      "pattern_detail_rows": 360,
+      "chart_cards": 12
+    },
+    "query_summary": {
+      "count": 41,
+      "total_seconds": 14.318,
+      "avg_seconds": 0.349,
+      "max_seconds": 0.914,
+      "by_operation": {
+        "Ticker.earnings_dates": {
+          "count": 12,
+          "seconds": 7.05
+        },
+        "yf.download": {
+          "count": 29,
+          "seconds": 7.267
+        }
+      },
+      "errors": []
+    }
+  },
+  "adam": {
+    "app": "adam",
+    "tickers": [
+      "PWR",
+      "NVT",
+      "BKSY",
+      "RKLB",
+      "STRL",
+      "NVDA",
+      "MU",
+      "GEV",
+      "MYRG",
+      "ASTS",
+      "FIX",
+      "PLTR"
+    ],
+    "ticker_count": 12,
+    "data_load_seconds": 8.257,
+    "as_app_ux_sleep_seconds": 18.0,
+    "estimated_as_app_levels_and_scanner_seconds": 26.257,
+    "first_levels_visible_seconds": 26.257,
+    "first_scanner_visible_seconds": 26.257,
+    "per_ticker": [
+      {
+        "ticker": "PWR",
+        "load_seconds": 1.139,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "NVT",
+        "load_seconds": 0.579,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "BKSY",
+        "load_seconds": 0.691,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "RKLB",
+        "load_seconds": 0.576,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "STRL",
+        "load_seconds": 0.611,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "NVDA",
+        "load_seconds": 0.725,
+        "level_rows": 29,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "MU",
+        "load_seconds": 0.582,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "GEV",
+        "load_seconds": 0.624,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "MYRG",
+        "load_seconds": 0.698,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "ASTS",
+        "load_seconds": 0.828,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "FIX",
+        "load_seconds": 0.594,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      },
+      {
+        "ticker": "PLTR",
+        "load_seconds": 0.609,
+        "level_rows": 27,
+        "has_setup": false,
+        "has_support_resistance": true
+      }
+    ],
+    "per_ticker_load_summary": {
+      "total": 8.256,
+      "avg": 0.688,
+      "min": 0.576,
+      "max": 1.139
+    },
+    "rendered_view_elements": {
+      "level_cards": 12,
+      "level_rows": 326,
+      "scanner_rows": 12,
+      "pattern_summary_rows": 0,
+      "pattern_heatmap_rows": 0,
+      "pattern_detail_rows": 0,
+      "chart_cards": 0
+    },
+    "logical_render_seconds": 4.4e-05,
+    "query_summary": {
+      "count": 120,
+      "total_seconds": 8.186,
+      "avg_seconds": 0.068,
+      "max_seconds": 0.23,
+      "by_operation": {
+        "Ticker.earnings_dates": {
+          "count": 12,
+          "seconds": 0.637
+        },
+        "Ticker.history": {
+          "count": 108,
+          "seconds": 7.549
+        }
+      },
+      "errors": []
+    }
+  }
+}

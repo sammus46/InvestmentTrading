@@ -85,15 +85,15 @@ def test_config_endpoint_returns_catalog_and_chart_ranges():
     assert config.metrics[0].id == "previous_day"
     assert config.chart_ranges["1D"].default_interval == "5m"
     assert "1m" in config.chart_ranges["1D"].intervals
-    assert config.default_report_layout == "grid"
+    assert config.default_report_layout == "price_ladder"
     assert [layout.id for layout in config.report_layouts] == ["grid", "price_ladder", "compact", "compare"]
 
 
-def test_report_layout_catalog_defaults_to_grid():
+def test_report_layout_catalog_defaults_to_price_ladder():
     layouts = report_layout_catalog()
 
     assert [layout.id for layout in layouts] == ["grid", "price_ladder", "compact", "compare"]
-    assert [layout.id for layout in layouts if layout.default] == ["grid"]
+    assert [layout.id for layout in layouts if layout.default] == ["price_ladder"]
 
 
 def test_display_rows_include_numeric_and_emphasis_metadata():

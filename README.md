@@ -21,7 +21,7 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Organized metric sections for session levels, ranges, technical indicators, and events.
 - Metrics currently include previous-session OHLC, premarket and opening ranges, previous-session VWAP, 52-week range, earnings gap, swing highs/lows, Adam-aligned technical levels, and Bollinger Bands.
 - Streamlit app entry point for remote-friendly deployment and browser access.
-- Streamlit watchlists persist to `~/.investment_trading/streamlit_state.json` by default and auto-refresh loaded data every 5 minutes.
+- Streamlit watchlists persist to `~/.investment_trading/streamlit_state.json` by default and auto-refresh loaded data every 1 minute.
 
 ## Requirements
 

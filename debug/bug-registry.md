@@ -12,6 +12,7 @@ This registry is the durable index for bugs tracked under `debug/bugs/`. Keep it
 | [BUG-0006](bugs/BUG-0006-streamlit-partial-refresh-marks-unrelated-data-current.md) | Fixed | P1 High | Streamlit UI, Data Freshness | Partial refreshes could mark unrelated Streamlit datasets current. | Smoke partial refresh banners/freshness before marking verified. |
 | [BUG-0007](bugs/BUG-0007-static-raw-json-validation-messages.md) | Fixed | P2 Medium | Static UI, Backend Validation | Static UI could show raw Pydantic validation JSON instead of concise messages. | Smoke invalid ticker messaging in browser before marking verified. |
 | [BUG-0008](bugs/BUG-0008-missing-static-report-ticker-search.md) | Fixed | P2 Medium | Static UI, Trading Levels | Static Trading Levels report lacked the ticker search available in Streamlit. | Smoke report search with one and multiple tickers before marking verified. |
+| [BUG-0009](bugs/BUG-0009-streamlit-scanner-rendered-offscreen.md) | Fixed | P1 High | Streamlit UI, Scanner | Scanner data could load and render offscreen away from the Scanner controls, making the table appear missing. | Keep scanner slot directly under Scanner controls and smoke first viewport after loading. |
 
 ## Registry Rules
 

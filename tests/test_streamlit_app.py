@@ -1,5 +1,9 @@
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+from threading import Event
+
+from streamlit.testing.v1 import AppTest
 
 from app.models import (
     BollingerLevels,
@@ -8,10 +12,13 @@ from app.models import (
     EarningsGap,
     EquityMetrics,
     FiftyTwoWeekRange,
+    GenerateResponse,
     NewsArticle,
     OpeningRange,
     Ohlc,
     PremarketRange,
+    ScannerResponse,
+    ScannerSetupRow,
     SwingLevels,
     TechnicalLevels,
     TickerNews,
@@ -22,20 +29,131 @@ from app.streamlit_app import (
     filter_ticker_news_groups,
     load_streamlit_watchlist,
     mark_streamlit_data_current,
+    merge_streamlit_datasets,
     metric_card_html,
     metric_rows,
     normalize_level_search,
     normalize_report_layout,
     normalize_ticker_list,
+    progressive_report_responses,
     report_layout_label,
     refresh_bucket,
     save_streamlit_watchlist,
+    start_pipelined_levels_scanner_loader,
     streamlit_autoload_datasets,
     streamlit_dataset_current,
     ticker_news_body_html,
     ticker_news_card_html,
 )
 from app.streamlit_ui.metrics import compare_table_html, insert_current_price, ladder_rows
+
+
+def streamlit_metric_fixture(ticker: str, selected_metrics=None) -> EquityMetrics:
+    return EquityMetrics(
+        ticker=ticker,
+        selected_metrics=list(selected_metrics or ["previous_day"]),
+        previous_day=Ohlc(),
+        premarket=PremarketRange(),
+        previous_session_vwap_5m=None,
+        fifty_two_week=FiftyTwoWeekRange(),
+        earnings_gap=EarningsGap(),
+        first_five_minutes=OpeningRange(),
+        swing_levels=SwingLevels(),
+        bollinger_bands=BollingerLevels(),
+        technical_levels=TechnicalLevels(),
+        data_timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+    )
+
+
+def streamlit_app_smoke_script(state_path: str) -> None:
+    import json
+    import os
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    import app.streamlit_app as app
+    from app.models import (
+        BollingerLevels,
+        ChartHistoryResponse,
+        EarningsGap,
+        EquityMetrics,
+        FiftyTwoWeekRange,
+        OpeningRange,
+        Ohlc,
+        PremarketRange,
+        ScannerResponse,
+        ScannerSetupRow,
+        SwingLevels,
+        TechnicalLevels,
+    )
+
+    Path(state_path).write_text(json.dumps({"watchlist": ["AAPL", "MSFT", "NVDA"]}), encoding="utf-8")
+    os.environ[app.STREAMLIT_STATE_ENV] = state_path
+
+    class FakeMarketData:
+        def build_metrics(self, tickers, metrics):
+            return [
+                EquityMetrics(
+                    ticker=ticker,
+                    selected_metrics=list(metrics),
+                    previous_day=Ohlc(open=10.0, high=12.0, low=9.0, close=11.0),
+                    premarket=PremarketRange(),
+                    previous_session_vwap_5m=None,
+                    fifty_two_week=FiftyTwoWeekRange(),
+                    earnings_gap=EarningsGap(),
+                    first_five_minutes=OpeningRange(),
+                    swing_levels=SwingLevels(),
+                    bollinger_bands=BollingerLevels(),
+                    technical_levels=TechnicalLevels(current_price=11.0),
+                    data_timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                )
+                for ticker in tickers
+            ]
+
+    class FakeScanner:
+        def build_scanner(self, tickers, include_setup=True, include_patterns=True):
+            del include_setup, include_patterns
+            return ScannerResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                watchlist=list(tickers),
+                setup_rows=[ScannerSetupRow(ticker=ticker, score=5) for ticker in tickers],
+            )
+
+    class FakePdf:
+        def build_pdf(self, report):
+            del report
+            return b"%PDF-1.4\n%%EOF"
+
+    def fake_build_chart_history(tickers, chart_range, interval, refresh_token=0):
+        del tickers, refresh_token
+        return ChartHistoryResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            range=chart_range,
+            interval=interval,
+            charts=[],
+        )
+
+    original_market_data_service = app.market_data_service
+    original_scanner_service = app.scanner_service
+    original_pdf_report_service = app.pdf_report_service
+    original_build_chart_history = app.build_chart_history
+    original_render_auto_refresh_fragment = app.render_auto_refresh_fragment
+    original_render_streamlit_theme_bridge = app.render_streamlit_theme_bridge
+    try:
+        app.market_data_service = lambda: FakeMarketData()
+        app.scanner_service = lambda: FakeScanner()
+        app.pdf_report_service = lambda: FakePdf()
+        app.build_chart_history = fake_build_chart_history
+        app.render_auto_refresh_fragment = lambda enabled, view: None
+        app.render_streamlit_theme_bridge = lambda: None
+        app.main()
+    finally:
+        app.market_data_service = original_market_data_service
+        app.scanner_service = original_scanner_service
+        app.pdf_report_service = original_pdf_report_service
+        app.build_chart_history = original_build_chart_history
+        app.render_auto_refresh_fragment = original_render_auto_refresh_fragment
+        app.render_streamlit_theme_bridge = original_render_streamlit_theme_bridge
 
 
 def test_load_streamlit_watchlist_missing_file_returns_empty(tmp_path):
@@ -67,10 +185,10 @@ def test_save_streamlit_watchlist_writes_expected_shape(tmp_path):
 
 
 def test_refresh_bucket_changes_on_interval_boundary():
-    before = datetime(2026, 6, 11, 12, 4, 59, tzinfo=timezone.utc)
-    after = datetime(2026, 6, 11, 12, 5, 0, tzinfo=timezone.utc)
+    before = datetime(2026, 6, 11, 12, 0, 59, tzinfo=timezone.utc)
+    after = datetime(2026, 6, 11, 12, 1, 0, tzinfo=timezone.utc)
 
-    assert refresh_bucket(before, interval_seconds=300) + 1 == refresh_bucket(after, interval_seconds=300)
+    assert refresh_bucket(before) + 1 == refresh_bucket(after)
 
 
 def test_normalize_ticker_list_accepts_multiple_delimiters():
@@ -107,14 +225,33 @@ def test_streamlit_metric_rendering_uses_display_sections():
     )
 
     assert metric_rows(metric) == [{"Metric": "Shared Level", "Value": "123.45"}]
-    assert "Shared Section" in metric_card_html(metric)
-    assert "Shared Level" in metric_card_html(metric)
+    assert "Shared Section" in metric_card_html(metric, "grid")
+    assert "Shared Level" in metric_card_html(metric, "grid")
 
 
 def test_streamlit_report_layout_helpers_use_catalog():
     assert normalize_report_layout("price_ladder") == "price_ladder"
-    assert normalize_report_layout("bad-layout") == "grid"
+    assert normalize_report_layout("bad-layout") == "price_ladder"
     assert report_layout_label("compare") == "Compare"
+
+
+def test_streamlit_levels_copy_replaces_report_label():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    assert 'st.header("Levels")' in source
+    assert "Download PDF Levels" in source
+    assert 'st.header("Report")' not in source
+    assert "Download PDF Report" not in source
+
+
+def test_streamlit_scanner_slot_stays_with_scanner_controls():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    scanner_controls = source.index('st.subheader("Scanner")')
+    scanner_slot = source.index("scanner_slot = st.empty()", scanner_controls)
+    report_slot = source.index("report_slot = st.empty()", scanner_controls)
+
+    assert scanner_controls < scanner_slot < report_slot
 
 
 def test_streamlit_level_search_filters_report_metrics():
@@ -206,7 +343,172 @@ def test_streamlit_loaded_state_tracks_datasets_independently():
 
     assert streamlit_dataset_current("report", tickers, metrics)
     assert not streamlit_dataset_current("scanner", tickers, metrics)
+    assert not streamlit_dataset_current("news", tickers, metrics)
+    assert not streamlit_dataset_current("market_snapshot", tickers, metrics)
     assert dataset_refresh_token("report") == 0
+
+
+def test_progressive_report_responses_batch_and_preserve_ticker_order():
+    calls = []
+
+    def loader(batch, metrics, refresh_token):
+        calls.append((batch, metrics, refresh_token))
+        return GenerateResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            metrics=[
+                EquityMetrics(
+                    ticker=ticker,
+                    selected_metrics=list(metrics),
+                    previous_day=Ohlc(),
+                    premarket=PremarketRange(),
+                    previous_session_vwap_5m=None,
+                    fifty_two_week=FiftyTwoWeekRange(),
+                    earnings_gap=EarningsGap(),
+                    first_five_minutes=OpeningRange(),
+                    swing_levels=SwingLevels(),
+                    bollinger_bands=BollingerLevels(),
+                    technical_levels=TechnicalLevels(),
+                    data_timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                )
+                for ticker in batch
+            ],
+        )
+
+    responses = progressive_report_responses(
+        ("MSFT", "AAPL", "NVDA", "TSLA"),
+        ("previous_day",),
+        42,
+        batch_size=3,
+        loader=loader,
+    )
+
+    assert [call[0] for call in calls] == [("MSFT", "AAPL", "NVDA"), ("TSLA",)]
+    assert [len(response.metrics) for response in responses] == [3, 4]
+    assert [metric.ticker for metric in responses[-1].metrics] == ["MSFT", "AAPL", "NVDA", "TSLA"]
+    assert all(call[2] == 42 for call in calls)
+
+
+def test_pipelined_levels_scanner_events_batch_and_preserve_order():
+    calls = []
+
+    def report_loader(batch, metrics, refresh_token):
+        calls.append(("levels", batch, metrics, refresh_token))
+        return GenerateResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            metrics=[streamlit_metric_fixture(ticker, metrics) for ticker in batch],
+        )
+
+    def scanner_loader(batch, refresh_token):
+        calls.append(("scanner", batch, refresh_token))
+        return ScannerResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            watchlist=list(batch),
+            setup_rows=[ScannerSetupRow(ticker=ticker, score=index) for index, ticker in enumerate(batch)],
+        )
+
+    events, worker = start_pipelined_levels_scanner_loader(
+        ("MSFT", "AAPL", "NVDA", "TSLA"),
+        ("previous_day",),
+        11,
+        22,
+        report_loader,
+        scanner_loader,
+        batch_size=3,
+    )
+    received = []
+    while True:
+        event = events.get(timeout=2)
+        received.append(event)
+        if event.kind == "done":
+            break
+
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert [(event.kind, event.batch) for event in received] == [
+        ("levels", ("MSFT", "AAPL", "NVDA")),
+        ("scanner", ("MSFT", "AAPL", "NVDA")),
+        ("levels", ("TSLA",)),
+        ("scanner", ("TSLA",)),
+        ("done", ()),
+    ]
+    assert calls == [
+        ("levels", ("MSFT", "AAPL", "NVDA"), ("previous_day",), 11),
+        ("scanner", ("MSFT", "AAPL", "NVDA"), 22),
+        ("levels", ("TSLA",), ("previous_day",), 11),
+        ("scanner", ("TSLA",), 22),
+    ]
+
+
+def test_pipelined_loader_starts_next_batch_after_scanner_event_is_queued():
+    second_levels_started = Event()
+    release_second_levels = Event()
+
+    def report_loader(batch, metrics, refresh_token):
+        del refresh_token
+        if batch == ("MSFT",):
+            second_levels_started.set()
+            assert release_second_levels.wait(timeout=2)
+        return GenerateResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            metrics=[streamlit_metric_fixture(ticker, metrics) for ticker in batch],
+        )
+
+    def scanner_loader(batch, refresh_token):
+        del refresh_token
+        return ScannerResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            watchlist=list(batch),
+            setup_rows=[ScannerSetupRow(ticker=batch[0], score=5)],
+        )
+
+    events, worker = start_pipelined_levels_scanner_loader(
+        ("AAPL", "MSFT"),
+        ("previous_day",),
+        0,
+        0,
+        report_loader,
+        scanner_loader,
+        batch_size=1,
+    )
+
+    while True:
+        event = events.get(timeout=2)
+        if event.kind == "scanner" and event.batch == ("AAPL",):
+            break
+
+    assert second_levels_started.wait(timeout=2)
+    release_second_levels.set()
+    while event.kind != "done":
+        event = events.get(timeout=2)
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+
+
+def test_streamlit_app_initial_load_renders_levels_and_scanner(tmp_path):
+    app = AppTest.from_function(
+        streamlit_app_smoke_script,
+        kwargs={"state_path": str(tmp_path / "streamlit_state.json")},
+        default_timeout=8,
+    )
+
+    app.run(timeout=8)
+
+    assert not app.exception
+    assert "Levels" in [header.value for header in app.header]
+    assert "Report" not in [header.value for header in app.header]
+    assert any("AAPL" in str(dataframe.value) for dataframe in app.dataframe)
+    assert not any("Loading levels and scanner" in markdown.value for markdown in app.markdown)
+
+
+def test_merge_streamlit_datasets_keeps_load_order_and_dedupes():
+    assert merge_streamlit_datasets(("scanner", "report"), ("report", "news", "chart"), ("bad",)) == (
+        "scanner",
+        "report",
+        "news",
+        "chart",
+    )
 
 
 def test_streamlit_autoload_datasets_prioritize_levels_before_news():
