@@ -139,14 +139,25 @@ class MarketDataService:
         self.settings = settings or MarketDataSettings()
         self.provider = provider or YFinanceProvider()
 
-    def build_metrics(self, tickers: list[str], metrics: list[MetricName] | None = None) -> list[EquityMetrics]:
+    def build_metrics(
+        self,
+        tickers: list[str],
+        metrics: list[MetricName] | None = None,
+        *,
+        include_history: bool = False,
+    ) -> list[EquityMetrics]:
         """Generate metric rows for the requested tickers and selected metrics."""
         selected = metrics or list(DEFAULT_METRICS)
-        return [self._build_metric(ticker, selected) for ticker in tickers]
+        symbols = [ticker.upper().strip() for ticker in tickers if ticker.strip()]
+        self._prefetch_metric_downloads(symbols, selected, include_history=include_history)
+        return [self._build_metric(ticker, selected, include_history=include_history) for ticker in tickers]
 
     def build_market_snapshot(self, tickers: list[str]) -> MarketSnapshotResponse:
         """Return major market and watchlist day-to-date performance."""
         warnings: list[str] = []
+        symbols = [symbol for symbol, _ in MARKET_SNAPSHOT_INSTRUMENTS]
+        symbols.extend(ticker.upper().strip() for ticker in tickers if ticker.strip())
+        self._prefetch_snapshot_downloads(symbols)
         market = [
             self._snapshot_row(symbol=symbol, label=label, warnings=warnings)
             for symbol, label in MARKET_SNAPSHOT_INSTRUMENTS
@@ -171,6 +182,7 @@ class MarketDataService:
     ) -> ChartHistoryResponse:
         """Return OHLC chart data for broker-style line and candle charts."""
         warnings: list[str] = []
+        self._prefetch_chart_downloads([ticker.upper().strip() for ticker in tickers if ticker.strip()], chart_range, interval)
         charts = [
             self._chart_history_row(ticker.upper().strip(), chart_range, interval, warnings)
             for ticker in tickers
@@ -184,13 +196,29 @@ class MarketDataService:
             warnings=warnings,
         )
 
-    def _build_metric(self, ticker: str, selected_metrics: list[MetricName]) -> EquityMetrics:
+    def _build_metric(
+        self,
+        ticker: str,
+        selected_metrics: list[MetricName],
+        *,
+        include_history: bool = False,
+    ) -> EquityMetrics:
         warnings: list[str] = []
         symbol = ticker.upper().strip()
 
-        needs_daily = True
-        needs_intraday = True
         selected = set(selected_metrics)
+        needs_daily = bool(
+            {
+                "previous_day",
+                "fifty_two_week",
+                "earnings_gap",
+                "swing_levels",
+                "bollinger_bands",
+                "technical_levels",
+            }
+            & selected
+        ) or include_history
+        needs_intraday = bool({"previous_session_vwap_5m", "technical_levels"} & selected) or include_history
         needs_opening_intraday = bool({"premarket", "first_five_minutes", "technical_levels"} & selected)
 
         daily = (
@@ -265,8 +293,8 @@ class MarketDataService:
             if "technical_levels" in selected
             else TechnicalLevels()
         )
-        price_history = self._price_history(daily, warnings)
-        intraday_history = self._intraday_price_history(intraday, warnings)
+        price_history = self._price_history(daily, warnings) if include_history else []
+        intraday_history = self._intraday_price_history(intraday, warnings) if include_history else []
 
         if daily.empty and intraday.empty and opening_intraday.empty and any(
             [needs_daily, needs_intraday, needs_opening_intraday]
@@ -295,9 +323,13 @@ class MarketDataService:
 
 
     def _download_daily_history(self, symbol: str, days: int | None = None) -> pd.DataFrame:
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(days=days or self.settings.daily_history_days)
+        start, end = self._daily_history_window(days or self.settings.daily_history_days)
         return self._download(symbol, period=None, interval="1d", prepost=False, start=start, end=end)
+
+    @staticmethod
+    def _daily_history_window(days: int) -> tuple[datetime, datetime]:
+        end = datetime.combine(datetime.now(timezone.utc).date() + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        return end - timedelta(days=days), end
 
     def download_scanner_daily_history(self, symbol: str) -> pd.DataFrame:
         """Return daily bars with enough history for scanner indicators."""
@@ -399,6 +431,89 @@ class MarketDataService:
         localized = MarketDataService._with_eastern_index(frame)
         return localized.between_time(MARKET_OPEN, MARKET_CLOSE, inclusive="left")
 
+    def _prefetch_metric_downloads(
+        self,
+        symbols: list[str],
+        selected_metrics: list[MetricName],
+        *,
+        include_history: bool,
+    ) -> None:
+        if not self._can_prefetch() or not symbols:
+            return
+        selected = set(selected_metrics)
+        needs_daily = bool(
+            {
+                "previous_day",
+                "fifty_two_week",
+                "earnings_gap",
+                "swing_levels",
+                "bollinger_bands",
+                "technical_levels",
+            }
+            & selected
+        ) or include_history
+        needs_intraday = bool({"previous_session_vwap_5m", "technical_levels"} & selected) or include_history
+        needs_opening_intraday = bool({"premarket", "first_five_minutes", "technical_levels"} & selected)
+        if needs_daily:
+            start, end = self._daily_history_window(self.settings.daily_history_days)
+            self._download_many(symbols, period=None, interval="1d", prepost=False, start=start, end=end)
+        if needs_intraday:
+            self._download_many(
+                symbols,
+                period=self.settings.intraday_history_period,
+                interval=self.settings.intraday_interval,
+                prepost=True,
+            )
+        if needs_opening_intraday:
+            self._download_many(
+                symbols,
+                period=self.settings.opening_history_period,
+                interval=self.settings.opening_interval,
+                prepost=True,
+            )
+
+    def _prefetch_snapshot_downloads(self, symbols: list[str]) -> None:
+        if not self._can_prefetch() or not symbols:
+            return
+        ordered = list(dict.fromkeys(symbols))
+        self._download_many(ordered, period="1d", interval="5m", prepost=True)
+        start, end = self._daily_history_window(10)
+        self._download_many(ordered, period=None, interval="1d", prepost=False, start=start, end=end)
+
+    def _prefetch_chart_downloads(self, symbols: list[str], chart_range: ChartRange, interval: ChartInterval) -> None:
+        if not self._can_prefetch() or not symbols:
+            return
+        period, provider_interval = CHART_DOWNLOAD_CONFIG[(chart_range, interval)]
+        if chart_range in CHART_DATE_TO_DATE_RANGES:
+            start, end = self._chart_date_window(chart_range)
+            self._download_many(symbols, period=None, interval=provider_interval, prepost=False, start=start, end=end)
+            return
+        self._download_many(symbols, period=period, interval=provider_interval, prepost=False)
+
+    def _can_prefetch(self) -> bool:
+        return (
+            MarketDataService._download is ORIGINAL_MARKET_DATA_DOWNLOAD
+            and callable(getattr(self.provider, "download_many", None))
+        )
+
+    def _download_many(
+        self,
+        symbols: list[str],
+        *,
+        period: str | None,
+        interval: str,
+        prepost: bool,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        downloader = getattr(self.provider, "download_many", None)
+        if callable(downloader):
+            return downloader(symbols, period=period, interval=interval, prepost=prepost, start=start, end=end)
+        return {
+            symbol: self._download(symbol, period=period, interval=interval, prepost=prepost, start=start, end=end)
+            for symbol in symbols
+        }
+
     def _snapshot_row(self, symbol: str, label: str, warnings: list[str]) -> MarketSnapshotRow:
         row_warnings: list[str] = []
         try:
@@ -492,7 +607,7 @@ class MarketDataService:
             raise ValueError(f"{chart_range} does not use a date-to-date chart window")
 
         start = datetime.combine(start_date, time.min, tzinfo=EASTERN)
-        end = current + timedelta(days=1)
+        end = datetime.combine(current.date() + timedelta(days=1), time.min, tzinfo=EASTERN)
         return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
     def _price_history(self, daily: pd.DataFrame, warnings: list[str]) -> list[PricePoint]:
@@ -695,8 +810,12 @@ class MarketDataService:
             return EarningsGap()
 
         try:
-            with redirect_stderr(io.StringIO()):
-                earnings_dates = self.provider.ticker(symbol).earnings_dates
+            earnings_dates_loader = getattr(self.provider, "earnings_dates", None)
+            if callable(earnings_dates_loader):
+                earnings_dates = earnings_dates_loader(symbol)
+            else:
+                with redirect_stderr(io.StringIO()):
+                    earnings_dates = self.provider.ticker(symbol).earnings_dates
         except Exception as exc:
             warnings.append(f"Earnings dates were unavailable: {exc}")
             return EarningsGap()
@@ -932,18 +1051,17 @@ class MarketDataService:
             warnings.append(f"At least {(window * 2) + 1} completed daily bars are required for swing levels.")
             return SwingLevels(window=window, merge_percent=merge_percent)
 
-        highs = completed["High"].astype(float).to_numpy()
-        lows = completed["Low"].astype(float).to_numpy()
-        swing_highs: list[float] = []
-        swing_lows: list[float] = []
-
-        for index in range(window, len(completed) - window):
-            lower_bound = index - window
-            upper_bound = index + window + 1
-            if highs[index] == highs[lower_bound:upper_bound].max():
-                swing_highs.append(round(float(highs[index]), 2))
-            if lows[index] == lows[lower_bound:upper_bound].min():
-                swing_lows.append(round(float(lows[index]), 2))
+        span = (window * 2) + 1
+        highs = completed["High"].astype(float)
+        lows = completed["Low"].astype(float)
+        swing_highs = [
+            round(float(value), 2)
+            for value in highs[highs.eq(highs.rolling(span, center=True).max())].tolist()
+        ]
+        swing_lows = [
+            round(float(value), 2)
+            for value in lows[lows.eq(lows.rolling(span, center=True).min())].tolist()
+        ]
 
         return SwingLevels(
             highs=self._merge_levels(
@@ -969,3 +1087,6 @@ class MarketDataService:
     @staticmethod
     def _with_eastern_index(frame: pd.DataFrame) -> pd.DataFrame:
         return calculations.with_eastern_index(frame)
+
+
+ORIGINAL_MARKET_DATA_DOWNLOAD = MarketDataService._download

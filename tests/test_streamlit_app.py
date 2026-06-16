@@ -30,6 +30,7 @@ from app.streamlit_app import (
     report_layout_label,
     refresh_bucket,
     save_streamlit_watchlist,
+    streamlit_autoload_datasets,
     streamlit_dataset_current,
     ticker_news_body_html,
     ticker_news_card_html,
@@ -206,6 +207,17 @@ def test_streamlit_loaded_state_tracks_datasets_independently():
     assert streamlit_dataset_current("report", tickers, metrics)
     assert not streamlit_dataset_current("scanner", tickers, metrics)
     assert dataset_refresh_token("report") == 0
+
+
+def test_streamlit_autoload_datasets_prioritize_levels_before_news():
+    assert streamlit_autoload_datasets("Investment Trading Levels") == ("report", "scanner")
+    assert streamlit_autoload_datasets("Stock News") == ("report", "scanner", "market_snapshot", "news")
+    assert streamlit_autoload_datasets("Investment Trading Levels", include_news=True) == (
+        "report",
+        "scanner",
+        "market_snapshot",
+        "news",
+    )
 
 
 def test_price_ladder_rows_sort_and_insert_current_price():

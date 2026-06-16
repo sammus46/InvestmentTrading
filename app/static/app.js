@@ -808,9 +808,10 @@ async function loadLevels() {
     const report = await postJson("/api/levels", buildPayload(), { signal: request.signal });
     if (!request.isCurrent()) return;
     renderReport(report);
-    await loadChartHistory();
-    if (!request.isCurrent()) return;
     setStatus("", "");
+    loadChartHistory().catch((error) => {
+      if (!isAbortError(error)) setStatus(readableError(error), "error");
+    });
   }, request);
 }
 
@@ -847,15 +848,16 @@ async function loadMarketSnapshot() {
   }
 }
 
-function autoloadSavedWatchlist() {
+async function autoloadSavedWatchlist() {
   if (!watchlistTickers.length) return;
   setStatus("Loading saved levels...", "");
+  await loadLevels();
+  if (!watchlistTickers.length) return;
   setScannerStatus("Loading saved scanner...", "");
   setNewsStatus("Loading saved news and market snapshot...", "");
-  loadLevels();
+  loadMarketSnapshot();
   loadScanner();
   loadNews();
-  loadMarketSnapshot();
 }
 
 function renderReport(report) {

@@ -1,5 +1,6 @@
 from datetime import timezone
 
+from app.models import NewsArticle, TickerNews
 from app.services.news import NewsService, NewsSettings
 
 
@@ -192,3 +193,26 @@ def test_build_news_falls_back_to_yahoo_when_finnhub_is_empty(monkeypatch):
 
     assert [item.title for item in response.general_market] == ["Yahoo market"]
     assert response.ticker_news[0].articles[0].title == "Yahoo AAPL"
+
+
+def test_build_news_reuses_cached_provider_results(monkeypatch):
+    calls = {"general": 0, "ticker": 0}
+
+    def fake_general(self, count, warnings):
+        calls["general"] += 1
+        return [NewsArticle(title=f"Market {calls['general']}")]
+
+    def fake_ticker(self, ticker, count):
+        calls["ticker"] += 1
+        return TickerNews(ticker=ticker, articles=[NewsArticle(title=f"{ticker} {calls['ticker']}")])
+
+    monkeypatch.setattr(NewsService, "_general_market_news", fake_general)
+    monkeypatch.setattr(NewsService, "_ticker_news", fake_ticker)
+
+    service = NewsService(NewsSettings())
+    first = service.build_news(["AAPL"], per_ticker=2, general_count=3)
+    second = service.build_news(["AAPL"], per_ticker=2, general_count=3)
+
+    assert calls == {"general": 1, "ticker": 1}
+    assert first.general_market[0].title == second.general_market[0].title
+    assert first.ticker_news[0].articles[0].title == second.ticker_news[0].articles[0].title
