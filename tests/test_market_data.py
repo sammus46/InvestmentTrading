@@ -393,6 +393,75 @@ def test_download_uses_adjusted_yfinance_history(monkeypatch):
     assert captured["query"]["auto_adjust"] is True
 
 
+def test_download_many_unpacks_multi_ticker_yfinance_history(monkeypatch):
+    calls = []
+    index = pd.DatetimeIndex(["2026-06-01"])
+    columns = pd.MultiIndex.from_tuples(
+        [
+            ("AAPL", "Open"),
+            ("AAPL", "Close"),
+            ("MSFT", "Open"),
+            ("MSFT", "Close"),
+        ]
+    )
+    batch = pd.DataFrame([[10.0, 11.0, 20.0, 21.0]], index=index, columns=columns)
+
+    def fake_download(symbols, **query):
+        calls.append((symbols, query))
+        return batch
+
+    monkeypatch.setattr("app.services.providers.yf.download", fake_download)
+
+    frames = YFinanceProvider().download_many(["AAPL", "MSFT"], period="5d", interval="5m", prepost=False)
+
+    assert calls[0][0] == "AAPL MSFT"
+    assert frames["AAPL"]["Close"].tolist() == [11.0]
+    assert frames["MSFT"]["Open"].tolist() == [20.0]
+
+
+def test_download_cache_reuses_equivalent_daily_windows_until_ttl(monkeypatch):
+    calls = []
+    clock = {"now": 1000.0}
+
+    def fake_download(symbol, **query):
+        calls.append((symbol, query))
+        return pd.DataFrame({"Close": [100.0 + len(calls)]}, index=pd.DatetimeIndex(["2026-06-01"]))
+
+    monkeypatch.setattr("app.services.providers.yf.download", fake_download)
+    monkeypatch.setattr("app.services.providers.time.monotonic", lambda: clock["now"])
+
+    provider = YFinanceProvider()
+    first = provider.download(
+        "AAPL",
+        period=None,
+        interval="1d",
+        prepost=False,
+        start=datetime(2026, 6, 1, 8, tzinfo=timezone.utc),
+        end=datetime(2026, 6, 16, 8, tzinfo=timezone.utc),
+    )
+    second = provider.download(
+        "AAPL",
+        period=None,
+        interval="1d",
+        prepost=False,
+        start=datetime(2026, 6, 1, 20, tzinfo=timezone.utc),
+        end=datetime(2026, 6, 16, 20, tzinfo=timezone.utc),
+    )
+    clock["now"] += YFinanceProvider.DAILY_CACHE_TTL_SECONDS + 1
+    third = provider.download(
+        "AAPL",
+        period=None,
+        interval="1d",
+        prepost=False,
+        start=datetime(2026, 6, 1, 8, tzinfo=timezone.utc),
+        end=datetime(2026, 6, 16, 8, tzinfo=timezone.utc),
+    )
+
+    assert len(calls) == 2
+    assert first["Close"].tolist() == second["Close"].tolist()
+    assert third["Close"].tolist() == [102.0]
+
+
 def test_technical_levels_bundle_adam_display_values():
     today = datetime.now(EASTERN).date()
     dates = pd.date_range(today - timedelta(days=220), periods=220, freq="D")
@@ -469,13 +538,12 @@ def test_build_metrics_skips_unselected_downloads(monkeypatch):
     assert metric.previous_day.close == 11.0
     assert [(period, interval, prepost) for period, interval, prepost, _, _ in downloads] == [
         (None, "1d", False),
-        ("5d", "5m", True),
     ]
     assert downloads[0][3] is not None
     assert downloads[0][4] is not None
     assert (downloads[0][4] - downloads[0][3]).days == 400
-    assert [point.close for point in metric.price_history] == [11.0]
-    assert [point.close for point in metric.intraday_history] == [11.5]
+    assert metric.price_history == []
+    assert metric.intraday_history == []
 
 
 def test_build_metrics_uses_provider_download_interface():
@@ -491,8 +559,64 @@ def test_build_metrics_uses_provider_download_interface():
     assert metric.previous_day.close == 11.0
     assert [(call["period"], call["interval"], call["prepost"]) for call in provider.downloads] == [
         (None, "1d", False),
-        ("5d", "5m", True),
     ]
+
+
+def test_build_metrics_include_history_keeps_pdf_chart_data(monkeypatch):
+    downloads = []
+
+    def fake_download(symbol, period, interval, prepost, start=None, end=None):
+        downloads.append((period, interval, prepost))
+        if interval == "5m":
+            today = datetime.now(EASTERN).date()
+            return pd.DataFrame(
+                {"Close": [11.5]},
+                index=pd.DatetimeIndex([datetime.combine(today, time(9, 30), tzinfo=EASTERN)]),
+            )
+        return pd.DataFrame({"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [11.0]}, index=pd.DatetimeIndex(["2026-05-15"]))
+
+    monkeypatch.setattr(MarketDataService, "_download", staticmethod(fake_download))
+
+    [metric] = MarketDataService().build_metrics(["AAPL"], ["previous_day"], include_history=True)
+
+    assert downloads == [(None, "1d", False), ("5d", "5m", True)]
+    assert [point.close for point in metric.price_history] == [11.0]
+    assert [point.close for point in metric.intraday_history] == [11.5]
+
+
+def test_build_metrics_prefetches_batch_downloads_before_preserving_order():
+    class BatchProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.batch_downloads: list[dict[str, object]] = []
+            self.frames: dict[tuple[str, str], pd.DataFrame] = {}
+
+        def download_many(self, symbols, *, period, interval, prepost, start=None, end=None):
+            self.batch_downloads.append(
+                {"symbols": list(symbols), "period": period, "interval": interval, "prepost": prepost}
+            )
+            for symbol in symbols:
+                self.frames[(symbol, interval)] = pd.DataFrame(
+                    {"Open": [10.0], "High": [12.0], "Low": [9.0], "Close": [float(len(symbol))]},
+                    index=pd.DatetimeIndex(["2026-05-15"]),
+                )
+            return {symbol: self.frames[(symbol, interval)] for symbol in symbols}
+
+        def download(self, symbol, *, period, interval, prepost, start=None, end=None):
+            self.downloads.append(
+                {"symbol": symbol, "period": period, "interval": interval, "prepost": prepost}
+            )
+            return self.frames[(symbol, interval)]
+
+    provider = BatchProvider()
+
+    metrics = MarketDataService(provider=provider).build_metrics(["msft", "aapl"], ["previous_day"])
+
+    assert [metric.ticker for metric in metrics] == ["MSFT", "AAPL"]
+    assert provider.batch_downloads == [
+        {"symbols": ["MSFT", "AAPL"], "period": None, "interval": "1d", "prepost": False}
+    ]
+    assert [call["symbol"] for call in provider.downloads] == ["MSFT", "AAPL"]
 
 
 def test_price_history_uses_latest_completed_daily_closes():

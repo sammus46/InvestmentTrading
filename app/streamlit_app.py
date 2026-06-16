@@ -2359,12 +2359,12 @@ def load_streamlit_data(tickers: tuple[str, ...], metrics: tuple[MetricName, ...
     """Load all Streamlit datasets for the current watchlist."""
     st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
     st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
+    st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
     st.session_state.news = build_news(
         tickers,
         per_ticker=NEWS_EXPANDED_HEADLINE_COUNT,
         refresh_token=refresh_token,
     )
-    st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
 
 
 def run_refresh_steps(refresh_slot: Any, title: str, steps: list[RefreshStep]) -> None:
@@ -2448,8 +2448,8 @@ def load_streamlit_data_with_banner(
     all_steps: dict[str, RefreshStep] = {
         "report": ("Calculating levels...", load_levels),
         "scanner": ("Running scanner...", load_scanner),
-        "news": ("Loading headlines...", load_headlines),
         "market_snapshot": ("Refreshing market snapshot...", load_snapshot),
+        "news": ("Loading headlines...", load_headlines),
     }
     steps = [all_steps[dataset] for dataset in datasets if dataset in all_steps]
 
@@ -2461,7 +2461,7 @@ def load_streamlit_data_with_banner(
 
 
 @st.fragment(run_every=AUTO_REFRESH_SECONDS)
-def render_auto_refresh_fragment(enabled: bool) -> None:
+def render_auto_refresh_fragment(enabled: bool, view: str) -> None:
     """Trigger full-app data refreshes on a native Streamlit timer."""
     if not enabled:
         return
@@ -2472,8 +2472,15 @@ def render_auto_refresh_fragment(enabled: bool) -> None:
         return
     if current_bucket != previous_bucket:
         st.session_state.auto_refresh_bucket = current_bucket
-        bump_streamlit_refresh_token("Auto-refreshing watchlist")
+        bump_streamlit_refresh_token("Auto-refreshing watchlist", datasets=streamlit_autoload_datasets(view))
         st.rerun()
+
+
+def streamlit_autoload_datasets(view: str, *, include_news: bool = False) -> tuple[str, ...]:
+    """Return Streamlit datasets to load for the current view in priority order."""
+    if include_news or view == NEWS_VIEW:
+        return ("report", "scanner", "market_snapshot", "news")
+    return ("report", "scanner")
 
 
 def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
@@ -2593,7 +2600,7 @@ def main() -> None:
         st.session_state.report_layout = DEFAULT_REPORT_LAYOUT
 
     sidebar_run_requested = bool(st.session_state.pop("sidebar_run_requested", False))
-    render_auto_refresh_fragment(bool(tickers))
+    render_auto_refresh_fragment(bool(tickers), view)
     refresh_token = int(st.session_state.streamlit_refresh_token)
     if sidebar_run_requested and tickers:
         refresh_token = bump_streamlit_refresh_token("Refreshing levels and news")
@@ -2606,9 +2613,10 @@ def main() -> None:
     if autoload_request is not None:
         autoload_tickers = tuple(autoload_request.tickers)
         autoload_metrics_tuple = tuple(autoload_request.metrics)
+        autoload_datasets = streamlit_autoload_datasets(view, include_news=sidebar_run_requested)
         stale_datasets = tuple(
             dataset
-            for dataset in ("report", "scanner", "news", "market_snapshot")
+            for dataset in autoload_datasets
             if not streamlit_dataset_current(dataset, autoload_tickers, autoload_metrics_tuple)
         )
         if stale_datasets:
@@ -2666,14 +2674,15 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        refresh_token = bump_streamlit_refresh_token("Generating levels")
+        refresh_token = bump_streamlit_refresh_token("Generating levels", datasets=("report", "scanner"))
         load_streamlit_data_with_banner(
             tuple(request.tickers),
             tuple(request.metrics),
             refresh_banner_slot,
             "Generating levels",
+            datasets=("report", "scanner"),
         )
-        mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics))
+        mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), datasets=("report", "scanner"))
         st.session_state.levels_status = ""
 
     if run_scanner:

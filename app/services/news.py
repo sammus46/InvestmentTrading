@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 import json
 import os
 import re
+import time
 from typing import Any
 from urllib.parse import urlparse, urlencode
 from urllib.request import Request, urlopen
@@ -34,6 +35,8 @@ class NewsSettings:
 
 class NewsService:
     """Fetch and normalize news from configured providers."""
+
+    CACHE_TTL_SECONDS = 300
 
     CATEGORY_KEYWORDS: dict[NewsCategory, tuple[str, ...]] = {
         "rating_changes": (
@@ -100,6 +103,8 @@ class NewsService:
 
     def __init__(self, settings: NewsSettings | None = None) -> None:
         self.settings = settings or NewsSettings.from_environment()
+        self._general_cache: dict[tuple[object, ...], tuple[float, list[NewsArticle]]] = {}
+        self._ticker_cache: dict[tuple[object, ...], tuple[float, TickerNews]] = {}
 
     def build_news(self, tickers: list[str], per_ticker: int = 5, general_count: int = 8) -> NewsResponse:
         """Return general market news plus per-ticker watchlist news."""
@@ -108,13 +113,31 @@ class NewsService:
         return NewsResponse(
             generated_at=datetime.now(timezone.utc),
             watchlist=normalized_tickers,
-            general_market=self._general_market_news(general_count, warnings),
+            general_market=self._cached_general_market_news(general_count, warnings),
             ticker_news=[
-                self._ticker_news(ticker, per_ticker)
+                self._cached_ticker_news(ticker, per_ticker)
                 for ticker in normalized_tickers
             ],
             warnings=warnings,
         )
+
+    def _cached_general_market_news(self, count: int, warnings: list[str]) -> list[NewsArticle]:
+        key = ("general", count, bool(self.settings.finnhub_api_key))
+        cached = self._general_cache.get(key)
+        if cached is not None and cached[0] > time.monotonic():
+            return [article.model_copy(deep=True) for article in cached[1]]
+        articles = self._general_market_news(count, warnings)
+        self._general_cache[key] = (time.monotonic() + self.CACHE_TTL_SECONDS, [article.model_copy(deep=True) for article in articles])
+        return articles
+
+    def _cached_ticker_news(self, ticker: str, count: int) -> TickerNews:
+        key = (ticker.upper().strip(), count, bool(self.settings.finnhub_api_key))
+        cached = self._ticker_cache.get(key)
+        if cached is not None and cached[0] > time.monotonic():
+            return cached[1].model_copy(deep=True)
+        result = self._ticker_news(ticker, count)
+        self._ticker_cache[key] = (time.monotonic() + self.CACHE_TTL_SECONDS, result.model_copy(deep=True))
+        return result
 
     def _general_market_news(self, count: int, warnings: list[str]) -> list[NewsArticle]:
         if self.settings.finnhub_api_key:

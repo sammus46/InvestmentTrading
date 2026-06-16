@@ -95,7 +95,10 @@ def generate_chart_history(request: ChartHistoryRequest) -> ChartHistoryResponse
 @app.post("/api/reports/pdf")
 def generate_pdf(request: GenerateRequest) -> Response:
     """Generate a PDF report for each requested ticker."""
-    report = generate_levels(request)
+    report = GenerateResponse(
+        generated_at=datetime.now(timezone.utc),
+        metrics=market_data.build_metrics(request.tickers, request.metrics, include_history=True),
+    )
     pdf = pdf_reports.build_pdf(report)
     filename = f"equity-levels-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.pdf"
     return Response(
