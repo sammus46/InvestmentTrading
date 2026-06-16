@@ -20,6 +20,7 @@ MetricName = Literal[
     "technical_levels",
 ]
 NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
+NewsAnalysisStatus = Literal["pending", "analyzed", "failed", "skipped"]
 RecommendationTone = Literal["focus", "watch", "wait", "note"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
@@ -529,6 +530,11 @@ class NewsArticle(BaseModel):
     thumbnail_url: str | None = None
     related_tickers: list[str] = Field(default_factory=list)
     category: NewsCategory = "general"
+    relevance_score: float | None = None
+    impact_score: float | None = None
+    category_confidence: float | None = None
+    analysis_status: NewsAnalysisStatus = "pending"
+    analysis_reason: str | None = None
 
 
 class TickerNews(BaseModel):

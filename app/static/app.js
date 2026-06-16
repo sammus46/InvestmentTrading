@@ -11,6 +11,8 @@ const SETTINGS_STORAGE_KEY = "investment-trading-settings-v1";
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
+const NEWS_ENRICHMENT_POLL_INTERVAL_MS = 2500;
+const NEWS_ENRICHMENT_MAX_POLLS = 4;
 const AUTO_REFRESH_SECONDS = 60;
 const TICKER_MAX_LENGTH = 20;
 const TICKER_PATTERN = /^(?:\^[A-Z0-9][A-Z0-9-]*|[A-Z0-9][A-Z0-9-]*(?:=[A-Z0-9]+)?)$/;
@@ -233,6 +235,9 @@ let reportLayout = loadStoredReportLayout();
 let levelFilter = appSettings.levelFilter;
 let watchlistRefreshTimer = null;
 let autoRefreshTimer = null;
+let newsEnrichmentPollTimer = null;
+let newsEnrichmentPollAttempts = 0;
+let newsEnrichmentPollKey = "";
 const chartOverrides = {};
 const chartDataCache = new Map();
 const chartInstances = new Map();
@@ -1327,15 +1332,64 @@ async function withAnalyticsBusyState(message, callback, request = null) {
 }
 
 async function loadNews() {
+  stopNewsEnrichmentPolling();
   const request = startRequest("news");
   await withNewsBusyState("Loading market and watchlist news...", async () => {
     const news = await postJson("/api/news", buildNewsPayload(), { signal: request.signal });
     if (!request.isCurrent()) return;
     renderNews(news);
+    startNewsEnrichmentPolling(news);
     if (!news.warnings?.length) {
       setNewsStatus("", "");
     }
   }, request);
+}
+
+function startNewsEnrichmentPolling(news) {
+  stopNewsEnrichmentPolling();
+  if (!newsHasPendingAnalysis(news)) return;
+  newsEnrichmentPollAttempts = 0;
+  newsEnrichmentPollKey = JSON.stringify(buildNewsPayload());
+  scheduleNewsEnrichmentPoll();
+}
+
+function scheduleNewsEnrichmentPoll() {
+  if (newsEnrichmentPollAttempts >= NEWS_ENRICHMENT_MAX_POLLS) return;
+  newsEnrichmentPollTimer = window.setTimeout(pollNewsEnrichment, NEWS_ENRICHMENT_POLL_INTERVAL_MS);
+}
+
+async function pollNewsEnrichment() {
+  newsEnrichmentPollTimer = null;
+  newsEnrichmentPollAttempts += 1;
+  const payload = buildNewsPayload();
+  if (JSON.stringify(payload) !== newsEnrichmentPollKey) return;
+  try {
+    const news = await postJson("/api/news", payload);
+    if (JSON.stringify(buildNewsPayload()) !== newsEnrichmentPollKey) return;
+    renderNews(news, { preserveExpanded: true });
+    if (newsHasPendingAnalysis(news)) {
+      scheduleNewsEnrichmentPoll();
+    }
+  } catch (error) {
+    if (!isAbortError(error)) {
+      scheduleNewsEnrichmentPoll();
+    }
+  }
+}
+
+function stopNewsEnrichmentPolling() {
+  if (newsEnrichmentPollTimer) {
+    window.clearTimeout(newsEnrichmentPollTimer);
+    newsEnrichmentPollTimer = null;
+  }
+  newsEnrichmentPollAttempts = 0;
+  newsEnrichmentPollKey = "";
+}
+
+function newsHasPendingAnalysis(news) {
+  return Boolean(news?.ticker_news?.some((group) => (
+    group.articles || []
+  ).some((article) => article.analysis_status === "pending")));
 }
 
 async function loadLevels() {
@@ -1461,9 +1515,11 @@ function filteredReportMetrics() {
   return metrics.filter((metric) => terms.some((term) => String(metric.ticker || "").toUpperCase().includes(term)));
 }
 
-function renderNews(news) {
+function renderNews(news, options = {}) {
   currentNews = news;
-  expandedNewsTickers.clear();
+  if (!options.preserveExpanded) {
+    expandedNewsTickers.clear();
+  }
   newsGeneratedAtEl.textContent = `News refreshed ${new Date(news.generated_at).toLocaleString()}`;
   updateNewsInfoTooltips(news.generated_at);
   renderWarningStatus(news.warnings || []);
