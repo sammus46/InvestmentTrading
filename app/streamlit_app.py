@@ -4875,16 +4875,6 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
     st.button("Add", type="primary", use_container_width=True, on_click=add_pending_tickers)
     if st.session_state.get("watchlist_validation_message"):
         st.warning(str(st.session_state.watchlist_validation_message))
-    if st.button(
-        "▶ Run levels + news",
-        key="streamlit-sidebar-run",
-        type="primary",
-        use_container_width=True,
-        disabled=not bool(st.session_state.watchlist_tickers),
-        help="Refresh levels, news, scanner, market snapshot, and charts for the saved watchlist.",
-    ):
-        st.session_state.sidebar_run_requested = True
-        st.rerun()
 
     for index, ticker in enumerate(list(st.session_state.watchlist_tickers)):
         cols = st.columns([2.6, 1, 1, 1], vertical_alignment="center")
@@ -5315,6 +5305,7 @@ def render_scanner_panel_in_slot(slot: Any, scanner: ScannerResponse) -> None:
     slot.empty()
     with slot.container():
         with st.container(border=True):
+            st.subheader("Scanner")
             render_scanner(scanner)
 
 
@@ -5490,20 +5481,18 @@ def main() -> None:
     if "report_layout" not in st.session_state:
         st.session_state.report_layout = DEFAULT_REPORT_LAYOUT
 
-    sidebar_run_requested = bool(st.session_state.pop("sidebar_run_requested", False))
     auto_refresh_enabled = bool(st.session_state.get("auto_refresh_enabled", True))
     auto_load_enabled = bool(st.session_state.get("auto_load_saved_watchlist", True))
     render_auto_refresh_fragment(bool(tickers) and auto_refresh_enabled, view)
     refresh_token = int(st.session_state.streamlit_refresh_token)
-    if sidebar_run_requested and tickers:
-        refresh_token = bump_streamlit_refresh_token("Refreshing levels and news")
+    manual_refresh_loaded = False
 
     autoload_metrics = tuple(DEFAULT_METRICS)
     try:
         autoload_request = GenerateRequest(tickers=list(tickers), metrics=list(autoload_metrics))
     except ValidationError:
         autoload_request = None
-    if not auto_load_enabled and not sidebar_run_requested and not st.session_state.get("auto_refresh_pending_datasets"):
+    if not auto_load_enabled and not st.session_state.get("auto_refresh_pending_datasets"):
         autoload_request = None
 
     if view == LEVELS_VIEW:
@@ -5513,16 +5502,10 @@ def main() -> None:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Investment Trading Levels")
             with action_col:
-                generate = st.button("Generate Levels", type="primary", use_container_width=True)
+                generate = st.button("Run Levels + Scanner", type="primary", use_container_width=True)
             levels_status_slot = st.empty()
             if st.session_state.levels_status:
                 levels_status_slot.success(st.session_state.levels_status)
-        with st.container(border=True):
-            scanner_text_col, scanner_action_col = st.columns([2.2, 1], vertical_alignment="center")
-            with scanner_text_col:
-                st.subheader("Scanner")
-            with scanner_action_col:
-                run_scanner = st.button("Run Scanner", type="primary", use_container_width=True)
         refresh_news = False
         refresh_analytics = False
         scanner_slot = st.empty()
@@ -5537,7 +5520,6 @@ def main() -> None:
             with action_col:
                 refresh_analytics = st.button("Refresh Analytics", type="primary", use_container_width=True)
         generate = False
-        run_scanner = False
         refresh_news = False
         report_slot = None
         chart_slot = None
@@ -5551,7 +5533,6 @@ def main() -> None:
             with action_col:
                 refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
         generate = False
-        run_scanner = False
         refresh_analytics = False
         report_slot = None
         chart_slot = None
@@ -5564,7 +5545,7 @@ def main() -> None:
             st.error(exc.errors()[0]["msg"])
             return
 
-        refresh_token = bump_streamlit_refresh_token("Generating levels", datasets=("report", "scanner"))
+        refresh_token = bump_streamlit_refresh_token("Running levels and scanner", datasets=("report", "scanner"))
         load_levels_and_scanner_progressively(
             tuple(request.tickers),
             tuple(request.metrics),
@@ -5575,21 +5556,7 @@ def main() -> None:
         )
         mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), datasets=("report", "scanner"))
         st.session_state.levels_status = ""
-
-    if run_scanner:
-        try:
-            request = ScannerRequest(tickers=list(tickers))
-        except ValidationError as exc:
-            st.error(exc.errors()[0]["msg"])
-            return
-
-        refresh_token = bump_streamlit_refresh_token("Refreshing scanner", datasets=("scanner",))
-
-        def refresh_scanner() -> None:
-            st.session_state.scanner = build_scanner(tuple(request.tickers), refresh_token=dataset_refresh_token("scanner"))
-
-        run_refresh_steps(refresh_banner_slot, "Refreshing scanner", [("Running scanner...", refresh_scanner)])
-        mark_streamlit_data_current(tuple(request.tickers), autoload_metrics, refresh_token, datasets=("scanner",))
+        manual_refresh_loaded = True
 
     if refresh_news:
         try:
@@ -5628,6 +5595,7 @@ def main() -> None:
             refresh_token,
             datasets=("news", "market_snapshot"),
         )
+        manual_refresh_loaded = True
 
     if refresh_analytics:
         try:
@@ -5655,13 +5623,14 @@ def main() -> None:
             refresh_token,
             datasets=("sector_analytics",),
         )
+        manual_refresh_loaded = True
 
     if autoload_request is not None:
         autoload_tickers = tuple(autoload_request.tickers)
         autoload_metrics_tuple = tuple(autoload_request.metrics)
         pending_auto_refresh_datasets = tuple(st.session_state.pop("auto_refresh_pending_datasets", ()))
         autoload_datasets = merge_streamlit_datasets(
-            streamlit_autoload_datasets(view, include_news=sidebar_run_requested),
+            streamlit_autoload_datasets(view),
             pending_auto_refresh_datasets,
         )
         stale_datasets = tuple(
@@ -5697,7 +5666,7 @@ def main() -> None:
                 )
                 mark_streamlit_data_current(autoload_tickers, autoload_metrics_tuple, datasets=stale_datasets)
             st.session_state.levels_status = ""
-    else:
+    elif not manual_refresh_loaded:
         st.session_state.report = None
         st.session_state.scanner = None
         st.session_state.sector_analytics = None
