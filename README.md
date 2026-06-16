@@ -184,6 +184,13 @@ For public internet access, put the app behind authentication or a private tunne
 
 For Streamlit Community Cloud, push this repository to GitHub, choose `app/streamlit_app.py` as the main file, and let the platform install dependencies from `pyproject.toml`. Use Python 3.12 or 3.13 in the Streamlit Cloud advanced settings for the most stable dependency resolution. If an existing deployed app is using a different Python version, Streamlit Cloud requires deleting and redeploying the app to change Python versions.
 
+Streamlit Cloud deployment metadata is intentionally guarded:
+
+- Keep `requires-python` bounded with `<4` so Poetry does not solve dependencies against future Python major versions that packages such as `reportlab` do not support.
+- Keep `[tool.poetry] package-mode = false` because this repository is deployed as an app, not installed as a publishable Python package named `investment-trading`.
+- Do not add a `requirements.txt` unless deliberately replacing `pyproject.toml`; Streamlit Community Cloud uses the first dependency file it finds.
+- For future deployment bugs, save the UTC Streamlit logs, record the branch, main file path, Python version, and dependency file used, then add or update a bug note under `debug/bugs/`.
+
 ## Ticker input
 
 Ticker input accepts a comma, space, or newline-separated watchlist. Symbols are normalized before use:
