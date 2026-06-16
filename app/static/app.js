@@ -1336,11 +1336,12 @@ function updateNewsInfoTooltips(generatedAt = null) {
 function loadXTimeline() {
   if (!xNewsEl || xNewsEl.dataset.loaded === "true") return;
   xNewsEl.dataset.loaded = "true";
+  const timelineTheme = isDarkMode() ? "dark" : "light";
   xNewsEl.innerHTML = `
     <a
       class="twitter-timeline"
       data-height="520"
-      data-theme="light"
+      data-theme="${timelineTheme}"
       data-dnt="true"
       href="https://twitter.com/unusual_whales?ref_src=twsrc%5Etfw"
     >
