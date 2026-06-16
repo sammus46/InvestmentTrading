@@ -210,6 +210,7 @@ def test_streamlit_settings_load_from_watchlist_only_state(tmp_path):
     assert settings["chart_interval"] == "5m"
     assert settings["auto_load"] is True
     assert settings["auto_refresh"] is True
+    assert settings["scanner_view"] == "auto"
     assert settings["news_per_ticker"] == 10
     assert settings["level_weights"] == {}
 
@@ -223,6 +224,7 @@ def test_streamlit_settings_normalize_invalid_values():
             "chart_type": "Bars",
             "chart_range": "5Y",
             "chart_interval": "1m",
+            "scanner_view": "bad",
             "auto_load": False,
             "auto_refresh": False,
             "news_per_ticker": 999,
@@ -236,6 +238,7 @@ def test_streamlit_settings_normalize_invalid_values():
     assert settings["chart_type"] == "Line"
     assert settings["chart_range"] == "5Y"
     assert settings["chart_interval"] == "1mo"
+    assert settings["scanner_view"] == "auto"
     assert settings["auto_load"] is False
     assert settings["auto_refresh"] is False
     assert settings["news_per_ticker"] == 20
@@ -265,6 +268,7 @@ def test_save_streamlit_settings_preserves_watchlist(tmp_path):
             "default_view": "Stock News",
             "report_layout": "compact",
             "level_filter": "scanner",
+            "scanner_view": "cards",
             "chart_type": "Candles",
             "chart_range": "1Y",
             "chart_interval": "1d",
@@ -281,6 +285,7 @@ def test_save_streamlit_settings_preserves_watchlist(tmp_path):
     assert payload["settings"]["default_view"] == "Stock News"
     assert payload["settings"]["report_layout"] == "compact"
     assert payload["settings"]["level_filter"] == "scanner"
+    assert payload["settings"]["scanner_view"] == "cards"
     assert payload["settings"]["chart_type"] == "Candles"
     assert payload["settings"]["news_per_ticker"] == 6
     assert payload["settings"]["level_weights"] == {"PM High": 19}
@@ -658,6 +663,7 @@ def test_render_scanner_outputs_setup_html_table(monkeypatch):
     markdown_calls = []
     info_calls = []
 
+    monkeypatch.setitem(streamlit_app_module.st.session_state, "scanner_view", "table")
     monkeypatch.setattr(
         streamlit_app_module.st,
         "markdown",
@@ -757,9 +763,49 @@ def test_scanner_setup_table_html_formats_scores_and_tones():
     assert "8/8" in html
     assert "5/8" in html
     assert "0/8" in html
-    assert "streamlit-scanner-score-bar" in html
+    assert "--score-width:100.0%" in html
+    assert "streamlit-scanner-score-bar" not in html
+    assert 'title="Turning Up"' in html
+    assert 'title="+2.5%  Strong ↑↑"' in html
+    assert ">++</span>" in html
+    assert ">!</span>" in html
+    assert ">T</span>" in html
+    assert ">W</span>" in html
+    assert "+2.50%" in html
     for tone in ("tone-strong", "tone-good", "tone-watch", "tone-danger", "tone-neutral", "tone-info"):
         assert tone in html
+
+
+def test_scanner_setup_html_renders_table_and_card_views():
+    report = ScannerResponse(
+        generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        watchlist=["AAPL"],
+        setup_rows=[
+            ScannerSetupRow(
+                ticker="AAPL",
+                price=100,
+                score=8,
+                signal="Reclaimed VWAP",
+                risk_reward=3.2,
+                setup_level="VWAP",
+                setup_distance_percent=0.2,
+                vwap_extension_percent=0.4,
+                rs_vs_spy_percent=2.5,
+                momentum="Turning Up",
+            )
+        ],
+    )
+
+    auto_html = streamlit_app_module.scanner_setup_html(report)
+    card_html = streamlit_app_module.scanner_setup_html(report, "cards")
+    table_html = streamlit_app_module.scanner_setup_html(report, "table")
+
+    assert 'class="streamlit-scanner-render view-auto"' in auto_html
+    assert 'class="streamlit-scanner-render view-cards"' in card_html
+    assert 'class="streamlit-scanner-render view-table"' in table_html
+    assert "streamlit-scanner-card-list" in card_html
+    assert "streamlit-scanner-card-primary" in card_html
+    assert "streamlit-scanner-table-panel" in auto_html
 
 
 def test_scanner_setup_table_html_escapes_values_and_renders_reasons():

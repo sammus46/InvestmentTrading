@@ -89,11 +89,34 @@ LEVELS_VIEW = "Investment Trading Levels"
 NEWS_VIEW = "Stock News"
 ANALYTICS_VIEW = "Sector Analytics"
 STREAMLIT_VIEWS = (LEVELS_VIEW, NEWS_VIEW, ANALYTICS_VIEW)
+SCANNER_VIEW_OPTIONS = ("auto", "table", "cards")
+SCANNER_VIEW_LABELS = {
+    "auto": "Auto",
+    "table": "Table",
+    "cards": "Cards",
+}
+SCANNER_SORT_OPTIONS = {
+    "score": "Setup score",
+    "ticker": "Ticker",
+    "price": "Price",
+    "signal": "Signal",
+    "vwap_extension_percent": "VWAP extension",
+    "rs_vs_spy_percent": "RS vs SPY",
+    "rs_vs_sector_percent": "RS vs sector",
+    "support_confidence": "Support confidence",
+    "resistance_confidence": "Resistance confidence",
+    "risk_reward": "Risk/reward",
+    "setup_distance_percent": "Distance from setup",
+    "lows_held": "Lows held",
+    "off_high_percent": "Distance from high",
+    "momentum": "Momentum",
+}
 STREAMLIT_DEFAULT_SETTINGS = {
     "default_view": LEVELS_VIEW,
     "report_layout": DEFAULT_REPORT_LAYOUT,
     "level_filter": DEFAULT_LEVEL_FILTER,
     "level_weights": {},
+    "scanner_view": "auto",
     "chart_type": "Line",
     "chart_range": "1D",
     "chart_interval": "5m",
@@ -361,6 +384,12 @@ def normalize_chart_type(value: object) -> str:
     return candidate if candidate in CHART_TYPE_OPTIONS else str(STREAMLIT_DEFAULT_SETTINGS["chart_type"])
 
 
+def normalize_scanner_view(value: object) -> str:
+    """Return a supported scanner presentation mode."""
+    candidate = str(value or "")
+    return candidate if candidate in SCANNER_VIEW_OPTIONS else str(STREAMLIT_DEFAULT_SETTINGS["scanner_view"])
+
+
 def normalize_chart_range(value: object) -> ChartRange:
     """Return a supported chart range."""
     candidate = str(value or "")
@@ -417,6 +446,7 @@ def normalize_streamlit_settings(value: object) -> dict[str, Any]:
         "report_layout": normalize_report_layout(source.get("report_layout")),
         "level_filter": normalize_level_filter(source.get("level_filter")),
         "level_weights": normalize_level_weights(source.get("level_weights")),
+        "scanner_view": normalize_scanner_view(source.get("scanner_view")),
         "chart_type": normalize_chart_type(source.get("chart_type")),
         "chart_range": chart_range,
         "chart_interval": normalize_chart_interval(chart_range, source.get("chart_interval")),
@@ -992,20 +1022,100 @@ def render_app_chrome() -> str:
             padding: 0.55rem 0.7rem;
             text-transform: uppercase;
           }
-          .streamlit-scanner-card {
-            background: #ffffff;
-            border: 1px solid #d5ddd9;
-            border-radius: 0.5rem;
-            box-shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
-            margin: 1rem 0;
+          .streamlit-scanner-render {
+            display: grid;
+            gap: 0.75rem;
             min-width: 0;
-            overflow: hidden;
-            padding: 1.25rem;
           }
-          .streamlit-scanner-card h2,
-          .streamlit-scanner-card h3,
-          .streamlit-scanner-card p {
-            color: #111827;
+          .streamlit-scanner-card-panel {
+            display: none;
+          }
+          .streamlit-scanner-render.view-cards .streamlit-scanner-table-panel {
+            display: none;
+          }
+          .streamlit-scanner-render.view-cards .streamlit-scanner-card-panel {
+            display: block;
+          }
+          .streamlit-scanner-card {
+            background: var(--surface-bg, #ffffff);
+            border: 1px solid var(--border-soft, #dbe3ef);
+            border-left: 4px solid var(--border-soft, #dbe3ef);
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.65rem;
+            min-width: 0;
+            padding: 0.75rem;
+          }
+          .streamlit-scanner-card.tone-strong { border-left-color: var(--signal-strong-fg, #166534); }
+          .streamlit-scanner-card.tone-good { border-left-color: var(--signal-good-fg, #0f766e); }
+          .streamlit-scanner-card.tone-watch { border-left-color: var(--signal-watch-fg, #92400e); }
+          .streamlit-scanner-card.tone-danger { border-left-color: var(--signal-danger-fg, #991b1b); }
+          .streamlit-scanner-card-list {
+            display: grid;
+            gap: 0.65rem;
+          }
+          .streamlit-scanner-card-header {
+            align-items: center;
+            display: flex;
+            gap: 0.65rem;
+            justify-content: space-between;
+          }
+          .streamlit-scanner-card-header h3 {
+            color: var(--text, #111827);
+            font-size: 1rem;
+            letter-spacing: 0.04em;
+            margin: 0;
+          }
+          .streamlit-scanner-card-header span {
+            color: var(--text-muted, #64748b);
+            font-size: 0.8rem;
+            font-weight: 700;
+          }
+          .streamlit-scanner-card-primary,
+          .streamlit-scanner-card-zones,
+          .streamlit-scanner-card-secondary {
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+          }
+          .streamlit-scanner-card-secondary {
+            grid-template-columns: repeat(auto-fit, minmax(5.4rem, 1fr));
+          }
+          .streamlit-scanner-card-metric {
+            background: var(--surface-soft, #f8fafc);
+            border: 1px solid var(--border-soft, #dbe3ef);
+            border-radius: 0.5rem;
+            min-width: 0;
+            padding: 0.45rem 0.5rem;
+          }
+          .streamlit-scanner-card-metric.wide {
+            grid-column: span 2;
+          }
+          .streamlit-scanner-card-metric > span {
+            color: var(--text-muted, #64748b);
+            display: block;
+            font-size: 0.65rem;
+            font-weight: 850;
+            letter-spacing: 0.04em;
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+          }
+          .streamlit-scanner-card-metric > div {
+            color: var(--text, #111827);
+            font-size: 0.82rem;
+            min-width: 0;
+            overflow-wrap: anywhere;
+          }
+          .streamlit-scanner-card-warning {
+            background: var(--warning-bg, #fef3c7);
+            border-radius: 0.5rem;
+            color: var(--warning-text, #92400e) !important;
+            font-size: 0.8rem;
+            margin: 0;
+            padding: 0.5rem 0.6rem;
+          }
+          .streamlit-scanner-card .streamlit-scanner-card-warning {
+            color: var(--warning-text, #92400e) !important;
           }
           .streamlit-scanner-table-wrap {
             border: 1px solid var(--border-soft, #dbe3ef);
@@ -1021,7 +1131,7 @@ def render_app_chrome() -> str:
             background: var(--surface-bg, #ffffff);
             border-collapse: separate;
             border-spacing: 0;
-            min-width: 1240px;
+            min-width: 1180px;
             width: 100%;
           }
           .streamlit-scanner-table th {
@@ -1029,9 +1139,9 @@ def render_app_chrome() -> str:
             border-bottom: 1px solid var(--border-soft, #dbe3ef);
             color: var(--text-muted, #64748b) !important;
             font-size: 0.68rem;
-            font-weight: 900;
-            letter-spacing: 0.06em;
-            padding: 0.55rem 0.65rem;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            padding: 0.5rem 0.56rem;
             position: sticky;
             text-align: left;
             text-transform: uppercase;
@@ -1042,10 +1152,24 @@ def render_app_chrome() -> str:
           .streamlit-scanner-table td {
             border-bottom: 1px solid var(--border-soft, #dbe3ef);
             color: var(--text, #111827) !important;
-            font-size: 0.84rem;
-            padding: 0.62rem 0.65rem;
-            vertical-align: top;
+            font-size: 0.82rem;
+            padding: 0.5rem 0.56rem;
+            vertical-align: middle;
             white-space: nowrap;
+          }
+          .streamlit-scanner-table th.align-center,
+          .streamlit-scanner-table td.align-center {
+            text-align: center;
+          }
+          .streamlit-scanner-table th.align-right,
+          .streamlit-scanner-table td.align-right {
+            text-align: right;
+          }
+          .streamlit-scanner-table td.wrap {
+            line-height: 1.35;
+            max-width: 12rem;
+            min-width: 8rem;
+            white-space: normal;
           }
           .streamlit-scanner-table tr:last-child td {
             border-bottom: 0;
@@ -1072,11 +1196,13 @@ def render_app_chrome() -> str:
             align-items: center;
             border-radius: 999px;
             display: inline-flex;
-            font-size: 0.76rem;
-            font-weight: 900;
+            font-size: 0.74rem;
+            font-weight: 800;
             gap: 0.35rem;
             justify-content: center;
-            min-width: 3.6rem;
+            line-height: 1;
+            min-height: 1.45rem;
+            min-width: 2.6rem;
             padding: 0.24rem 0.48rem;
           }
           .streamlit-scanner-pill.tone-strong {
@@ -1103,25 +1229,61 @@ def render_app_chrome() -> str:
             background: var(--signal-info-bg, #dbeafe);
             color: var(--signal-info-fg, #1d4ed8) !important;
           }
+          .streamlit-scanner-symbol {
+            min-width: 1.65rem;
+            padding-left: 0.38rem;
+            padding-right: 0.38rem;
+          }
           .streamlit-scanner-score {
-            min-width: 5.25rem;
-          }
-          .streamlit-scanner-score-bar {
-            background: color-mix(in srgb, currentColor 20%, transparent);
+            --score-fill: #e2e8f0;
+            align-items: center;
+            background: var(--surface-soft, #f8fafc);
+            border: 1px solid var(--border-soft, #dbe3ef);
             border-radius: 999px;
+            color: var(--text-muted, #334155) !important;
             display: inline-flex;
-            height: 0.38rem;
+            font-size: 0.76rem;
+            font-weight: 850;
+            justify-content: center;
+            line-height: 1;
+            min-height: 1.6rem;
+            min-width: 4.25rem;
             overflow: hidden;
-            width: 2rem;
+            padding: 0.24rem 0.56rem;
+            position: relative;
           }
-          .streamlit-scanner-score-bar span {
-            background: currentColor;
-            border-radius: inherit;
-            display: block;
-            height: 100%;
+          .streamlit-scanner-score::before {
+            background: var(--score-fill);
+            content: "";
+            inset: 0 auto 0 0;
+            opacity: 0.78;
+            position: absolute;
+            width: var(--score-width, 0%);
           }
+          .streamlit-scanner-score > span {
+            position: relative;
+            z-index: 1;
+          }
+          .streamlit-scanner-score.tone-strong { --score-fill: var(--signal-strong-bg, #dcfce7); border-color: var(--signal-strong-fg, #166534); color: var(--signal-strong-fg, #166534) !important; }
+          .streamlit-scanner-score.tone-good { --score-fill: var(--signal-good-bg, #ccfbf1); border-color: var(--signal-good-fg, #0f766e); color: var(--signal-good-fg, #0f766e) !important; }
+          .streamlit-scanner-score.tone-watch { --score-fill: var(--signal-watch-bg, #fef3c7); border-color: var(--signal-watch-fg, #92400e); color: var(--signal-watch-fg, #92400e) !important; }
+          .streamlit-scanner-score.tone-danger { --score-fill: var(--signal-danger-bg, #fee2e2); border-color: var(--signal-danger-fg, #991b1b); color: var(--signal-danger-fg, #991b1b) !important; }
+          .streamlit-scanner-score.tone-neutral { --score-fill: var(--signal-neutral-bg, #f1f5f9); border-color: var(--signal-neutral-fg, #64748b); color: var(--signal-neutral-fg, #64748b) !important; }
           .streamlit-scanner-text {
+            font-weight: 700;
+          }
+          .streamlit-scanner-ticker {
             font-weight: 800;
+            letter-spacing: 0.03em;
+          }
+          .streamlit-scanner-metric-combo {
+            align-items: center;
+            display: inline-flex;
+            gap: 0.3rem;
+            justify-content: center;
+          }
+          .streamlit-scanner-metric-combo > span:first-child {
+            font-variant-numeric: tabular-nums;
           }
           .streamlit-scanner-text.tone-strong,
           .streamlit-scanner-text.tone-good {
@@ -1149,13 +1311,39 @@ def render_app_chrome() -> str:
             white-space: normal;
           }
           .streamlit-scanner-zone {
-            font-weight: 900;
+            color: var(--text, #111827) !important;
+            font-weight: 750;
           }
           .streamlit-scanner-warning-row td {
             background: var(--warning-bg, #fef3c7);
             color: var(--warning-text, #92400e) !important;
             font-weight: 800;
             white-space: normal;
+          }
+          @media (max-width: 760px) {
+            .streamlit-scanner-render.view-auto .streamlit-scanner-table-panel {
+              display: none;
+            }
+            .streamlit-scanner-render.view-auto .streamlit-scanner-card-panel {
+              display: block;
+            }
+            .streamlit-scanner-card-primary,
+            .streamlit-scanner-card-zones {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .streamlit-scanner-card-secondary {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+          }
+          @media (max-width: 460px) {
+            .streamlit-scanner-card-primary,
+            .streamlit-scanner-card-zones,
+            .streamlit-scanner-card-secondary {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .streamlit-scanner-card-metric.wide {
+              grid-column: 1 / -1;
+            }
           }
           .streamlit-scanner-data-notes {
             background: var(--surface-soft, #f8fafc);
@@ -3328,6 +3516,73 @@ def render_scanner_global_notes(label: str, messages: list[str], *, expanded: bo
             st.caption(message)
 
 
+def render_streamlit_scanner_sort_controls(scanner_view: str) -> None:
+    """Render compact scanner sort controls for card-capable layouts."""
+    if scanner_view == "table":
+        return
+    if st.session_state.get("scanner_sort_key") not in SCANNER_SORT_OPTIONS:
+        st.session_state.scanner_sort_key = "score"
+    if st.session_state.get("scanner_sort_direction") not in {"desc", "asc"}:
+        st.session_state.scanner_sort_direction = "desc"
+    render_index = int(st.session_state.get("_scanner_sort_render_index", 0)) + 1
+    st.session_state._scanner_sort_render_index = render_index
+    sort_key = f"scanner_sort_key_control_{render_index}"
+    direction_key = f"scanner_sort_direction_control_{render_index}"
+    st.session_state[sort_key] = st.session_state.scanner_sort_key
+    st.session_state[direction_key] = st.session_state.scanner_sort_direction
+    sort_col, direction_col = st.columns([1, 0.42], vertical_alignment="center")
+    with sort_col:
+        st.selectbox(
+            "Scanner sort",
+            tuple(SCANNER_SORT_OPTIONS),
+            format_func=lambda value: SCANNER_SORT_OPTIONS.get(value, value),
+            key=sort_key,
+            on_change=sync_streamlit_scanner_sort_control,
+            args=(sort_key, "scanner_sort_key"),
+        )
+    with direction_col:
+        st.radio(
+            "Direction",
+            ("desc", "asc"),
+            format_func=lambda value: "Desc" if value == "desc" else "Asc",
+            horizontal=True,
+            key=direction_key,
+            on_change=sync_streamlit_scanner_sort_control,
+            args=(direction_key, "scanner_sort_direction"),
+        )
+
+
+def sync_streamlit_scanner_sort_control(widget_key: str, target_key: str) -> None:
+    """Copy a unique scanner sort widget value into the canonical setting."""
+    st.session_state[target_key] = st.session_state.get(widget_key, st.session_state.get(target_key))
+
+
+def scanner_sort_value(row: ScannerSetupRow, key: str) -> object:
+    """Return a stable display-sort value for one scanner row."""
+    value = getattr(row, key, None)
+    if isinstance(value, str):
+        return value.casefold()
+    return value
+
+
+def sorted_scanner_response(report: ScannerResponse) -> ScannerResponse:
+    """Return a copy of the scanner response sorted by Streamlit controls."""
+    key = st.session_state.get("scanner_sort_key", "score")
+    if key not in SCANNER_SORT_OPTIONS:
+        key = "score"
+    direction = st.session_state.get("scanner_sort_direction", "desc")
+    filled: list[ScannerSetupRow] = []
+    empty: list[ScannerSetupRow] = []
+    for row in report.setup_rows:
+        value = scanner_sort_value(row, key)
+        if value is None or value == "":
+            empty.append(row)
+        else:
+            filled.append(row)
+    filled.sort(key=lambda row: scanner_sort_value(row, key), reverse=direction == "desc")
+    return report.model_copy(update={"setup_rows": filled + empty})
+
+
 def render_scanner(report: ScannerResponse) -> None:
     """Render setup scanner rows."""
     visible_warnings, pattern_notes = split_scanner_global_messages(report.warnings)
@@ -3339,7 +3594,9 @@ def render_scanner(report: ScannerResponse) -> None:
         st.info("No setup scanner rows were returned.")
         return
 
-    st.markdown(scanner_setup_table_html(report), unsafe_allow_html=True)
+    scanner_view = normalize_scanner_view(st.session_state.get("scanner_view", STREAMLIT_DEFAULT_SETTINGS["scanner_view"]))
+    render_streamlit_scanner_sort_controls(scanner_view)
+    st.markdown(scanner_setup_html(sorted_scanner_response(report), scanner_view), unsafe_allow_html=True)
 
 
 def render_pattern_analysis(report: Any) -> None:
@@ -3481,12 +3738,13 @@ def scanner_dash_html() -> str:
     return '<span class="streamlit-scanner-muted">&mdash;</span>'
 
 
-def scanner_pill_html(label: str, tone: str | None, *, extra_class: str = "") -> str:
+def scanner_pill_html(label: str, tone: str | None, *, extra_class: str = "", title: str | None = None) -> str:
     """Return a compact scanner pill."""
     classes = f"streamlit-scanner-pill tone-{scanner_tone_class(tone)}"
     if extra_class:
         classes = f"{classes} {extra_class}"
-    return f'<span class="{classes}">{escape(label)}</span>'
+    title_attr = f' title="{escape(title)}" aria-label="{escape(title)}"' if title else ""
+    return f'<span class="{classes}"{title_attr}>{escape(label)}</span>'
 
 
 def scanner_empty_pill_html(*, extra_class: str = "") -> str:
@@ -3504,6 +3762,14 @@ def scanner_text_html(label: str | None, tone: str | None = None) -> str:
     return f'<span class="streamlit-scanner-text tone-{scanner_tone_class(tone)}">{escape(label)}</span>'
 
 
+def scanner_titled_text_html(label: str | None, tone: str | None = None, *, title: str | None = None) -> str:
+    """Return colored scanner text with the full source label preserved in a title."""
+    if not label:
+        return scanner_dash_html()
+    title_attr = f' title="{escape(title)}"' if title else ""
+    return f'<span class="streamlit-scanner-text tone-{scanner_tone_class(tone)}"{title_attr}>{escape(label)}</span>'
+
+
 def scanner_score_tone(score: int | None) -> str:
     """Return scanner setup-score tone."""
     if score is None:
@@ -3518,16 +3784,16 @@ def scanner_score_tone(score: int | None) -> str:
 
 
 def scanner_score_html(score: int | None) -> str:
-    """Return visible setup score with a tiny fill bar."""
+    """Return visible setup score with a background fill."""
     if score is None:
         return scanner_empty_pill_html(extra_class="streamlit-scanner-score")
     number = max(0, min(8, int(score)))
     width = round((number / 8) * 100, 1)
     tone = scanner_score_tone(number)
     return (
-        f'<span class="streamlit-scanner-pill streamlit-scanner-score tone-{tone}">'
+        f'<span class="streamlit-scanner-score tone-{tone}" style="--score-width:{width}%;" '
+        f'title="{number}/8 setup score" aria-label="{number} out of 8 setup score">'
         f"<span>{number}/8</span>"
-        f'<span class="streamlit-scanner-score-bar"><span style="width:{width}%"></span></span>'
         "</span>"
     )
 
@@ -3549,7 +3815,7 @@ def scanner_confidence_html(value: int | None) -> str:
     """Return support/resistance confidence pill."""
     if value is None:
         return scanner_empty_pill_html()
-    return scanner_pill_html(str(value), scanner_confidence_tone(value))
+    return scanner_pill_html(str(value), scanner_confidence_tone(value), title=f"{value} confidence")
 
 
 def scanner_risk_reward_tone(value: float | None) -> str:
@@ -3569,7 +3835,8 @@ def scanner_risk_reward_html(value: float | None) -> str:
     """Return risk/reward pill."""
     if value is None:
         return scanner_empty_pill_html()
-    return scanner_pill_html(f"{value:.1f}R", scanner_risk_reward_tone(value))
+    label = f"{value:.1f}R"
+    return scanner_pill_html(label, scanner_risk_reward_tone(value), title=f"{label} risk/reward")
 
 
 def scanner_lows_held_html(value: int | None) -> str:
@@ -3577,30 +3844,55 @@ def scanner_lows_held_html(value: int | None) -> str:
     if not value:
         return scanner_empty_pill_html()
     tone = "strong" if value >= 3 else "good" if value >= 2 else "watch"
-    return scanner_pill_html(f"{value}x", tone)
+    return scanner_pill_html(f"{value}x", tone, title=f"{value} lows held")
 
 
 def scanner_range_html(value: str | None) -> str:
-    """Return range-compression pill."""
+    """Return range-compression symbol."""
     if not value:
         return scanner_empty_pill_html()
+    symbol = "T" if value == "Tight" else "W" if value == "Wide" else "0"
     tone = "good" if value == "Tight" else "danger" if value == "Wide" else "neutral"
-    return scanner_pill_html(value, tone)
+    return scanner_pill_html(symbol, tone, extra_class="streamlit-scanner-symbol", title=value)
 
 
 def scanner_momentum_html(value: str | None) -> str:
-    """Return momentum pill."""
+    """Return momentum symbol."""
     if not value:
         return scanner_empty_pill_html()
     if value == "Turning Up":
-        tone = "strong"
+        symbol, tone = "++", "strong"
     elif value == "Ticking Up":
-        tone = "good"
+        symbol, tone = "+", "good"
     elif value == "Still Falling":
-        tone = "danger"
+        symbol, tone = "--", "danger"
     else:
-        tone = "neutral"
-    return scanner_pill_html(value, tone)
+        symbol, tone = "0", "neutral"
+    return scanner_pill_html(symbol, tone, extra_class="streamlit-scanner-symbol", title=value)
+
+
+def scanner_metric_combo_html(value: str | None, symbol: str, tone: str, title: str | None) -> str:
+    """Return a numeric value with a compact status symbol."""
+    if not value:
+        return scanner_dash_html()
+    full_title = title or value
+    return (
+        f'<span class="streamlit-scanner-metric-combo" title="{escape(full_title)}" aria-label="{escape(full_title)}">'
+        f"<span>{escape(value)}</span>"
+        f'{scanner_pill_html(symbol, tone, extra_class="streamlit-scanner-symbol", title=full_title)}'
+        "</span>"
+    )
+
+
+def scanner_signal_html(value: str | None) -> str:
+    """Return compact signal text."""
+    if not value:
+        return scanner_dash_html()
+    if value.startswith("Reclaimed "):
+        return scanner_titled_text_html(f"+ {value.replace('Reclaimed ', '')}", "strong", title=value)
+    if value.startswith("Rejecting "):
+        return scanner_titled_text_html(f"- {value.replace('Rejecting ', '')}", "danger", title=value)
+    return scanner_titled_text_html(value, scanner_signal_tone(value), title=value)
 
 
 def scanner_vwap_tone(percent: float | None, label: str | None) -> str:
@@ -3617,6 +3909,32 @@ def scanner_vwap_tone(percent: float | None, label: str | None) -> str:
     return "good"
 
 
+def scanner_vwap_symbol(percent: float | None, label: str | None) -> str:
+    """Return compact VWAP state symbol."""
+    text = label or ""
+    if percent is None:
+        return "0"
+    if "Chase" in text or "Extended" in text or percent >= 0.75:
+        return "!"
+    if "Below" in text or percent < -0.75:
+        return "-"
+    if "Near" in text or "Inline" in text or percent < 0:
+        return "0"
+    return "+"
+
+
+def scanner_vwap_html(percent: float | None, label: str | None) -> str:
+    """Return VWAP percent with compact status symbol."""
+    if percent is None:
+        return scanner_text_html(label, "neutral") if label else scanner_dash_html()
+    return scanner_metric_combo_html(
+        f"{percent:+.2f}%",
+        scanner_vwap_symbol(percent, label),
+        scanner_vwap_tone(percent, label),
+        label or "VWAP extension",
+    )
+
+
 def scanner_relative_strength_tone(percent: float | None, label: str | None) -> str:
     """Return relative-strength tone."""
     text = label or ""
@@ -3629,6 +3947,34 @@ def scanner_relative_strength_tone(percent: float | None, label: str | None) -> 
     if "Weak" in text:
         return "danger"
     return "neutral"
+
+
+def scanner_relative_strength_symbol(percent: float | None, label: str | None) -> str:
+    """Return compact relative-strength symbol."""
+    text = label or ""
+    if percent is None:
+        return "0"
+    if "Very Weak" in text or "↓↓" in text or percent <= -2:
+        return "--"
+    if "Weak" in text or percent < -0.75:
+        return "-"
+    if "↑↑" in text or percent >= 2:
+        return "++"
+    if "Strong" in text or percent > 0.75:
+        return "+"
+    return "0"
+
+
+def scanner_relative_strength_html(percent: float | None, label: str | None) -> str:
+    """Return relative-strength percent with compact status symbol."""
+    if percent is None:
+        return scanner_text_html(label, "neutral") if label else scanner_dash_html()
+    return scanner_metric_combo_html(
+        f"{percent:+.2f}%",
+        scanner_relative_strength_symbol(percent, label),
+        scanner_relative_strength_tone(percent, label),
+        label or "Relative strength inline",
+    )
 
 
 def scanner_signal_tone(value: str | None) -> str:
@@ -3705,53 +4051,56 @@ def scanner_data_notes_html(report: ScannerResponse) -> str:
     )
 
 
-def scanner_setup_table_html(report: ScannerResponse) -> str:
+def scanner_setup_table_html(report: ScannerResponse, *, include_notes: bool = True) -> str:
     """Return an app-owned HTML setup scanner table with reliable visual cues."""
     columns = [
-        "Score",
-        "Ticker",
-        "Price",
-        "Signal",
-        "VWAP Ext",
-        "RS vs SPY",
-        "RS vs Sec",
-        "Best Support",
-        "Sup Conf",
-        "Best Resistance",
-        "Res Conf",
-        "R/R",
-        "Setup At",
-        "% Away",
-        "Lows Held",
-        "Range",
-        "Off High",
-        "Momentum",
+        ("Score", "Setup score", "align-center"),
+        ("Ticker", "Ticker", ""),
+        ("Price", "Current price", "align-right"),
+        ("Sig", "Signal", ""),
+        ("VWAP", "VWAP extension", "align-center"),
+        ("RS SPY", "Relative strength versus SPY", "align-center"),
+        ("RS Sec", "Relative strength versus sector ETF", "align-center"),
+        ("Support", "Best support", "wrap"),
+        ("S Conf", "Support confidence", "align-center"),
+        ("Resist", "Best resistance", "wrap"),
+        ("R Conf", "Resistance confidence", "align-center"),
+        ("R/R", "Risk/reward", "align-center"),
+        ("Setup", "Setup level", ""),
+        ("Away", "Distance from setup level", "align-right"),
+        ("Lows", "Lows held", "align-center"),
+        ("Range", "Range compression", "align-center"),
+        ("High", "Distance from high", "align-right"),
+        ("Mom", "Momentum", "align-center"),
     ]
-    header_html = "".join(f"<th>{escape(column)}</th>" for column in columns)
+    header_html = "".join(
+        f'<th class="{css_class}" title="{escape(title)}">{escape(label)}</th>' for label, title, css_class in columns
+    )
     body_rows: list[str] = []
     for row in report.setup_rows:
         score_tone = scanner_score_tone(row.score)
         cells = [
-            scanner_score_html(row.score),
-            f"<strong>{escape(row.ticker)}</strong>",
-            scanner_plain_html(fmt(row.price)),
-            scanner_text_html(row.signal, scanner_signal_tone(row.signal)),
-            scanner_text_html(row.vwap_extension_label, scanner_vwap_tone(row.vwap_extension_percent, row.vwap_extension_label)),
-            scanner_text_html(row.rs_vs_spy_label, scanner_relative_strength_tone(row.rs_vs_spy_percent, row.rs_vs_spy_label)),
-            scanner_text_html(row.rs_vs_sector_label, scanner_relative_strength_tone(row.rs_vs_sector_percent, row.rs_vs_sector_label)),
-            scanner_zone_html(row.best_support, row.support_reason),
-            scanner_confidence_html(row.support_confidence),
-            scanner_zone_html(row.best_resistance, row.resistance_reason),
-            scanner_confidence_html(row.resistance_confidence),
-            scanner_risk_reward_html(row.risk_reward),
-            scanner_plain_html(row.setup_level),
-            scanner_percent_html(row.setup_distance_percent, scanner_setup_distance_tone(row.setup_distance_percent)),
-            scanner_lows_held_html(row.lows_held),
-            scanner_range_html(row.range_compression),
-            scanner_percent_html(row.off_high_percent, scanner_off_high_tone(row.off_high_percent)),
-            scanner_momentum_html(row.momentum),
+            ("align-center", scanner_score_html(row.score)),
+            ("", f'<span class="streamlit-scanner-ticker">{escape(row.ticker)}</span>'),
+            ("align-right", scanner_plain_html(fmt(row.price))),
+            ("", scanner_signal_html(row.signal)),
+            ("align-center", scanner_vwap_html(row.vwap_extension_percent, row.vwap_extension_label)),
+            ("align-center", scanner_relative_strength_html(row.rs_vs_spy_percent, row.rs_vs_spy_label)),
+            ("align-center", scanner_relative_strength_html(row.rs_vs_sector_percent, row.rs_vs_sector_label)),
+            ("wrap", scanner_zone_html(row.best_support, row.support_reason)),
+            ("align-center", scanner_confidence_html(row.support_confidence)),
+            ("wrap", scanner_zone_html(row.best_resistance, row.resistance_reason)),
+            ("align-center", scanner_confidence_html(row.resistance_confidence)),
+            ("align-center", scanner_risk_reward_html(row.risk_reward)),
+            ("", scanner_plain_html(row.setup_level)),
+            ("align-right", scanner_percent_html(row.setup_distance_percent, scanner_setup_distance_tone(row.setup_distance_percent))),
+            ("align-center", scanner_lows_held_html(row.lows_held)),
+            ("align-center", scanner_range_html(row.range_compression)),
+            ("align-right", scanner_percent_html(row.off_high_percent, scanner_off_high_tone(row.off_high_percent))),
+            ("align-center", scanner_momentum_html(row.momentum)),
         ]
-        body_rows.append(f'<tr class="tone-{score_tone}">{"".join(f"<td>{cell}</td>" for cell in cells)}</tr>')
+        cell_html = "".join(f'<td class="{css_class}">{cell}</td>' for css_class, cell in cells)
+        body_rows.append(f'<tr class="tone-{score_tone}">{cell_html}</tr>')
         if row.warnings:
             warnings = " ".join(escape(warning) for warning in row.warnings)
             body_rows.append(
@@ -3764,6 +4113,76 @@ def scanner_setup_table_html(report: ScannerResponse) -> str:
         f"<thead><tr>{header_html}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody>"
         "</table>"
+        "</div>"
+        f"{scanner_data_notes_html(report) if include_notes else ''}"
+    )
+
+
+def scanner_card_metric_html(label: str, value: str, *, wide: bool = False) -> str:
+    """Return one metric tile for Streamlit scanner cards."""
+    wide_class = " wide" if wide else ""
+    return (
+        f'<div class="streamlit-scanner-card-metric{wide_class}">'
+        f"<span>{escape(label)}</span>"
+        f"<div>{value}</div>"
+        "</div>"
+    )
+
+
+def scanner_setup_cards_html(report: ScannerResponse) -> str:
+    """Return responsive card markup for setup scanner rows."""
+    cards: list[str] = []
+    for row in report.setup_rows:
+        tone = scanner_score_tone(row.score)
+        warning_html = ""
+        if row.warnings:
+            warnings = " ".join(escape(warning) for warning in row.warnings)
+            warning_html = f'<p class="streamlit-scanner-card-warning"><strong>{escape(row.ticker)}:</strong> {warnings}</p>'
+        cards.append(
+            '<article class="streamlit-scanner-card '
+            f'tone-{tone}">'
+            '<header class="streamlit-scanner-card-header">'
+            f"<div><h3>{escape(row.ticker)}</h3><span>{escape(fmt(row.price))}</span></div>"
+            f"{scanner_score_html(row.score)}"
+            "</header>"
+            '<div class="streamlit-scanner-card-primary">'
+            f'{scanner_card_metric_html("Signal", scanner_signal_html(row.signal), wide=True)}'
+            f'{scanner_card_metric_html("R/R", scanner_risk_reward_html(row.risk_reward))}'
+            f'{scanner_card_metric_html("Setup", scanner_plain_html(row.setup_level))}'
+            f'{scanner_card_metric_html("Away", scanner_percent_html(row.setup_distance_percent, scanner_setup_distance_tone(row.setup_distance_percent)))}'
+            "</div>"
+            '<div class="streamlit-scanner-card-zones">'
+            f'{scanner_card_metric_html("Support", scanner_zone_html(row.best_support, row.support_reason), wide=True)}'
+            f'{scanner_card_metric_html("S Conf", scanner_confidence_html(row.support_confidence))}'
+            f'{scanner_card_metric_html("Resist", scanner_zone_html(row.best_resistance, row.resistance_reason), wide=True)}'
+            f'{scanner_card_metric_html("R Conf", scanner_confidence_html(row.resistance_confidence))}'
+            "</div>"
+            '<div class="streamlit-scanner-card-secondary">'
+            f'{scanner_card_metric_html("VWAP", scanner_vwap_html(row.vwap_extension_percent, row.vwap_extension_label))}'
+            f'{scanner_card_metric_html("RS SPY", scanner_relative_strength_html(row.rs_vs_spy_percent, row.rs_vs_spy_label))}'
+            f'{scanner_card_metric_html("RS Sec", scanner_relative_strength_html(row.rs_vs_sector_percent, row.rs_vs_sector_label))}'
+            f'{scanner_card_metric_html("Lows", scanner_lows_held_html(row.lows_held))}'
+            f'{scanner_card_metric_html("Range", scanner_range_html(row.range_compression))}'
+            f'{scanner_card_metric_html("High", scanner_percent_html(row.off_high_percent, scanner_off_high_tone(row.off_high_percent)))}'
+            f'{scanner_card_metric_html("Mom", scanner_momentum_html(row.momentum))}'
+            "</div>"
+            f"{warning_html}"
+            "</article>"
+        )
+    return '<div class="streamlit-scanner-card-list">' + "".join(cards) + "</div>"
+
+
+def scanner_setup_html(report: ScannerResponse, scanner_view: str = "auto") -> str:
+    """Return scanner setup markup for the selected responsive view."""
+    view = normalize_scanner_view(scanner_view)
+    return (
+        f'<div class="streamlit-scanner-render view-{view}">'
+        '<section class="streamlit-scanner-table-panel">'
+        f"{scanner_setup_table_html(report, include_notes=False)}"
+        "</section>"
+        '<section class="streamlit-scanner-card-panel">'
+        f"{scanner_setup_cards_html(report)}"
+        "</section>"
         "</div>"
         f"{scanner_data_notes_html(report)}"
     )
@@ -3862,6 +4281,7 @@ def ensure_streamlit_settings() -> None:
     st.session_state.report_layout = settings["report_layout"]
     st.session_state.level_filter = settings["level_filter"]
     st.session_state.level_weights = settings["level_weights"]
+    st.session_state.scanner_view = settings["scanner_view"]
     st.session_state["global-chart-type"] = settings["chart_type"]
     st.session_state.chart_range = settings["chart_range"]
     st.session_state.chart_interval = settings["chart_interval"]
@@ -3880,6 +4300,7 @@ def current_streamlit_settings() -> dict[str, Any]:
             "report_layout": st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT),
             "level_filter": st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER),
             "level_weights": st.session_state.get("level_weights", {}),
+            "scanner_view": st.session_state.get("scanner_view", STREAMLIT_DEFAULT_SETTINGS["scanner_view"]),
             "chart_type": st.session_state.get("global-chart-type", "Line"),
             "chart_range": chart_range,
             "chart_interval": st.session_state.get("chart_interval", CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]),
@@ -4006,6 +4427,7 @@ def render_streamlit_settings_panel() -> None:
     st.session_state.settings_default_view = settings["default_view"]
     st.session_state.settings_report_layout = settings["report_layout"]
     st.session_state.settings_level_filter = settings["level_filter"]
+    st.session_state.settings_scanner_view = settings["scanner_view"]
     st.session_state.settings_chart_type = settings["chart_type"]
     st.session_state.settings_chart_range = settings["chart_range"]
     st.session_state.settings_chart_interval = settings["chart_interval"]
@@ -4045,6 +4467,12 @@ def render_streamlit_settings_panel() -> None:
             format_func=level_filter_label,
             key="settings_level_filter",
         )
+        st.selectbox(
+            "Scanner view",
+            SCANNER_VIEW_OPTIONS,
+            format_func=lambda value: SCANNER_VIEW_LABELS.get(value, value),
+            key="settings_scanner_view",
+        )
         st.radio("Chart type", CHART_TYPE_OPTIONS, horizontal=True, key="settings_chart_type")
         chart_range = st.selectbox(
             "Chart range",
@@ -4067,6 +4495,7 @@ def render_streamlit_settings_panel() -> None:
         settings["default_view"] != st.session_state.settings_default_view
         or settings["report_layout"] != st.session_state.settings_report_layout
         or settings["level_filter"] != st.session_state.settings_level_filter
+        or settings["scanner_view"] != st.session_state.settings_scanner_view
         or settings["chart_type"] != st.session_state.settings_chart_type
         or settings["chart_range"] != st.session_state.settings_chart_range
         or settings["chart_interval"] != st.session_state.settings_chart_interval
@@ -4080,6 +4509,7 @@ def render_streamlit_settings_panel() -> None:
     st.session_state.active_view = st.session_state.settings_default_view
     st.session_state.report_layout = st.session_state.settings_report_layout
     st.session_state.level_filter = st.session_state.settings_level_filter
+    st.session_state.scanner_view = normalize_scanner_view(st.session_state.settings_scanner_view)
     st.session_state["global-chart-type"] = st.session_state.settings_chart_type
     st.session_state.chart_range = st.session_state.settings_chart_range
     st.session_state.chart_interval = st.session_state.settings_chart_interval

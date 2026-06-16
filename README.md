@@ -296,7 +296,7 @@ curl -X POST http://127.0.0.1:8000/api/scanner \
   -d '{"tickers":"AAPL, MSFT, NVDA","include_setup":true,"include_patterns":true}'
 ```
 
-The scanner uses the same saved watchlist as the levels and news views. In the browser UI it autoloads for a saved watchlist and can still be rerun manually. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, lows-held, and momentum cells are color-coded for faster scanning.
+The scanner uses the same saved watchlist as the levels and news views. In the browser UI it autoloads for a saved watchlist and can still be rerun manually. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, relative strength, VWAP state, lows-held, range, and momentum cells use compact color/symbol coding for faster scanning, and the browser plus Streamlit UIs can render the scanner as an auto-responsive table/cards view.
 
 Download a PDF report:
 

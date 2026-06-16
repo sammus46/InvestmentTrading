@@ -66,12 +66,38 @@ const DEFAULT_SETTINGS = {
   chartSettings: DEFAULT_CHART_SETTINGS,
   autoLoad: true,
   autoRefresh: true,
+  scannerView: "auto",
   newsPerTicker: NEWS_EXPANDED_HEADLINE_COUNT,
 };
 const LEVEL_FILTERS = [
   { id: "all", label: "All Levels", shortLabel: "All" },
   { id: "scanner", label: "Scanner Levels Only", shortLabel: "Scanner" },
   { id: "weight_20", label: "Weight 20+ Only", shortLabel: "Weight 20+" },
+];
+const SCANNER_VIEW_OPTIONS = [
+  { id: "auto", label: "Auto" },
+  { id: "table", label: "Table" },
+  { id: "cards", label: "Cards" },
+];
+const SCANNER_COLUMNS = [
+  { key: "score", label: "Score", title: "Setup score", cell: "score", align: "center" },
+  { key: "ticker", label: "Ticker", title: "Ticker", cell: "ticker" },
+  { key: "price", label: "Price", title: "Current price", cell: "price", align: "right" },
+  { key: "signal", label: "Sig", title: "Signal", cell: "signal" },
+  { key: "vwap_extension_percent", label: "VWAP", title: "VWAP extension", cell: "vwap", align: "center" },
+  { key: "rs_vs_spy_percent", label: "RS SPY", title: "Relative strength versus SPY", cell: "rsSpy", align: "center" },
+  { key: "rs_vs_sector_percent", label: "RS Sec", title: "Relative strength versus sector ETF", cell: "rsSector", align: "center" },
+  { key: "best_support", label: "Support", title: "Best support", cell: "support", wrap: true },
+  { key: "support_confidence", label: "S Conf", title: "Support confidence", cell: "supportConfidence", align: "center" },
+  { key: "best_resistance", label: "Resist", title: "Best resistance", cell: "resistance", wrap: true },
+  { key: "resistance_confidence", label: "R Conf", title: "Resistance confidence", cell: "resistanceConfidence", align: "center" },
+  { key: "risk_reward", label: "R/R", title: "Risk/reward", cell: "riskReward", align: "center" },
+  { key: "setup_level", label: "Setup", title: "Setup level", cell: "setupLevel" },
+  { key: "setup_distance_percent", label: "Away", title: "Distance from setup level", cell: "setupDistance", align: "right" },
+  { key: "lows_held", label: "Lows", title: "Lows held", cell: "lowsHeld", align: "center" },
+  { key: "range_compression", label: "Range", title: "Range compression", cell: "range", align: "center" },
+  { key: "off_high_percent", label: "High", title: "Distance from high", cell: "offHigh", align: "right" },
+  { key: "momentum", label: "Mom", title: "Momentum", cell: "momentum", align: "center" },
 ];
 let RANGE_INTERVALS = {
   "1D": ["1m", "2m", "5m", "15m", "30m", "1h"],
@@ -184,6 +210,7 @@ const settingsAutoLoadEl = document.querySelector("#setting-auto-load");
 const settingsAutoRefreshEl = document.querySelector("#setting-auto-refresh");
 const settingsReportLayoutEl = document.querySelector("#setting-report-layout");
 const settingsLevelFilterEl = document.querySelector("#setting-level-filter");
+const settingsScannerViewEl = document.querySelector("#setting-scanner-view");
 const levelFilterSelectEl = document.querySelector("#level-filter");
 const settingsChartTypeEl = document.querySelector("#setting-chart-type");
 const settingsChartRangeEl = document.querySelector("#setting-chart-range");
@@ -335,6 +362,14 @@ settingsLevelFilterEl?.addEventListener("change", () => {
   setLevelFilter(settingsLevelFilterEl.value);
 });
 
+settingsScannerViewEl?.addEventListener("change", () => {
+  updateSettings({ scannerView: settingsScannerViewEl.value });
+  renderSettingsControls();
+  if (currentScanner) {
+    renderScannerSetup(currentScanner.setup_rows || []);
+  }
+});
+
 settingsChartTypeEl?.addEventListener("change", () => {
   updateGlobalChartSetting("type", settingsChartTypeEl.value);
 });
@@ -385,11 +420,31 @@ runScannerButton.addEventListener("click", async () => {
 
 scannerSetupEl.addEventListener("click", (event) => {
   const sortButton = event.target.closest("[data-scanner-sort]");
-  if (!sortButton || !currentScanner) return;
-  const key = sortButton.dataset.scannerSort;
+  if (sortButton && currentScanner) {
+    const key = sortButton.dataset.scannerSort;
+    scannerSort = {
+      key,
+      direction: scannerSort.key === key && scannerSort.direction === "desc" ? "asc" : "desc",
+    };
+    renderScannerSetup(currentScanner.setup_rows || []);
+    return;
+  }
+  const directionButton = event.target.closest("[data-scanner-sort-direction]");
+  if (directionButton && currentScanner) {
+    scannerSort = {
+      ...scannerSort,
+      direction: scannerSort.direction === "desc" ? "asc" : "desc",
+    };
+    renderScannerSetup(currentScanner.setup_rows || []);
+  }
+});
+
+scannerSetupEl.addEventListener("change", (event) => {
+  const sortSelect = event.target.closest("[data-scanner-sort-select]");
+  if (!sortSelect || !currentScanner) return;
   scannerSort = {
-    key,
-    direction: scannerSort.key === key && scannerSort.direction === "desc" ? "asc" : "desc",
+    ...scannerSort,
+    key: sortSelect.value,
   };
   renderScannerSetup(currentScanner.setup_rows || []);
 });
@@ -668,6 +723,7 @@ function normalizeSettings(candidate = {}) {
     chartSettings: chart,
     autoLoad: typeof candidate.autoLoad === "boolean" ? candidate.autoLoad : DEFAULT_SETTINGS.autoLoad,
     autoRefresh: typeof candidate.autoRefresh === "boolean" ? candidate.autoRefresh : DEFAULT_SETTINGS.autoRefresh,
+    scannerView: normalizeScannerView(candidate.scannerView),
     newsPerTicker: normalizeNewsCount(candidate.newsPerTicker),
   };
 }
@@ -686,6 +742,10 @@ function persistSettings() {
 
 function normalizeLevelFilter(value) {
   return LEVEL_FILTERS.some((item) => item.id === value) ? value : DEFAULT_SETTINGS.levelFilter;
+}
+
+function normalizeScannerView(value) {
+  return SCANNER_VIEW_OPTIONS.some((item) => item.id === value) ? value : DEFAULT_SETTINGS.scannerView;
 }
 
 function normalizeNewsCount(value) {
@@ -758,6 +818,9 @@ function renderSettingsControls() {
   renderReportLayoutControl();
   renderLevelFilterControl();
   renderChartSettingsControls();
+  if (settingsScannerViewEl) {
+    settingsScannerViewEl.value = appSettings.scannerView;
+  }
   if (settingsNewsCountEl) settingsNewsCountEl.value = String(appSettings.newsPerTicker);
 }
 
@@ -1469,61 +1532,150 @@ function renderScannerSetup(rows) {
     return;
   }
   const sorted = [...rows].sort((left, right) => compareScannerRows(left, right, scannerSort.key, scannerSort.direction));
-  const columns = [
-    ["score", "Score"],
-    ["ticker", "Ticker"],
-    ["price", "Price"],
-    ["signal", "Signal"],
-    ["vwap_extension_percent", "VWAP Ext"],
-    ["rs_vs_spy_percent", "RS vs SPY"],
-    ["rs_vs_sector_percent", "RS vs Sec"],
-    ["best_support", "Best Support"],
-    ["support_confidence", "Sup Conf"],
-    ["best_resistance", "Best Resistance"],
-    ["resistance_confidence", "Res Conf"],
-    ["risk_reward", "R/R"],
-    ["setup_level", "Setup At"],
-    ["setup_distance_percent", "% Away"],
-    ["lows_held", "Lows Held"],
-    ["range_compression", "Range"],
-    ["off_high_percent", "Off High"],
-    ["momentum", "Momentum"],
-  ];
   const dataNotes = sorted.flatMap((row) => (row.data_notes || []).map((note) => ({ ticker: row.ticker, note })));
-  scannerSetupEl.className = "scanner-table-wrap";
+  const viewMode = normalizeScannerView(appSettings.scannerView);
+  scannerSetupEl.className = `scanner-results scanner-view-${viewMode}`;
   scannerSetupEl.innerHTML = `
-    <table class="scanner-table">
-      <thead>
-        <tr>${columns.map(([key, label]) => `<th><button type="button" data-scanner-sort="${key}">${label}${scannerSort.key === key ? `<span>${scannerSort.direction === "desc" ? " desc" : " asc"}</span>` : ""}</button></th>`).join("")}</tr>
-      </thead>
-      <tbody>
-        ${sorted.map((row) => `
-          <tr>
-            <td>${renderScore(row.score)}</td>
-            <td><strong>${escapeHtml(row.ticker)}</strong></td>
-            <td>${formatValue(row.price)}</td>
-            <td>${formatScannerText(row.signal)}</td>
-            <td>${formatScannerText(row.vwap_extension_label)}</td>
-            <td>${formatScannerText(row.rs_vs_spy_label)}</td>
-            <td>${formatScannerText(row.rs_vs_sector_label)}</td>
-            <td>${formatScannerText(row.best_support)}</td>
-            <td>${formatValue(row.support_confidence)}</td>
-            <td>${formatScannerText(row.best_resistance)}</td>
-            <td>${formatValue(row.resistance_confidence)}</td>
-            <td>${row.risk_reward ? `${formatValue(row.risk_reward)}R` : "&mdash;"}</td>
-            <td>${formatScannerText(row.setup_level)}</td>
-            <td>${formatPercent(row.setup_distance_percent)}</td>
-            <td>${renderLowsHeld(row.lows_held)}</td>
-            <td>${formatScannerText(row.range_compression)}</td>
-            <td>${formatPercent(row.off_high_percent)}</td>
-            <td>${renderMomentum(row.momentum)}</td>
-          </tr>
-          ${row.warnings?.length ? `<tr class="scanner-warning-row"><td colspan="${columns.length}">${row.warnings.map(escapeHtml).join(" ")}</td></tr>` : ""}
-        `).join("")}
-      </tbody>
-    </table>
+    <section class="scanner-table-section" aria-label="Scanner table">
+      ${renderScannerTable(sorted)}
+    </section>
+    <section class="scanner-card-results" aria-label="Scanner cards">
+      ${renderScannerCardSortControls()}
+      <div class="scanner-card-list">
+        ${sorted.map(renderScannerCard).join("")}
+      </div>
+    </section>
     ${renderScannerDataNotes(dataNotes)}
   `;
+}
+
+function renderScannerTable(rows) {
+  return `
+    <div class="scanner-table-wrap">
+      <table class="scanner-table">
+      <thead>
+        <tr>${SCANNER_COLUMNS.map(renderScannerHeaderCell).join("")}</tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr class="tone-${scannerScoreTone(row.score)}">
+            ${SCANNER_COLUMNS.map((column) => `<td class="${scannerColumnClass(column)}">${renderScannerTableCell(row, column)}</td>`).join("")}
+          </tr>
+          ${row.warnings?.length ? `<tr class="scanner-warning-row"><td colspan="${SCANNER_COLUMNS.length}"><strong>${escapeHtml(row.ticker)}:</strong> ${row.warnings.map(escapeHtml).join(" ")}</td></tr>` : ""}
+        `).join("")}
+      </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderScannerHeaderCell(column) {
+  const active = scannerSort.key === column.key;
+  const direction = scannerSort.direction === "desc" ? "desc" : "asc";
+  return `
+    <th class="${scannerColumnClass(column)}" title="${escapeHtml(column.title)}">
+      <button type="button" data-scanner-sort="${escapeHtml(column.key)}" aria-label="Sort scanner by ${escapeHtml(column.title)}">
+        ${escapeHtml(column.label)}
+        ${active ? `<span class="scanner-sort-indicator">${direction}</span>` : ""}
+      </button>
+    </th>
+  `;
+}
+
+function renderScannerCardSortControls() {
+  return `
+    <div class="scanner-card-toolbar">
+      <label for="scanner-card-sort">
+        <span>Sort</span>
+        <select id="scanner-card-sort" data-scanner-sort-select>
+          ${SCANNER_COLUMNS.map((column) => `
+            <option value="${escapeHtml(column.key)}" ${scannerSort.key === column.key ? "selected" : ""}>${escapeHtml(column.title)}</option>
+          `).join("")}
+        </select>
+      </label>
+      <button type="button" data-scanner-sort-direction aria-label="Toggle scanner sort direction">
+        ${scannerSort.direction === "desc" ? "Desc" : "Asc"}
+      </button>
+    </div>
+  `;
+}
+
+function renderScannerCard(row) {
+  const tone = scannerScoreTone(row.score);
+  return `
+    <article class="scanner-card tone-${tone}">
+      <header class="scanner-card-header">
+        <div>
+          <h3>${escapeHtml(row.ticker)}</h3>
+          <span>${formatValue(row.price)}</span>
+        </div>
+        ${renderScore(row.score)}
+      </header>
+      <div class="scanner-card-primary">
+        ${renderScannerCardMetric("Signal", renderSignal(row.signal), { wide: true })}
+        ${renderScannerCardMetric("R/R", renderRiskReward(row.risk_reward))}
+        ${renderScannerCardMetric("Setup", formatScannerText(row.setup_level))}
+        ${renderScannerCardMetric("Away", renderPercentText(row.setup_distance_percent, scannerSetupDistanceTone(row.setup_distance_percent)))}
+      </div>
+      <div class="scanner-card-zones">
+        ${renderScannerCardMetric("Support", renderScannerZone(row.best_support), { wide: true })}
+        ${renderScannerCardMetric("S Conf", renderConfidence(row.support_confidence))}
+        ${renderScannerCardMetric("Resist", renderScannerZone(row.best_resistance), { wide: true })}
+        ${renderScannerCardMetric("R Conf", renderConfidence(row.resistance_confidence))}
+      </div>
+      <div class="scanner-card-secondary">
+        ${renderScannerCardMetric("VWAP", renderVwap(row.vwap_extension_percent, row.vwap_extension_label))}
+        ${renderScannerCardMetric("RS SPY", renderRelativeStrength(row.rs_vs_spy_percent, row.rs_vs_spy_label))}
+        ${renderScannerCardMetric("RS Sec", renderRelativeStrength(row.rs_vs_sector_percent, row.rs_vs_sector_label))}
+        ${renderScannerCardMetric("Lows", renderLowsHeld(row.lows_held))}
+        ${renderScannerCardMetric("Range", renderRange(row.range_compression))}
+        ${renderScannerCardMetric("High", renderPercentText(row.off_high_percent, scannerOffHighTone(row.off_high_percent)))}
+        ${renderScannerCardMetric("Mom", renderMomentum(row.momentum))}
+      </div>
+      ${row.warnings?.length ? `<p class="scanner-card-warning"><strong>${escapeHtml(row.ticker)}:</strong> ${row.warnings.map(escapeHtml).join(" ")}</p>` : ""}
+    </article>
+  `;
+}
+
+function renderScannerCardMetric(label, value, options = {}) {
+  return `
+    <div class="scanner-card-metric${options.wide ? " wide" : ""}">
+      <span>${escapeHtml(label)}</span>
+      <div>${value}</div>
+    </div>
+  `;
+}
+
+function scannerColumnClass(column) {
+  return [
+    `scanner-cell-${column.cell}`,
+    column.align ? `align-${column.align}` : "",
+    column.wrap ? "wrap" : "",
+  ].filter(Boolean).join(" ");
+}
+
+function renderScannerTableCell(row, column) {
+  const cells = {
+    score: () => renderScore(row.score),
+    ticker: () => `<span class="scanner-ticker">${escapeHtml(row.ticker)}</span>`,
+    price: () => formatValue(row.price),
+    signal: () => renderSignal(row.signal),
+    vwap: () => renderVwap(row.vwap_extension_percent, row.vwap_extension_label),
+    rsSpy: () => renderRelativeStrength(row.rs_vs_spy_percent, row.rs_vs_spy_label),
+    rsSector: () => renderRelativeStrength(row.rs_vs_sector_percent, row.rs_vs_sector_label),
+    support: () => renderScannerZone(row.best_support),
+    supportConfidence: () => renderConfidence(row.support_confidence),
+    resistance: () => renderScannerZone(row.best_resistance),
+    resistanceConfidence: () => renderConfidence(row.resistance_confidence),
+    riskReward: () => renderRiskReward(row.risk_reward),
+    setupLevel: () => formatScannerText(row.setup_level),
+    setupDistance: () => renderPercentText(row.setup_distance_percent, scannerSetupDistanceTone(row.setup_distance_percent)),
+    lowsHeld: () => renderLowsHeld(row.lows_held),
+    range: () => renderRange(row.range_compression),
+    offHigh: () => renderPercentText(row.off_high_percent, scannerOffHighTone(row.off_high_percent)),
+    momentum: () => renderMomentum(row.momentum),
+  };
+  return cells[column.cell]?.() || "&mdash;";
 }
 
 function renderScannerDataNotes(notes) {
@@ -2427,31 +2579,178 @@ function compareScannerRows(left, right, key, direction) {
   return String(leftValue).localeCompare(String(rightValue)) * factor;
 }
 
-function renderScore(score) {
-  if (score === null || score === undefined) return '<span class="scanner-pill neutral">&mdash;</span>';
+function scannerDash() {
+  return '<span class="scanner-muted">&mdash;</span>';
+}
+
+function scannerToneClass(tone) {
+  return ["strong", "good", "watch", "danger", "neutral", "info"].includes(tone) ? tone : "neutral";
+}
+
+function scannerScoreTone(score) {
+  if (score === null || score === undefined) return "neutral";
   const number = Number(score);
-  let tone = "danger";
-  if (number >= 7) tone = "strong";
-  else if (number >= 5) tone = "good";
-  else if (number >= 3) tone = "watch";
-  return `<span class="scanner-pill ${tone}">${number}/8</span>`;
+  if (number >= 7) return "strong";
+  if (number >= 5) return "good";
+  if (number >= 3) return "watch";
+  return "danger";
+}
+
+function renderScore(score) {
+  if (score === null || score === undefined) return scannerPill("&mdash;", "neutral", "Missing setup score");
+  const number = Math.max(0, Math.min(8, Number(score)));
+  const width = Math.round((number / 8) * 1000) / 10;
+  const tone = scannerScoreTone(number);
+  const label = `${number}/8`;
+  return `
+    <span class="scanner-score tone-${tone}" style="--score-width:${width}%;" title="${escapeHtml(label)} setup score" aria-label="${escapeHtml(number)} out of 8 setup score">
+      <span>${escapeHtml(label)}</span>
+    </span>
+  `;
+}
+
+function scannerPill(label, tone, title = label, extraClass = "") {
+  return `<span class="scanner-pill ${scannerToneClass(tone)} ${extraClass}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${label}</span>`;
+}
+
+function scannerSymbol(symbol, tone, title) {
+  return scannerPill(escapeHtml(symbol), tone, title, "scanner-symbol");
+}
+
+function renderScannerText(value, tone = "neutral", title = value) {
+  if (value === null || value === undefined || value === "") return scannerDash();
+  return `<span class="scanner-text tone-${scannerToneClass(tone)}" title="${escapeHtml(title)}">${escapeHtml(value)}</span>`;
+}
+
+function renderSignal(signal) {
+  if (!signal) return scannerDash();
+  const text = String(signal);
+  if (text.startsWith("Reclaimed ")) {
+    const level = text.replace("Reclaimed ", "");
+    return renderScannerText(`+ ${level}`, "strong", text);
+  }
+  if (text.startsWith("Rejecting ")) {
+    const level = text.replace("Rejecting ", "");
+    return renderScannerText(`- ${level}`, "danger", text);
+  }
+  return renderScannerText(text, "neutral", text);
+}
+
+function renderMetricCombo(value, symbol, tone, title) {
+  if (value === null || value === undefined || value === "") return scannerDash();
+  return `
+    <span class="scanner-metric-combo" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
+      <span>${escapeHtml(value)}</span>
+      ${scannerSymbol(symbol, tone, title)}
+    </span>
+  `;
+}
+
+function renderVwap(percent, label) {
+  if (percent === null || percent === undefined || percent === "") return label ? renderScannerText(label, "neutral", label) : scannerDash();
+  const text = String(label || "");
+  const value = formatSignedPercent(percent);
+  if (/chase|extended/i.test(text) || Number(percent) >= 0.75) return renderMetricCombo(value, "!", "watch", text || "VWAP extended");
+  if (/below/i.test(text) || Number(percent) < -0.75) return renderMetricCombo(value, "-", "danger", text || "Below VWAP");
+  if (/near|inline/i.test(text) || Number(percent) < 0) return renderMetricCombo(value, "0", "info", text || "Near VWAP");
+  return renderMetricCombo(value, "+", "good", text || "Healthy VWAP extension");
+}
+
+function relativeStrengthSymbol(percent, label) {
+  const text = String(label || "");
+  const number = Number(percent);
+  if (/very weak|↓↓/.test(text.toLowerCase()) || number <= -2) return ["--", "danger"];
+  if (/weak/.test(text.toLowerCase()) || number < -0.75) return ["-", "danger"];
+  if (/↑↑/.test(text) || number >= 2) return ["++", "strong"];
+  if (/strong/i.test(text) || number > 0.75) return ["+", "good"];
+  return ["0", "neutral"];
+}
+
+function renderRelativeStrength(percent, label) {
+  if (percent === null || percent === undefined || percent === "") return label ? renderScannerText(label, "neutral", label) : scannerDash();
+  const [symbol, tone] = relativeStrengthSymbol(percent, label);
+  return renderMetricCombo(formatSignedPercent(percent), symbol, tone, label || "Relative strength inline");
+}
+
+function renderScannerZone(zone) {
+  if (!zone) return scannerDash();
+  return `<span class="scanner-zone" title="${escapeHtml(zone)}">${escapeHtml(zone)}</span>`;
+}
+
+function scannerConfidenceTone(value) {
+  if (value === null || value === undefined) return "neutral";
+  const number = Number(value);
+  if (number >= 80) return "strong";
+  if (number >= 65) return "good";
+  if (number >= 50) return "watch";
+  return "danger";
+}
+
+function renderConfidence(value) {
+  if (value === null || value === undefined || value === "") return scannerDash();
+  return scannerPill(escapeHtml(value), scannerConfidenceTone(value), `${value} confidence`);
+}
+
+function scannerRiskRewardTone(value) {
+  if (value === null || value === undefined) return "neutral";
+  const number = Number(value);
+  if (number >= 3) return "strong";
+  if (number >= 2) return "good";
+  if (number >= 1) return "watch";
+  return "danger";
+}
+
+function renderRiskReward(value) {
+  if (value === null || value === undefined || value === "") return scannerDash();
+  const label = `${formatValue(value)}R`;
+  return scannerPill(escapeHtml(label), scannerRiskRewardTone(value), `${label} risk/reward`);
 }
 
 function renderLowsHeld(lowsHeld) {
-  if (!lowsHeld) return '<span class="scanner-pill neutral">&mdash;</span>';
+  if (!lowsHeld) return scannerDash();
   const number = Number(lowsHeld);
   const tone = number >= 3 ? "strong" : number >= 2 ? "good" : "watch";
-  return `<span class="scanner-pill ${tone}">${number}x</span>`;
+  return scannerPill(`${escapeHtml(number)}x`, tone, `${number} lows held`);
+}
+
+function renderRange(range) {
+  if (!range) return scannerDash();
+  const normalized = String(range).toLowerCase();
+  const symbol = normalized === "tight" ? "T" : normalized === "wide" ? "W" : "0";
+  const tone = normalized === "tight" ? "good" : normalized === "wide" ? "danger" : "neutral";
+  return scannerSymbol(symbol, tone, range);
 }
 
 function renderMomentum(momentum) {
-  if (!momentum) return '<span class="scanner-pill neutral">&mdash;</span>';
+  if (!momentum) return scannerDash();
   const normalized = String(momentum).toLowerCase();
-  let tone = "neutral";
-  if (normalized === "turning up") tone = "strong";
-  else if (normalized === "ticking up") tone = "good";
-  else if (normalized === "still falling") tone = "danger";
-  return `<span class="scanner-pill ${tone}">${escapeHtml(momentum)}</span>`;
+  if (normalized === "turning up") return scannerSymbol("++", "strong", momentum);
+  if (normalized === "ticking up") return scannerSymbol("+", "good", momentum);
+  if (normalized === "still falling") return scannerSymbol("--", "danger", momentum);
+  return scannerSymbol("0", "neutral", momentum);
+}
+
+function scannerSetupDistanceTone(value) {
+  if (value === null || value === undefined) return "neutral";
+  const distance = Math.abs(Number(value));
+  if (distance <= 0.25) return "strong";
+  if (distance <= 0.5) return "good";
+  if (distance <= 1) return "watch";
+  return "neutral";
+}
+
+function scannerOffHighTone(value) {
+  if (value === null || value === undefined) return "neutral";
+  const number = Number(value);
+  if (number > 0) return "strong";
+  if (number >= -3 && number <= -0.5) return "good";
+  if (number > -0.5 && number <= 0) return "watch";
+  return "danger";
+}
+
+function renderPercentText(value, tone = "neutral") {
+  if (value === null || value === undefined || value === "") return scannerDash();
+  return renderScannerText(formatPercent(value), tone, formatPercent(value));
 }
 
 function renderRecommendationTone(tone) {
