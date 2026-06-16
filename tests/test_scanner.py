@@ -1,13 +1,13 @@
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from app.main import generate_scanner
-from app.models import ScannerRequest, ScannerResponse, ScannerSetupRow
+from app.models import PatternDayDetail, PatternHeatmapRow, PatternSummaryRow, ScannerRequest, ScannerResponse, ScannerSetupRow
 from app.services.market_data import MarketDataService
-from app.services.scanner import ScannerService
+from app.services.scanner import BUCKETS_ET, ScannerService
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -69,6 +69,33 @@ def test_analyze_setup_scores_level_hold_and_momentum():
     assert setup is not None
     assert setup["score"] >= 1
     assert setup["nearest_name"] in {"PM High", "VWAP", "Prev Low", "PM Low"}
+
+
+def test_analyze_setup_vectorized_counts_match_level_touch_rules():
+    service = ScannerService()
+    today = datetime.now(EASTERN).date()
+    index = pd.DatetimeIndex(
+        [datetime.combine(today, time(9, 30), tzinfo=EASTERN) + timedelta(minutes=offset * 5) for offset in range(5)]
+    )
+    frame = pd.DataFrame(
+        {
+            "Open": [10.30, 10.05, 10.10, 10.20, 10.25],
+            "High": [10.50, 10.20, 10.25, 10.30, 10.35],
+            "Low": [10.30, 9.99, 10.01, 10.02, 10.02],
+            "Close": [10.40, 10.10, 10.10, 10.20, 10.30],
+            "Volume": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    data = {"price": 10.1, "today_vwap": 10.0}
+
+    setup = service._analyze_setup(data, frame)
+
+    assert setup is not None
+    assert setup["nearest_name"] == "VWAP"
+    assert setup["consec"] == 4
+    assert setup["hold_count"] == 4
+    assert setup["momentum"] == "Turning Up"
 
 
 def test_intraday_ema_requires_today_regular_session_bars():
@@ -245,8 +272,94 @@ def test_pattern_analysis_builds_summary_heatmap_and_details(monkeypatch):
     summary, heatmap, details = result
     assert summary.ticker == "AAPL"
     assert summary.consistency_percent == 100
-    assert len(heatmap.values) == len(service.build_scanner(["AAPL"], include_setup=False).pattern_buckets)
+    assert len(heatmap.values) == len(BUCKETS_ET)
     assert details
+
+
+def test_merge_scanner_responses_sorts_and_preserves_output_shape():
+    generated_at = datetime(2026, 6, 15, tzinfo=timezone.utc)
+    first = ScannerResponse(
+        generated_at=generated_at,
+        watchlist=["MSFT", "AAPL"],
+        setup_rows=[
+            ScannerSetupRow(ticker="MSFT", score=3),
+            ScannerSetupRow(ticker="AAPL", score=8),
+        ],
+        pattern_summary=[
+            PatternSummaryRow(
+                sector="Technology",
+                ticker="MSFT",
+                total_days=10,
+                dip_days=5,
+                consistency_percent=50,
+                average_dip_percent=-0.7,
+                average_recovery_percent=0.3,
+            )
+        ],
+        pattern_heatmap=[PatternHeatmapRow(ticker="MSFT", sector="Technology", values=[0.1])],
+        pattern_details=[
+            PatternDayDetail(
+                ticker="MSFT",
+                date=date(2026, 6, 12),
+                morning_low_percent=-0.5,
+                morning_low_time="10:00",
+                recovery_to_close_percent=0.2,
+                dip_in_window=True,
+                day_low_percent=-0.6,
+                day_low_time="10:05",
+                close_from_open_percent=0.1,
+            )
+        ],
+        warnings=["MSFT warning"],
+    )
+    second = ScannerResponse(
+        generated_at=generated_at + timedelta(minutes=1),
+        watchlist=["NVDA", "TSLA"],
+        setup_rows=[
+            ScannerSetupRow(ticker="NVDA", score=8),
+            ScannerSetupRow(ticker="TSLA", score=None),
+        ],
+        pattern_summary=[
+            PatternSummaryRow(
+                sector="Consumer Cyclical",
+                ticker="TSLA",
+                total_days=10,
+                dip_days=7,
+                consistency_percent=70,
+                average_dip_percent=-1.2,
+                average_recovery_percent=0.8,
+                top_low_times=["10:15 (3x)"],
+            )
+        ],
+        pattern_heatmap=[PatternHeatmapRow(ticker="TSLA", sector="Consumer Cyclical", values=[-0.2])],
+        pattern_details=[
+            PatternDayDetail(
+                ticker="TSLA",
+                date=date(2026, 6, 12),
+                morning_low_percent=-1.0,
+                morning_low_time="10:15",
+                recovery_to_close_percent=0.8,
+                dip_in_window=True,
+                day_low_percent=-1.1,
+                day_low_time="10:20",
+                close_from_open_percent=0.3,
+            )
+        ],
+        warnings=["TSLA warning"],
+    )
+
+    merged = ScannerService.merge_responses(("MSFT", "AAPL", "NVDA", "TSLA"), [first, second])
+
+    assert merged.generated_at == generated_at + timedelta(minutes=1)
+    assert merged.watchlist == ["MSFT", "AAPL", "NVDA", "TSLA"]
+    assert [row.ticker for row in merged.setup_rows] == ["AAPL", "NVDA", "MSFT", "TSLA"]
+    assert [row.ticker for row in merged.pattern_summary] == ["TSLA", "MSFT"]
+    assert [row.ticker for row in merged.pattern_heatmap] == ["TSLA", "MSFT"]
+    assert [detail.ticker for detail in merged.pattern_details] == ["MSFT", "TSLA"]
+    assert merged.warnings == ["MSFT warning", "TSLA warning"]
+    assert merged.pattern_buckets == BUCKETS_ET
+    assert any(takeaway.startswith("TSLA: 70% consistency") for takeaway in merged.takeaways)
+    assert merged.takeaways[-1] == "Average consistency across scanned tickers: 60% of days had a 9-11am MT dip."
 
 
 def test_scanner_endpoint_uses_shared_watchlist(monkeypatch):

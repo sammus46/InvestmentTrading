@@ -196,6 +196,37 @@ class MarketDataService:
             warnings=warnings,
         )
 
+    def prefetch_scanner_downloads(
+        self,
+        tickers: list[str],
+        *,
+        include_setup: bool = True,
+        include_patterns: bool = True,
+    ) -> None:
+        """Batch-load scanner inputs into the provider cache before per-ticker calculations."""
+        if not self._can_prefetch():
+            return
+        symbols = list(dict.fromkeys(ticker.upper().strip() for ticker in tickers if ticker.strip()))
+        if not symbols:
+            return
+        if include_setup:
+            start, end = self._daily_history_window(self.settings.scanner_daily_history_days)
+            self._download_many(symbols, period=None, interval="1d", prepost=False, start=start, end=end)
+            self._download_many(symbols, period="1d", interval="1m", prepost=True)
+            self._download_many(
+                symbols,
+                period=self.settings.intraday_history_period,
+                interval="5m",
+                prepost=False,
+            )
+        if include_patterns:
+            self._download_many(
+                symbols,
+                period=self.settings.pattern_history_period,
+                interval="5m",
+                prepost=False,
+            )
+
     def _build_metric(
         self,
         ticker: str,

@@ -6,9 +6,12 @@ import base64
 import json
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+from queue import Queue
+from threading import Thread
 from typing import Any
 from urllib.parse import urlparse
 
@@ -57,7 +60,8 @@ NEWS_CATEGORY_LABELS = {
 CHART_TYPE_OPTIONS = ("Line", "Candles")
 CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
 CHART_RANGE_LABELS = {"1Y": "1YR"}
-AUTO_REFRESH_SECONDS = 300
+AUTO_REFRESH_SECONDS = 60
+STREAMLIT_REPORT_BATCH_SIZE = 3
 REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
 STREAMLIT_DATASETS = ("report", "scanner", "news", "market_snapshot", "chart")
@@ -65,10 +69,25 @@ LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
     Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
 )
 RefreshStep = tuple[str, Callable[[], None]]
+ReportBatchLoader = Callable[[tuple[str, ...], tuple[MetricName, ...], int], GenerateResponse]
+ScannerBatchLoader = Callable[[tuple[str, ...], int], ScannerResponse]
 
 
 LEVELS_VIEW = "Investment Trading Levels"
 NEWS_VIEW = "Stock News"
+
+
+@dataclass(frozen=True)
+class PipelinedLoadEvent:
+    """One data event emitted by the Streamlit levels/scanner producer."""
+
+    kind: str
+    batch_index: int = 0
+    total_batches: int = 0
+    batch: tuple[str, ...] = ()
+    report: GenerateResponse | None = None
+    scanner: ScannerResponse | None = None
+    error: BaseException | None = None
 
 
 st.set_page_config(
@@ -109,6 +128,83 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refr
         generated_at=datetime.now(timezone.utc),
         metrics=market_data_service().build_metrics(list(tickers), list(metrics)),
     )
+
+
+def ticker_batches(tickers: tuple[str, ...], batch_size: int = STREAMLIT_REPORT_BATCH_SIZE) -> list[tuple[str, ...]]:
+    """Split tickers into stable batches for progressive Streamlit loading."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    return [tickers[index : index + batch_size] for index in range(0, len(tickers), batch_size)]
+
+
+def progressive_report_responses(
+    tickers: tuple[str, ...],
+    metrics: tuple[MetricName, ...],
+    refresh_token: int,
+    *,
+    batch_size: int = STREAMLIT_REPORT_BATCH_SIZE,
+    loader: Callable[[tuple[str, ...], tuple[MetricName, ...], int], GenerateResponse] | None = None,
+) -> list[GenerateResponse]:
+    """Return partial report responses as each ticker batch is loaded."""
+    report_loader = loader or (lambda batch, selected, token: build_report(batch, selected, refresh_token=token))
+    responses: list[GenerateResponse] = []
+    accumulated: list[EquityMetrics] = []
+    generated_at = datetime.now(timezone.utc)
+    for batch in ticker_batches(tickers, batch_size=batch_size):
+        batch_response = report_loader(batch, metrics, refresh_token)
+        generated_at = batch_response.generated_at
+        accumulated.extend(batch_response.metrics)
+        responses.append(GenerateResponse(generated_at=generated_at, metrics=list(accumulated)))
+    if not responses:
+        responses.append(GenerateResponse(generated_at=generated_at, metrics=[]))
+    return responses
+
+
+def start_pipelined_levels_scanner_loader(
+    tickers: tuple[str, ...],
+    metrics: tuple[MetricName, ...],
+    report_refresh_token: int,
+    scanner_refresh_token: int,
+    report_loader: ReportBatchLoader,
+    scanner_loader: ScannerBatchLoader,
+    *,
+    batch_size: int = STREAMLIT_REPORT_BATCH_SIZE,
+) -> tuple[Queue[PipelinedLoadEvent], Thread]:
+    """Start a one-worker producer for progressive levels and scanner batches."""
+    events: Queue[PipelinedLoadEvent] = Queue()
+    batches = ticker_batches(tickers, batch_size=batch_size)
+
+    def produce() -> None:
+        try:
+            for index, batch in enumerate(batches, start=1):
+                report = report_loader(batch, metrics, report_refresh_token)
+                events.put(
+                    PipelinedLoadEvent(
+                        kind="levels",
+                        batch_index=index,
+                        total_batches=len(batches),
+                        batch=batch,
+                        report=report,
+                    )
+                )
+                scanner = scanner_loader(batch, scanner_refresh_token)
+                events.put(
+                    PipelinedLoadEvent(
+                        kind="scanner",
+                        batch_index=index,
+                        total_batches=len(batches),
+                        batch=batch,
+                        scanner=scanner,
+                    )
+                )
+        except BaseException as exc:
+            events.put(PipelinedLoadEvent(kind="error", error=exc))
+        finally:
+            events.put(PipelinedLoadEvent(kind="done", total_batches=len(batches)))
+
+    worker = Thread(target=produce, name="streamlit-levels-scanner-loader", daemon=True)
+    worker.start()
+    return events, worker
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1895,11 +1991,12 @@ def render_chart_history(
         (
             '<div class="streamlit-chart-header">'
             "<h2>Charts</h2>"
-            '<span class="streamlit-status-chip">Auto-refreshes every 5 min</span>'
+            '<span class="streamlit-status-chip">Auto-refreshes every 1 min</span>'
             "</div>"
         ),
         unsafe_allow_html=True,
     )
+    st.session_state.chart_loaded = True
     columns = st.columns(3)
     for index, ticker in enumerate(display_tickers):
         chart = charts_by_ticker.get(ticker)
@@ -3060,6 +3157,32 @@ def mark_streamlit_data_current(
             st.session_state.loaded_data_keys[dataset] = streamlit_data_key(dataset, tickers, metrics)
 
 
+def loaded_streamlit_datasets() -> tuple[str, ...]:
+    """Return datasets that have already been loaded in this Streamlit session."""
+    loaded: list[str] = []
+    if st.session_state.get("report") is not None:
+        loaded.append("report")
+    if st.session_state.get("scanner") is not None:
+        loaded.append("scanner")
+    if st.session_state.get("news") is not None:
+        loaded.append("news")
+    if st.session_state.get("market_snapshot") is not None:
+        loaded.append("market_snapshot")
+    if st.session_state.get("chart_loaded"):
+        loaded.append("chart")
+    return tuple(loaded)
+
+
+def merge_streamlit_datasets(*dataset_groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Merge dataset names in Streamlit load order without duplicates."""
+    merged: list[str] = []
+    for group in dataset_groups:
+        for dataset in group:
+            if dataset in STREAMLIT_DATASETS and dataset not in merged:
+                merged.append(dataset)
+    return tuple(merged)
+
+
 def load_streamlit_data_with_banner(
     tickers: tuple[str, ...],
     metrics: tuple[MetricName, ...],
@@ -3112,7 +3235,9 @@ def render_auto_refresh_fragment(enabled: bool, view: str) -> None:
         return
     if current_bucket != previous_bucket:
         st.session_state.auto_refresh_bucket = current_bucket
-        bump_streamlit_refresh_token("Auto-refreshing watchlist", datasets=streamlit_autoload_datasets(view))
+        datasets = loaded_streamlit_datasets() or streamlit_autoload_datasets(view)
+        st.session_state.auto_refresh_pending_datasets = datasets
+        bump_streamlit_refresh_token("Auto-refreshing watchlist", datasets=datasets)
         st.rerun()
 
 
@@ -3210,6 +3335,198 @@ def filter_report_metrics(metrics: list[EquityMetrics], query: object) -> list[E
     return [metric for metric in metrics if any(term in metric.ticker.upper() for term in terms)]
 
 
+def render_report_panel(
+    report: GenerateResponse,
+    *,
+    complete: bool,
+    total_tickers: int | None = None,
+    chart_slot: Any | None = None,
+) -> None:
+    """Render report cards, with optional final-only controls and charts."""
+    with st.container(border=True):
+        if complete:
+            header_col, search_col, layout_col, download_col = st.columns(
+                [1.35, 1.15, 0.9, 1],
+                vertical_alignment="center",
+            )
+            with header_col:
+                st.header("Levels")
+            with search_col:
+                report_search = st.text_input(
+                    "Search ticker",
+                    placeholder="Type ticker...",
+                    key="levels_report_search",
+                )
+            with layout_col:
+                report_layout = render_report_layout_selector()
+            with download_col:
+                pdf = pdf_report_service().build_pdf(report)
+                st.download_button(
+                    "Download PDF Levels",
+                    data=pdf,
+                    file_name=f"equity-levels-{report.generated_at.strftime('%Y%m%d-%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    type="secondary",
+                    width="stretch",
+                )
+        else:
+            st.header("Levels")
+            loaded_count = len(report.metrics)
+            target_count = total_tickers or loaded_count
+            st.caption(f"Loaded {loaded_count} of {target_count} ticker(s). Charts and PDF will appear when loading completes.")
+            report_search = ""
+            report_layout = normalize_report_layout(st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT))
+
+        visible_metrics = filter_report_metrics(report.metrics, report_search)
+        if report_search and not visible_metrics:
+            st.caption(f"No ticker matching '{normalize_level_search(report_search)}'")
+        elif report_search:
+            st.caption(f"Showing {len(visible_metrics)} of {len(report.metrics)} ticker(s).")
+
+        render_metric_grid(visible_metrics, report_layout)
+
+    if complete and visible_metrics and chart_slot is not None:
+        chart_slot.empty()
+        with chart_slot.container():
+            chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
+            render_chart_history(
+                report,
+                chart_range,
+                chart_interval,
+                chart_type,
+                refresh_token=dataset_refresh_token("chart"),
+                visible_tickers=tuple(metric.ticker for metric in visible_metrics),
+            )
+
+
+def render_report_panel_in_slot(
+    slot: Any,
+    report: GenerateResponse,
+    *,
+    complete: bool,
+    total_tickers: int | None = None,
+    chart_slot: Any | None = None,
+) -> None:
+    """Replace the report placeholder with the latest report render."""
+    slot.empty()
+    with slot.container():
+        render_report_panel(report, complete=complete, total_tickers=total_tickers, chart_slot=chart_slot)
+
+
+def render_scanner_panel_in_slot(slot: Any, scanner: ScannerResponse) -> None:
+    """Replace the scanner placeholder with the rendered scanner table."""
+    slot.empty()
+    with slot.container():
+        with st.container(border=True):
+            render_scanner(scanner)
+
+
+def load_levels_and_scanner_progressively(
+    tickers: tuple[str, ...],
+    metrics: tuple[MetricName, ...],
+    report_slot: Any,
+    scanner_slot: Any,
+    refresh_slot: Any,
+    chart_slot: Any | None = None,
+) -> tuple[GenerateResponse, ScannerResponse]:
+    """Load levels/scanner batches and render each partial result as it arrives."""
+    batches = ticker_batches(tickers)
+    report_responses: list[GenerateResponse] = []
+    scanner_responses: list[ScannerResponse] = []
+    partial_metrics: list[EquityMetrics] = []
+    final_report = GenerateResponse(generated_at=datetime.now(timezone.utc), metrics=[])
+    final_scanner = ScannerService.merge_responses(tickers, [])
+    st.session_state.chart_loaded = False
+    if chart_slot is not None:
+        chart_slot.empty()
+
+    market_data = market_data_service()
+    scanner = scanner_service()
+
+    def load_levels_batch(
+        batch: tuple[str, ...],
+        selected_metrics: tuple[MetricName, ...],
+        refresh_token: int,
+    ) -> GenerateResponse:
+        del refresh_token
+        return GenerateResponse(
+            generated_at=datetime.now(timezone.utc),
+            metrics=market_data.build_metrics(list(batch), list(selected_metrics)),
+        )
+
+    def load_scanner_batch(batch: tuple[str, ...], refresh_token: int) -> ScannerResponse:
+        del refresh_token
+        return scanner.build_scanner(list(batch), include_setup=True, include_patterns=True)
+
+    with refresh_slot.container():
+        st.markdown(
+            (
+                '<div class="streamlit-refresh-banner">'
+                "<strong>Loading levels and scanner</strong>"
+                "<span>Loading first ticker batch...</span>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+        progress = st.progress(0, text="Loading first ticker batch...")
+
+    events, worker = start_pipelined_levels_scanner_loader(
+        tickers,
+        metrics,
+        dataset_refresh_token("report"),
+        dataset_refresh_token("scanner"),
+        load_levels_batch,
+        load_scanner_batch,
+    )
+    total_events = max(1, len(batches) * 2)
+    rendered_events = 0
+    try:
+        while True:
+            event = events.get()
+            if event.kind == "done":
+                break
+            if event.kind == "error":
+                raise event.error or RuntimeError("Levels/scanner loading failed.")
+
+            rendered_events += 1
+            if event.kind == "levels" and event.report is not None:
+                report_responses.append(event.report)
+                partial_metrics.extend(event.report.metrics)
+                final_report = GenerateResponse(
+                    generated_at=event.report.generated_at,
+                    metrics=list(partial_metrics),
+                )
+                st.session_state.report = final_report
+                render_report_panel_in_slot(report_slot, final_report, complete=False, total_tickers=len(tickers))
+                progress.progress(
+                    min(rendered_events / total_events, 1.0),
+                    text=f"Loaded levels for {len(partial_metrics)} of {len(tickers)} ticker(s).",
+                )
+            elif event.kind == "scanner" and event.scanner is not None:
+                scanner_responses.append(event.scanner)
+                final_scanner = ScannerService.merge_responses(tickers, scanner_responses)
+                st.session_state.scanner = final_scanner
+                render_scanner_panel_in_slot(scanner_slot, final_scanner)
+                progress.progress(
+                    min(rendered_events / total_events, 1.0),
+                    text=f"Loaded scanner batch {event.batch_index} of {event.total_batches}.",
+                )
+    finally:
+        worker.join()
+        refresh_slot.empty()
+        st.session_state.pop("refresh_banner_title", None)
+
+    if report_responses:
+        final_report = GenerateResponse(
+            generated_at=report_responses[-1].generated_at,
+            metrics=[metric for response in report_responses for metric in response.metrics],
+        )
+    final_scanner = ScannerService.merge_responses(tickers, scanner_responses)
+    st.session_state.report = final_report
+    st.session_state.scanner = final_scanner
+    return final_report, final_scanner
+
+
 def main() -> None:
     """Run the Streamlit application."""
     view = render_app_chrome()
@@ -3250,33 +3567,6 @@ def main() -> None:
         autoload_request = GenerateRequest(tickers=list(tickers), metrics=list(autoload_metrics))
     except ValidationError:
         autoload_request = None
-    if autoload_request is not None:
-        autoload_tickers = tuple(autoload_request.tickers)
-        autoload_metrics_tuple = tuple(autoload_request.metrics)
-        autoload_datasets = streamlit_autoload_datasets(view, include_news=sidebar_run_requested)
-        stale_datasets = tuple(
-            dataset
-            for dataset in autoload_datasets
-            if not streamlit_dataset_current(dataset, autoload_tickers, autoload_metrics_tuple)
-        )
-        if stale_datasets:
-            refresh_title = str(st.session_state.pop("refresh_banner_title", "Loading saved watchlist"))
-            load_streamlit_data_with_banner(
-                autoload_tickers,
-                autoload_metrics_tuple,
-                refresh_banner_slot,
-                refresh_title,
-                datasets=stale_datasets,
-            )
-            st.session_state.levels_status = ""
-            mark_streamlit_data_current(autoload_tickers, autoload_metrics_tuple, datasets=stale_datasets)
-    else:
-        st.session_state.report = None
-        st.session_state.scanner = None
-        st.session_state.news = None
-        st.session_state.market_snapshot = None
-        st.session_state.autoload_key = None
-        st.session_state.loaded_data_keys = {}
 
     if view == LEVELS_VIEW:
         with st.container():
@@ -3296,6 +3586,9 @@ def main() -> None:
             with scanner_action_col:
                 run_scanner = st.button("Run Scanner", type="primary", width="stretch")
         refresh_news = False
+        scanner_slot = st.empty()
+        report_slot = st.empty()
+        chart_slot = st.empty()
     else:
         with st.container():
             heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
@@ -3306,6 +3599,9 @@ def main() -> None:
                 refresh_news = st.button("Refresh News", type="primary", width="stretch")
         generate = False
         run_scanner = False
+        report_slot = None
+        chart_slot = None
+        scanner_slot = None
 
     if generate:
         try:
@@ -3315,12 +3611,13 @@ def main() -> None:
             return
 
         refresh_token = bump_streamlit_refresh_token("Generating levels", datasets=("report", "scanner"))
-        load_streamlit_data_with_banner(
+        load_levels_and_scanner_progressively(
             tuple(request.tickers),
             tuple(request.metrics),
+            report_slot,
+            scanner_slot,
             refresh_banner_slot,
-            "Generating levels",
-            datasets=("report", "scanner"),
+            chart_slot,
         )
         mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), datasets=("report", "scanner"))
         st.session_state.levels_status = ""
@@ -3375,6 +3672,56 @@ def main() -> None:
             datasets=("news", "market_snapshot"),
         )
 
+    if autoload_request is not None:
+        autoload_tickers = tuple(autoload_request.tickers)
+        autoload_metrics_tuple = tuple(autoload_request.metrics)
+        pending_auto_refresh_datasets = tuple(st.session_state.pop("auto_refresh_pending_datasets", ()))
+        autoload_datasets = merge_streamlit_datasets(
+            streamlit_autoload_datasets(view, include_news=sidebar_run_requested),
+            pending_auto_refresh_datasets,
+        )
+        stale_datasets = tuple(
+            dataset
+            for dataset in autoload_datasets
+            if not streamlit_dataset_current(dataset, autoload_tickers, autoload_metrics_tuple)
+        )
+        if stale_datasets:
+            refresh_title = str(st.session_state.pop("refresh_banner_title", "Loading saved watchlist"))
+            if (
+                view == LEVELS_VIEW
+                and ("report" in stale_datasets or "scanner" in stale_datasets)
+                and report_slot is not None
+                and scanner_slot is not None
+            ):
+                load_levels_and_scanner_progressively(
+                    autoload_tickers,
+                    autoload_metrics_tuple,
+                    report_slot,
+                    scanner_slot,
+                    refresh_banner_slot,
+                    chart_slot,
+                )
+                mark_streamlit_data_current(autoload_tickers, autoload_metrics_tuple, datasets=("report", "scanner"))
+                stale_datasets = tuple(dataset for dataset in stale_datasets if dataset not in {"report", "scanner"})
+            if stale_datasets:
+                load_streamlit_data_with_banner(
+                    autoload_tickers,
+                    autoload_metrics_tuple,
+                    refresh_banner_slot,
+                    refresh_title,
+                    datasets=stale_datasets,
+                )
+                mark_streamlit_data_current(autoload_tickers, autoload_metrics_tuple, datasets=stale_datasets)
+            st.session_state.levels_status = ""
+    else:
+        st.session_state.report = None
+        st.session_state.scanner = None
+        st.session_state.news = None
+        st.session_state.market_snapshot = None
+        st.session_state.autoload_key = None
+        st.session_state.loaded_data_keys = {}
+        st.session_state.chart_loaded = False
+
     if view == NEWS_VIEW:
         news: NewsResponse | None = st.session_state.news
         if news is None:
@@ -3382,56 +3729,13 @@ def main() -> None:
         render_news(news, st.session_state.market_snapshot)
         return
 
-    scanner: ScannerResponse | None = st.session_state.scanner
-    if scanner is not None:
-        with st.container(border=True):
-            render_scanner(scanner)
-
     report: GenerateResponse | None = st.session_state.report
-    if report is None:
-        return
+    if report is not None and report_slot is not None:
+        render_report_panel_in_slot(report_slot, report, complete=True, chart_slot=chart_slot)
 
-    with st.container(border=True):
-        header_col, search_col, layout_col, download_col = st.columns([1.35, 1.15, 0.9, 1], vertical_alignment="center")
-        with header_col:
-            st.header("Report")
-        with search_col:
-            report_search = st.text_input(
-                "Search ticker",
-                placeholder="Type ticker...",
-                key="levels_report_search",
-            )
-        with layout_col:
-            report_layout = render_report_layout_selector()
-        with download_col:
-            pdf = pdf_report_service().build_pdf(report)
-            st.download_button(
-                "Download PDF Report",
-                data=pdf,
-                file_name=f"equity-levels-{report.generated_at.strftime('%Y%m%d-%H%M%S')}.pdf",
-                mime="application/pdf",
-                type="secondary",
-                width="stretch",
-            )
-
-    visible_metrics = filter_report_metrics(report.metrics, report_search)
-    if report_search and not visible_metrics:
-        st.caption(f"No ticker matching '{normalize_level_search(report_search)}'")
-    elif report_search:
-        st.caption(f"Showing {len(visible_metrics)} of {len(report.metrics)} ticker(s).")
-
-    render_metric_grid(visible_metrics, report_layout)
-
-    if visible_metrics:
-        chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
-        render_chart_history(
-            report,
-            chart_range,
-            chart_interval,
-            chart_type,
-            refresh_token=dataset_refresh_token("chart"),
-            visible_tickers=tuple(metric.ticker for metric in visible_metrics),
-        )
+    scanner: ScannerResponse | None = st.session_state.scanner
+    if scanner is not None and scanner_slot is not None:
+        render_scanner_panel_in_slot(scanner_slot, scanner)
 
 
 if __name__ == "__main__":

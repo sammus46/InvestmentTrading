@@ -619,6 +619,40 @@ def test_build_metrics_prefetches_batch_downloads_before_preserving_order():
     assert [call["symbol"] for call in provider.downloads] == ["MSFT", "AAPL"]
 
 
+def test_prefetch_scanner_downloads_batches_all_scanner_inputs():
+    class BatchProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.batch_downloads: list[dict[str, object]] = []
+
+        def download_many(self, symbols, *, period, interval, prepost, start=None, end=None):
+            self.batch_downloads.append(
+                {
+                    "symbols": list(symbols),
+                    "period": period,
+                    "interval": interval,
+                    "prepost": prepost,
+                    "start": start,
+                    "end": end,
+                }
+            )
+            return {symbol: pd.DataFrame() for symbol in symbols}
+
+    provider = BatchProvider()
+    service = MarketDataService(provider=provider)
+
+    service.prefetch_scanner_downloads(["aapl", "msft", "AAPL"], include_setup=True, include_patterns=True)
+
+    assert [(call["symbols"], call["period"], call["interval"], call["prepost"]) for call in provider.batch_downloads] == [
+        (["AAPL", "MSFT"], None, "1d", False),
+        (["AAPL", "MSFT"], "1d", "1m", True),
+        (["AAPL", "MSFT"], "5d", "5m", False),
+        (["AAPL", "MSFT"], "58d", "5m", False),
+    ]
+    assert provider.batch_downloads[0]["start"] is not None
+    assert provider.batch_downloads[0]["end"] is not None
+
+
 def test_price_history_uses_latest_completed_daily_closes():
     today = datetime.now(EASTERN).date()
     first = today - timedelta(days=2)

@@ -228,6 +228,12 @@ class ScannerService:
         pattern_heatmap: list[PatternHeatmapRow] = []
         pattern_details: list[PatternDayDetail] = []
 
+        self.market_data.prefetch_scanner_downloads(
+            watchlist,
+            include_setup=include_setup,
+            include_patterns=include_patterns,
+        )
+
         benchmark_cache: dict[str, float | None] = {}
         if include_setup:
             for symbol in watchlist:
@@ -262,6 +268,55 @@ class ScannerService:
             pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector, row.ticker)),
             pattern_details=pattern_details,
             takeaways=self._takeaways(pattern_summary),
+            warnings=warnings,
+        )
+
+    @classmethod
+    def merge_responses(cls, tickers: list[str] | tuple[str, ...], responses: list[ScannerResponse]) -> ScannerResponse:
+        """Merge partial scanner responses into the standard scanner shape."""
+        watchlist = list(dict.fromkeys(ticker.upper().strip() for ticker in tickers if ticker.strip()))
+        ticker_order = {ticker: index for index, ticker in enumerate(watchlist)}
+        generated_at = max((response.generated_at for response in responses), default=datetime.now(timezone.utc))
+        setup_rows: list[ScannerSetupRow] = []
+        pattern_summary: list[PatternSummaryRow] = []
+        pattern_heatmap: list[PatternHeatmapRow] = []
+        pattern_details: list[PatternDayDetail] = []
+        warnings: list[str] = []
+        pattern_buckets: list[str] = []
+        pattern_bucket_labels: list[str] = []
+
+        for response in responses:
+            setup_rows.extend(response.setup_rows)
+            pattern_summary.extend(response.pattern_summary)
+            pattern_heatmap.extend(response.pattern_heatmap)
+            pattern_details.extend(response.pattern_details)
+            warnings.extend(response.warnings)
+            if response.pattern_buckets and not pattern_buckets:
+                pattern_buckets = list(response.pattern_buckets)
+            if response.pattern_bucket_labels and not pattern_bucket_labels:
+                pattern_bucket_labels = list(response.pattern_bucket_labels)
+
+        ordered_details = [
+            detail
+            for _, detail in sorted(
+                enumerate(pattern_details),
+                key=lambda item: (ticker_order.get(item[1].ticker, len(ticker_order)), item[0]),
+            )
+        ]
+
+        return ScannerResponse(
+            generated_at=generated_at,
+            watchlist=watchlist,
+            setup_rows=sorted(
+                setup_rows,
+                key=lambda row: (-(row.score if row.score is not None else -1), ticker_order.get(row.ticker, len(ticker_order))),
+            ),
+            pattern_summary=sorted(pattern_summary, key=lambda row: (row.sector or "", row.ticker)),
+            pattern_buckets=pattern_buckets or list(BUCKETS_ET),
+            pattern_bucket_labels=pattern_bucket_labels or list(BUCKET_LABELS),
+            pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector or "", row.ticker)),
+            pattern_details=ordered_details,
+            takeaways=cls._takeaways(pattern_summary),
             warnings=warnings,
         )
 
@@ -797,24 +852,16 @@ class ScannerService:
         if nearest_value is None or nearest_name is None:
             return None
 
-        consecutive = 0
-        for _, row in session.iloc[::-1].iterrows():
-            distances = [
-                abs(((float(row["High"]) - nearest_value) / nearest_value) * 100),
-                abs(((float(row["Low"]) - nearest_value) / nearest_value) * 100),
-                abs(((float(row["Close"]) - nearest_value) / nearest_value) * 100),
-            ]
-            if min(distances) <= 0.25:
-                consecutive += 1
-            else:
-                break
+        proximity = (((session[["High", "Low", "Close"]].astype(float) - nearest_value) / nearest_value) * 100).abs()
+        near_level = proximity.min(axis=1).le(0.25)
+        reversed_near_level = near_level.iloc[::-1].to_numpy()
+        misses = (~reversed_near_level).nonzero()[0]
+        consecutive = int(misses[0]) if len(misses) else int(len(reversed_near_level))
 
-        hold_count = 0
-        for _, row in session.tail(10).iterrows():
-            low_pct = ((float(row["Low"]) - nearest_value) / nearest_value) * 100
-            close_pct = ((float(row["Close"]) - nearest_value) / nearest_value) * 100
-            if abs(low_pct) <= 0.25 and close_pct > 0:
-                hold_count += 1
+        tail = session.tail(10)
+        low_pct = ((tail["Low"].astype(float) - nearest_value) / nearest_value) * 100
+        close_pct = ((tail["Close"].astype(float) - nearest_value) / nearest_value) * 100
+        hold_count = int((low_pct.abs().le(0.25) & close_pct.gt(0)).sum())
 
         last_three = session.tail(3)
         avg_recent = (last_three["High"].astype(float) - last_three["Low"].astype(float)).mean()
@@ -874,24 +921,33 @@ class ScannerService:
         if frame.empty:
             return None
         regular = self.market_data.regular_session(frame)
-        trading_days = sorted(set(regular.index.date))[-lookback_days:]
+        grouped_sessions = {
+            session_date: bars.drop(columns=["_session_date"])
+            for session_date, bars in regular.assign(_session_date=regular.index.date).groupby("_session_date", sort=True)
+        }
+        trading_days = sorted(grouped_sessions)[-lookback_days:]
         if len(trading_days) < 5:
             return None
 
         bucket_values: dict[str, list[float]] = {bucket: [] for bucket in BUCKETS_ET}
         details: list[PatternDayDetail] = []
         for session_date in trading_days:
-            bars = regular[regular.index.date == session_date].copy()
+            bars = grouped_sessions[session_date].copy()
             if len(bars) < 10:
                 continue
             open_price = float(bars.iloc[0]["Open"])
             if open_price <= 0:
                 continue
             bars["pct"] = ((bars["Close"].astype(float) - open_price) / open_price) * 100
-            for bucket in BUCKETS_ET:
-                slot = bars[bars.index.strftime("%H:%M") == bucket]
-                if not slot.empty:
-                    bucket_values[bucket].append(float(slot["pct"].iloc[0]))
+            bucket_pct = (
+                bars.assign(_bucket=bars.index.strftime("%H:%M"))
+                .drop_duplicates("_bucket")
+                .set_index("_bucket")["pct"]
+                .reindex(BUCKETS_ET)
+                .dropna()
+            )
+            for bucket, pct in bucket_pct.items():
+                bucket_values[str(bucket)].append(float(pct))
 
             morning = bars.between_time("11:00", "12:55")
             if morning.empty:

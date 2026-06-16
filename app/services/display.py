@@ -40,13 +40,13 @@ REPORT_LAYOUT_CATALOG: tuple[ReportLayoutDefinition, ...] = (
         label="Grid",
         description="Grouped cards with sectioned metrics.",
         order=0,
-        default=True,
     ),
     ReportLayoutDefinition(
         id="price_ladder",
         label="Price Ladder",
         description="Adam-style price-sorted levels around current price.",
         order=1,
+        default=True,
     ),
     ReportLayoutDefinition(
         id="compact",
@@ -62,7 +62,7 @@ REPORT_LAYOUT_CATALOG: tuple[ReportLayoutDefinition, ...] = (
     ),
 )
 
-DEFAULT_REPORT_LAYOUT: ReportLayoutName = "grid"
+DEFAULT_REPORT_LAYOUT: ReportLayoutName = "price_ladder"
 
 PRIORITY_PRICE_LABELS = {
     "Prev High",
