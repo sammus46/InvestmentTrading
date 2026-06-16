@@ -816,6 +816,23 @@ def test_scanner_setup_html_renders_table_and_card_views():
     assert "streamlit-scanner-card-list" in card_html
     assert "streamlit-scanner-card-primary" in card_html
     assert "streamlit-scanner-table-panel" in auto_html
+    assert 'class="streamlit-scanner-cell-score align-center"' in auto_html
+    assert 'class="streamlit-scanner-cell-ticker"' in auto_html
+
+
+def test_streamlit_scanner_auto_mobile_keeps_scrollable_table_visible():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    scanner_css_start = source.index(".streamlit-scanner-render")
+    mobile_start = source.index("@media (max-width: 760px)", scanner_css_start)
+    mobile_end = source.index("@media (max-width: 460px)", mobile_start)
+    mobile_block = source[mobile_start:mobile_end]
+
+    assert ".streamlit-scanner-render.view-auto .streamlit-scanner-table-panel" not in mobile_block
+    assert ".streamlit-scanner-render.view-auto .streamlit-scanner-card-panel" not in mobile_block
+    assert ".streamlit-scanner-render.view-cards .streamlit-scanner-table-panel" in source
+    assert ".streamlit-scanner-render.view-cards .streamlit-scanner-card-panel" in source
+    assert ".streamlit-scanner-table th.streamlit-scanner-cell-ticker" in source
+    assert ".streamlit-scanner-table td.streamlit-scanner-cell-ticker" in source
 
 
 def test_scanner_setup_table_html_escapes_values_and_renders_reasons():

@@ -1129,14 +1129,20 @@ def render_app_chrome() -> str:
           .streamlit-scanner-table-wrap {
             border: 1px solid var(--border-soft, #dbe3ef);
             border-radius: 0.5rem;
+            box-shadow: inset -18px 0 18px -24px rgba(15, 23, 42, 0.5);
             margin: 0.25rem 0 1rem;
             max-width: 100%;
             overflow-x: auto;
             overflow-y: hidden;
+            overscroll-behavior-x: contain;
+            scrollbar-color: var(--border-soft, #dbe3ef) transparent;
+            scrollbar-width: thin;
             width: 100%;
             -webkit-overflow-scrolling: touch;
           }
           .streamlit-scanner-table {
+            --streamlit-scanner-score-col: 6rem;
+            --streamlit-scanner-ticker-col: 5.8rem;
             background: var(--surface-bg, #ffffff);
             border-collapse: separate;
             border-spacing: 0;
@@ -1166,6 +1172,31 @@ def render_app_chrome() -> str:
             vertical-align: middle;
             white-space: nowrap;
           }
+          .streamlit-scanner-table th.streamlit-scanner-cell-score,
+          .streamlit-scanner-table td.streamlit-scanner-cell-score {
+            left: 0;
+            min-width: var(--streamlit-scanner-score-col);
+            position: sticky;
+            width: var(--streamlit-scanner-score-col);
+            z-index: 3;
+          }
+          .streamlit-scanner-table th.streamlit-scanner-cell-ticker,
+          .streamlit-scanner-table td.streamlit-scanner-cell-ticker {
+            left: var(--streamlit-scanner-score-col);
+            min-width: var(--streamlit-scanner-ticker-col);
+            position: sticky;
+            width: var(--streamlit-scanner-ticker-col);
+            z-index: 3;
+          }
+          .streamlit-scanner-table th.streamlit-scanner-cell-score,
+          .streamlit-scanner-table th.streamlit-scanner-cell-ticker {
+            z-index: 4;
+          }
+          .streamlit-scanner-table td.streamlit-scanner-cell-score,
+          .streamlit-scanner-table td.streamlit-scanner-cell-ticker {
+            background: var(--surface-bg, #ffffff);
+            box-shadow: 1px 0 0 var(--border-soft, #dbe3ef);
+          }
           .streamlit-scanner-table th.align-center,
           .streamlit-scanner-table td.align-center {
             text-align: center;
@@ -1188,6 +1219,7 @@ def render_app_chrome() -> str:
           }
           .streamlit-scanner-table tbody tr[class*="tone-"] td:first-child {
             border-left: 4px solid transparent;
+            padding-left: 0.31rem;
           }
           .streamlit-scanner-table tbody tr.tone-strong td:first-child {
             border-left-color: var(--signal-strong-fg, #166534);
@@ -1332,11 +1364,37 @@ def render_app_chrome() -> str:
             white-space: normal;
           }
           @media (max-width: 760px) {
-            .streamlit-scanner-render.view-auto .streamlit-scanner-table-panel {
-              display: none;
+            .streamlit-scanner-table {
+              --streamlit-scanner-score-col: 5.4rem;
+              --streamlit-scanner-ticker-col: 5.2rem;
+              min-width: 1120px;
             }
-            .streamlit-scanner-render.view-auto .streamlit-scanner-card-panel {
-              display: block;
+            .streamlit-scanner-table th {
+              font-size: 0.66rem;
+              padding: 0.38rem 0.44rem;
+            }
+            .streamlit-scanner-table td {
+              font-size: 0.82rem;
+              padding: 0.38rem 0.44rem;
+            }
+            .streamlit-scanner-table tbody tr[class*="tone-"] td:first-child {
+              padding-left: 0.19rem;
+            }
+            .streamlit-scanner-score {
+              font-size: 0.8rem;
+              min-height: 1.62rem;
+              min-width: 4.25rem;
+              padding: 0.25rem 0.5rem;
+            }
+            .streamlit-scanner-pill {
+              font-size: 0.78rem;
+              min-height: 1.45rem;
+              min-width: 2.25rem;
+              padding: 0.25rem 0.44rem;
+            }
+            .streamlit-scanner-zone,
+            .streamlit-scanner-ticker {
+              font-size: 0.84rem;
             }
             .streamlit-scanner-card-primary,
             .streamlit-scanner-card-zones {
@@ -4065,52 +4123,56 @@ def scanner_data_notes_html(report: ScannerResponse) -> str:
 def scanner_setup_table_html(report: ScannerResponse, *, include_notes: bool = True) -> str:
     """Return an app-owned HTML setup scanner table with reliable visual cues."""
     columns = [
-        ("Score", "Setup score", "align-center"),
-        ("Ticker", "Ticker", ""),
-        ("Price", "Current price", "align-right"),
-        ("Sig", "Signal", ""),
-        ("VWAP", "VWAP extension", "align-center"),
-        ("RS SPY", "Relative strength versus SPY", "align-center"),
-        ("RS Sec", "Relative strength versus sector ETF", "align-center"),
-        ("Support", "Best support", "wrap"),
-        ("S Conf", "Support confidence", "align-center"),
-        ("Resist", "Best resistance", "wrap"),
-        ("R Conf", "Resistance confidence", "align-center"),
-        ("R/R", "Risk/reward", "align-center"),
-        ("Setup", "Setup level", ""),
-        ("Away", "Distance from setup level", "align-right"),
-        ("Lows", "Lows held", "align-center"),
-        ("Range", "Range compression", "align-center"),
-        ("High", "Distance from high", "align-right"),
-        ("Mom", "Momentum", "align-center"),
+        ("score", "Score", "Setup score", "align-center"),
+        ("ticker", "Ticker", "Ticker", ""),
+        ("price", "Price", "Current price", "align-right"),
+        ("signal", "Sig", "Signal", ""),
+        ("vwap", "VWAP", "VWAP extension", "align-center"),
+        ("rs-spy", "RS SPY", "Relative strength versus SPY", "align-center"),
+        ("rs-sector", "RS Sec", "Relative strength versus sector ETF", "align-center"),
+        ("support", "Support", "Best support", "wrap"),
+        ("support-confidence", "S Conf", "Support confidence", "align-center"),
+        ("resistance", "Resist", "Best resistance", "wrap"),
+        ("resistance-confidence", "R Conf", "Resistance confidence", "align-center"),
+        ("risk-reward", "R/R", "Risk/reward", "align-center"),
+        ("setup-level", "Setup", "Setup level", ""),
+        ("setup-distance", "Away", "Distance from setup level", "align-right"),
+        ("lows-held", "Lows", "Lows held", "align-center"),
+        ("range", "Range", "Range compression", "align-center"),
+        ("off-high", "High", "Distance from high", "align-right"),
+        ("momentum", "Mom", "Momentum", "align-center"),
     ]
+    def cell_class(key: str, css_class: str) -> str:
+        return " ".join(part for part in (f"streamlit-scanner-cell-{key}", css_class) if part)
+
     header_html = "".join(
-        f'<th class="{css_class}" title="{escape(title)}">{escape(label)}</th>' for label, title, css_class in columns
+        f'<th class="{cell_class(key, css_class)}" title="{escape(title)}">{escape(label)}</th>'
+        for key, label, title, css_class in columns
     )
     body_rows: list[str] = []
     for row in report.setup_rows:
         score_tone = scanner_score_tone(row.score)
         cells = [
-            ("align-center", scanner_score_html(row.score)),
-            ("", f'<span class="streamlit-scanner-ticker">{escape(row.ticker)}</span>'),
-            ("align-right", scanner_plain_html(fmt(row.price))),
-            ("", scanner_signal_html(row.signal)),
-            ("align-center", scanner_vwap_html(row.vwap_extension_percent, row.vwap_extension_label)),
-            ("align-center", scanner_relative_strength_html(row.rs_vs_spy_percent, row.rs_vs_spy_label)),
-            ("align-center", scanner_relative_strength_html(row.rs_vs_sector_percent, row.rs_vs_sector_label)),
-            ("wrap", scanner_zone_html(row.best_support, row.support_reason)),
-            ("align-center", scanner_confidence_html(row.support_confidence)),
-            ("wrap", scanner_zone_html(row.best_resistance, row.resistance_reason)),
-            ("align-center", scanner_confidence_html(row.resistance_confidence)),
-            ("align-center", scanner_risk_reward_html(row.risk_reward)),
-            ("", scanner_plain_html(row.setup_level)),
-            ("align-right", scanner_percent_html(row.setup_distance_percent, scanner_setup_distance_tone(row.setup_distance_percent))),
-            ("align-center", scanner_lows_held_html(row.lows_held)),
-            ("align-center", scanner_range_html(row.range_compression)),
-            ("align-right", scanner_percent_html(row.off_high_percent, scanner_off_high_tone(row.off_high_percent))),
-            ("align-center", scanner_momentum_html(row.momentum)),
+            ("score", "align-center", scanner_score_html(row.score)),
+            ("ticker", "", f'<span class="streamlit-scanner-ticker">{escape(row.ticker)}</span>'),
+            ("price", "align-right", scanner_plain_html(fmt(row.price))),
+            ("signal", "", scanner_signal_html(row.signal)),
+            ("vwap", "align-center", scanner_vwap_html(row.vwap_extension_percent, row.vwap_extension_label)),
+            ("rs-spy", "align-center", scanner_relative_strength_html(row.rs_vs_spy_percent, row.rs_vs_spy_label)),
+            ("rs-sector", "align-center", scanner_relative_strength_html(row.rs_vs_sector_percent, row.rs_vs_sector_label)),
+            ("support", "wrap", scanner_zone_html(row.best_support, row.support_reason)),
+            ("support-confidence", "align-center", scanner_confidence_html(row.support_confidence)),
+            ("resistance", "wrap", scanner_zone_html(row.best_resistance, row.resistance_reason)),
+            ("resistance-confidence", "align-center", scanner_confidence_html(row.resistance_confidence)),
+            ("risk-reward", "align-center", scanner_risk_reward_html(row.risk_reward)),
+            ("setup-level", "", scanner_plain_html(row.setup_level)),
+            ("setup-distance", "align-right", scanner_percent_html(row.setup_distance_percent, scanner_setup_distance_tone(row.setup_distance_percent))),
+            ("lows-held", "align-center", scanner_lows_held_html(row.lows_held)),
+            ("range", "align-center", scanner_range_html(row.range_compression)),
+            ("off-high", "align-right", scanner_percent_html(row.off_high_percent, scanner_off_high_tone(row.off_high_percent))),
+            ("momentum", "align-center", scanner_momentum_html(row.momentum)),
         ]
-        cell_html = "".join(f'<td class="{css_class}">{cell}</td>' for css_class, cell in cells)
+        cell_html = "".join(f'<td class="{cell_class(key, css_class)}">{cell}</td>' for key, css_class, cell in cells)
         body_rows.append(f'<tr class="tone-{score_tone}">{cell_html}</tr>')
         if row.warnings:
             warnings = " ".join(escape(warning) for warning in row.warnings)
