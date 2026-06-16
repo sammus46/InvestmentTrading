@@ -1027,6 +1027,10 @@ def render_app_chrome() -> str:
             gap: 0.75rem;
             min-width: 0;
           }
+          .streamlit-scanner-table-panel,
+          .streamlit-scanner-card-panel {
+            min-width: 0;
+          }
           .streamlit-scanner-card-panel {
             display: none;
           }
@@ -1062,13 +1066,13 @@ def render_app_chrome() -> str:
           }
           .streamlit-scanner-card-header h3 {
             color: var(--text, #111827);
-            font-size: 1rem;
+            font-size: 1.1rem;
             letter-spacing: 0.04em;
             margin: 0;
           }
           .streamlit-scanner-card-header span {
             color: var(--text-muted, #64748b);
-            font-size: 0.8rem;
+            font-size: 0.9rem;
             font-weight: 700;
           }
           .streamlit-scanner-card-primary,
@@ -1079,7 +1083,7 @@ def render_app_chrome() -> str:
             grid-template-columns: repeat(4, minmax(0, 1fr));
           }
           .streamlit-scanner-card-secondary {
-            grid-template-columns: repeat(auto-fit, minmax(5.4rem, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
           }
           .streamlit-scanner-card-metric {
             background: var(--surface-soft, #f8fafc);
@@ -1094,7 +1098,7 @@ def render_app_chrome() -> str:
           .streamlit-scanner-card-metric > span {
             color: var(--text-muted, #64748b);
             display: block;
-            font-size: 0.65rem;
+            font-size: 0.72rem;
             font-weight: 850;
             letter-spacing: 0.04em;
             margin-bottom: 0.25rem;
@@ -1102,7 +1106,7 @@ def render_app_chrome() -> str:
           }
           .streamlit-scanner-card-metric > div {
             color: var(--text, #111827);
-            font-size: 0.82rem;
+            font-size: 0.92rem;
             min-width: 0;
             overflow-wrap: anywhere;
           }
@@ -1110,7 +1114,7 @@ def render_app_chrome() -> str:
             background: var(--warning-bg, #fef3c7);
             border-radius: 0.5rem;
             color: var(--warning-text, #92400e) !important;
-            font-size: 0.8rem;
+            font-size: 0.86rem;
             margin: 0;
             padding: 0.5rem 0.6rem;
           }
@@ -1131,14 +1135,14 @@ def render_app_chrome() -> str:
             background: var(--surface-bg, #ffffff);
             border-collapse: separate;
             border-spacing: 0;
-            min-width: 1180px;
+            min-width: 1280px;
             width: 100%;
           }
           .streamlit-scanner-table th {
             background: var(--surface-soft, #f8fafc);
             border-bottom: 1px solid var(--border-soft, #dbe3ef);
             color: var(--text-muted, #64748b) !important;
-            font-size: 0.68rem;
+            font-size: 0.72rem;
             font-weight: 800;
             letter-spacing: 0.03em;
             padding: 0.5rem 0.56rem;
@@ -1152,7 +1156,7 @@ def render_app_chrome() -> str:
           .streamlit-scanner-table td {
             border-bottom: 1px solid var(--border-soft, #dbe3ef);
             color: var(--text, #111827) !important;
-            font-size: 0.82rem;
+            font-size: 0.9rem;
             padding: 0.5rem 0.56rem;
             vertical-align: middle;
             white-space: nowrap;
@@ -1167,8 +1171,8 @@ def render_app_chrome() -> str:
           }
           .streamlit-scanner-table td.wrap {
             line-height: 1.35;
-            max-width: 12rem;
-            min-width: 8rem;
+            max-width: 13rem;
+            min-width: 9rem;
             white-space: normal;
           }
           .streamlit-scanner-table tr:last-child td {
@@ -1196,14 +1200,14 @@ def render_app_chrome() -> str:
             align-items: center;
             border-radius: 999px;
             display: inline-flex;
-            font-size: 0.74rem;
+            font-size: 0.86rem;
             font-weight: 800;
             gap: 0.35rem;
             justify-content: center;
             line-height: 1;
-            min-height: 1.45rem;
-            min-width: 2.6rem;
-            padding: 0.24rem 0.48rem;
+            min-height: 1.65rem;
+            min-width: 2.8rem;
+            padding: 0.3rem 0.55rem;
           }
           .streamlit-scanner-pill.tone-strong {
             background: var(--signal-strong-bg, #dcfce7);
@@ -1230,7 +1234,7 @@ def render_app_chrome() -> str:
             color: var(--signal-info-fg, #1d4ed8) !important;
           }
           .streamlit-scanner-symbol {
-            min-width: 1.65rem;
+            min-width: 1.8rem;
             padding-left: 0.38rem;
             padding-right: 0.38rem;
           }
@@ -1242,14 +1246,14 @@ def render_app_chrome() -> str:
             border-radius: 999px;
             color: var(--text-muted, #334155) !important;
             display: inline-flex;
-            font-size: 0.76rem;
+            font-size: 0.9rem;
             font-weight: 850;
             justify-content: center;
             line-height: 1;
-            min-height: 1.6rem;
-            min-width: 4.25rem;
+            min-height: 1.85rem;
+            min-width: 4.8rem;
             overflow: hidden;
-            padding: 0.24rem 0.56rem;
+            padding: 0.3rem 0.65rem;
             position: relative;
           }
           .streamlit-scanner-score::before {
@@ -1273,6 +1277,7 @@ def render_app_chrome() -> str:
             font-weight: 700;
           }
           .streamlit-scanner-ticker {
+            font-size: 0.95rem;
             font-weight: 800;
             letter-spacing: 0.03em;
           }
@@ -1304,7 +1309,7 @@ def render_app_chrome() -> str:
           }
           .streamlit-scanner-reason {
             display: block;
-            font-size: 0.74rem;
+            font-size: 0.8rem;
             font-weight: 700;
             margin-top: 0.2rem;
             max-width: 22rem;
@@ -1312,6 +1317,7 @@ def render_app_chrome() -> str:
           }
           .streamlit-scanner-zone {
             color: var(--text, #111827) !important;
+            font-size: 0.92rem;
             font-weight: 750;
           }
           .streamlit-scanner-warning-row td {
