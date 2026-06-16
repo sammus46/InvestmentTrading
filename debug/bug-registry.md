@@ -14,6 +14,7 @@ This registry is the durable index for bugs tracked under `debug/bugs/`. Keep it
 | [BUG-0008](bugs/BUG-0008-missing-static-report-ticker-search.md) | Fixed | P2 Medium | Static UI, Trading Levels | Static Trading Levels report lacked the ticker search available in Streamlit. | Smoke report search with one and multiple tickers before marking verified. |
 | [BUG-0009](bugs/BUG-0009-streamlit-scanner-rendered-offscreen.md) | Fixed | P1 High | Streamlit UI, Scanner | Scanner data could load and render offscreen away from the Scanner controls, making the table appear missing. | Keep scanner slot directly under Scanner controls and smoke first viewport after loading. |
 | [BUG-0010](bugs/BUG-0010-streamlit-cloud-poetry-package-mode.md) | Fixed | P0 Critical | Streamlit Community Cloud, Deployment | Streamlit Cloud dependency install succeeded, then Poetry failed installing the root project package. | Redeploy clean branch and verify logs reach app startup. |
+| [BUG-0011](bugs/BUG-0011-streamlit-cloud-app-import-path.md) | Fixed | P0 Critical | Streamlit Community Cloud, Deployment | Streamlit reached app startup, then failed importing the local `app` package. | Redeploy import-path branch and verify logs avoid `ModuleNotFoundError`. |
 
 ## Registry Rules
 

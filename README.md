@@ -189,6 +189,7 @@ Streamlit Cloud deployment metadata is intentionally guarded:
 - Keep `requires-python` bounded with `<4` so Poetry does not solve dependencies against future Python major versions that packages such as `reportlab` do not support.
 - Keep `[tool.poetry] package-mode = false` because this repository is deployed as an app, not installed as a publishable Python package named `investment-trading`.
 - Do not add a `requirements.txt` unless deliberately replacing `pyproject.toml`; Streamlit Community Cloud uses the first dependency file it finds.
+- If Streamlit Cloud logs show `ModuleNotFoundError: No module named 'app'`, confirm `app/streamlit_app.py` still inserts the repository root into `sys.path` before importing `app.models`.
 - For future deployment bugs, save the UTC Streamlit logs, record the branch, main file path, Python version, and dependency file used, then add or update a bug note under `debug/bugs/`.
 
 ## Ticker input
