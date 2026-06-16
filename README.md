@@ -10,13 +10,12 @@ A simple web application that pulls free market data with `yfinance`, calculates
 - Shared ticker validation across API requests, static watchlists, and Streamlit watchlists.
 - Saved watchlists automatically load levels, scanner output, news, and market performance when the app opens.
 - Collapsible Settings panels in both the browser and Streamlit UIs persist the default view, report layout, level filter, chart defaults, auto-load/auto-refresh behavior, and watchlist news headline count.
-- `Generate Levels` button that requests only the selected metrics from the Python backend.
+- `Run Levels + Scanner` button that refreshes generated price-level reports and setup scanner output together.
 - Shared backend display sections keep the FastAPI static UI, Streamlit UI, and PDF report aligned.
 - `GET /api/config` exposes the metric catalog, chart range/interval defaults, report layouts, and default level weights used by the static UI.
 - `Refresh News` button that retrieves watchlist headlines, categorized expanded ticker news cards, and general US stock market news.
 - Yahoo-style market and watchlist day-to-date performance snapshots on the Stock News view.
 - X.com section embedding public `@unusual_whales` posts below the watchlist news.
-- `Run Scanner` button that manually scans the shared watchlist for setup scores, support/resistance zones, risk/reward, and recurring intraday dip patterns.
 - Downloadable PDF report button that honors the same metric selections.
 - Drag-and-drop report cards with arrow-button fallbacks for rearranging generated ticker cards.
 - Advanced Controls in the static watchlist drawer and Streamlit sidebar let users test custom level weights against the `Weight 20+` report filter in real time, with reset back to backend defaults.
@@ -304,7 +303,7 @@ curl -X POST http://127.0.0.1:8000/api/scanner \
   -d '{"tickers":"AAPL, MSFT, NVDA","include_setup":true,"include_patterns":true}'
 ```
 
-The scanner uses the same saved watchlist as the levels and news views. In the browser UI it autoloads for a saved watchlist and can still be rerun manually. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, relative strength, VWAP state, lows-held, range, and momentum cells use compact color/symbol coding for faster scanning. The browser and Streamlit UIs default to a horizontally scrollable ticker-row table on mobile, with the stacked cards view still available as an explicit setting.
+The scanner uses the same saved watchlist as the levels and news views. In the browser and Streamlit UIs, the `Run Levels + Scanner` button refreshes both the price-level report and scanner output together. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, relative strength, VWAP state, lows-held, range, and momentum cells use compact color/symbol coding for faster scanning. The browser and Streamlit UIs default to a horizontally scrollable ticker-row table on mobile, with the stacked cards view still available as an explicit setting.
 
 Download a PDF report:
 

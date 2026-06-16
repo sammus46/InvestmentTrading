@@ -169,7 +169,6 @@ const reportSearchEl = document.querySelector("#report-search");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
-const runScannerButton = document.querySelector("#run-scanner");
 const scannerStatusEl = document.querySelector("#scanner-status");
 const scannerGeneratedAtEl = document.querySelector("#scanner-generated-at");
 const scannerSetupEl = document.querySelector("#scanner-setup-results");
@@ -238,6 +237,7 @@ let autoRefreshTimer = null;
 let newsEnrichmentPollTimer = null;
 let newsEnrichmentPollAttempts = 0;
 let newsEnrichmentPollKey = "";
+let runControlsDisableDepth = 0;
 const chartOverrides = {};
 const chartDataCache = new Map();
 const chartInstances = new Map();
@@ -307,7 +307,7 @@ levelWeightsListEl?.addEventListener("change", handleLevelWeightControlInput);
 resetLevelWeightsButton?.addEventListener("click", resetLevelWeights);
 
 generateButton.addEventListener("click", async () => {
-  await loadLevels();
+  await loadLevelsAndScanner();
 });
 
 pdfButton.addEventListener("click", async () => {
@@ -417,10 +417,6 @@ watchlistNewsEl.addEventListener("click", (event) => {
 
 watchlistNewsSearchEl?.addEventListener("input", () => {
   renderWatchlistNews(currentNews?.ticker_news || []);
-});
-
-runScannerButton.addEventListener("click", async () => {
-  await loadScanner();
 });
 
 scannerSetupEl.addEventListener("click", (event) => {
@@ -1255,17 +1251,15 @@ async function withBusyState(message, callback, request = null) {
     return;
   }
   setStatus(message, "");
-  generateButton.disabled = true;
-  pdfButton.disabled = true;
+  setRunControlsDisabled(true);
   try {
     await callback();
   } catch (error) {
     if (isAbortError(error)) return;
     setStatus(readableError(error), "error");
   } finally {
+    setRunControlsDisabled(false);
     if (!request || request.isCurrent()) {
-      generateButton.disabled = false;
-      pdfButton.disabled = false;
       request?.complete();
     }
   }
@@ -1286,26 +1280,6 @@ async function withNewsBusyState(message, callback, request = null) {
   } finally {
     if (!request || request.isCurrent()) {
       refreshNewsButton.disabled = false;
-      request?.complete();
-    }
-  }
-}
-
-async function withScannerBusyState(message, callback, request = null) {
-  if (!watchlistTickers.length) {
-    setScannerStatus("Enter at least one ticker symbol.", "error");
-    return;
-  }
-  setScannerStatus(message, "");
-  runScannerButton.disabled = true;
-  try {
-    await callback();
-  } catch (error) {
-    if (isAbortError(error)) return;
-    setScannerStatus(readableError(error), "error");
-  } finally {
-    if (!request || request.isCurrent()) {
-      runScannerButton.disabled = false;
       request?.complete();
     }
   }
@@ -1393,26 +1367,97 @@ function newsHasPendingAnalysis(news) {
 }
 
 async function loadLevels() {
+  if (!watchlistTickers.length) {
+    setStatus("Enter at least one ticker symbol.", "error");
+    return;
+  }
   const request = startRequest("levels");
-  await withBusyState("Generating levels...", async () => {
-    const report = await postJson("/api/levels", buildPayload(), { signal: request.signal });
-    if (!request.isCurrent()) return;
-    renderReport(report);
-    setStatus("", "");
-    loadChartHistory().catch((error) => {
-      if (!isAbortError(error)) setStatus(readableError(error), "error");
-    });
-  }, request);
+  await withBusyState("Generating levels...", () => fetchLevels(request), request);
 }
 
 async function loadScanner() {
+  if (!watchlistTickers.length) {
+    setScannerStatus("Enter at least one ticker symbol.", "error");
+    return;
+  }
   const request = startRequest("scanner");
-  await withScannerBusyState("Running scanner for the shared watchlist...", async () => {
-    const scanner = await postJson("/api/scanner", buildScannerPayload(), { signal: request.signal });
-    if (!request.isCurrent()) return;
-    renderScanner(scanner);
-    setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "", scanner.warnings?.length ? "error" : "");
-  }, request);
+  setScannerStatus("Running scanner for the shared watchlist...", "");
+  try {
+    await fetchScanner(request);
+  } catch (error) {
+    if (isAbortError(error)) return;
+    setScannerStatus(readableError(error), "error");
+  } finally {
+    if (request.isCurrent()) {
+      request.complete();
+    }
+  }
+}
+
+async function loadLevelsAndScanner() {
+  if (!watchlistTickers.length) {
+    setStatus("Enter at least one ticker symbol.", "error");
+    setScannerStatus("Enter at least one ticker symbol.", "error");
+    return;
+  }
+  const levelsRequest = startRequest("levels");
+  const scannerRequest = startRequest("scanner");
+  setRunControlsDisabled(true);
+  setStatus("Generating levels...", "");
+  setScannerStatus("Running scanner for the shared watchlist...", "");
+
+  const levelsLoad = fetchLevels(levelsRequest)
+    .catch((error) => {
+      if (!isAbortError(error) && levelsRequest.isCurrent()) {
+        setStatus(readableError(error), "error");
+      }
+    })
+    .finally(() => {
+      if (levelsRequest.isCurrent()) {
+        levelsRequest.complete();
+      }
+    });
+
+  const scannerLoad = fetchScanner(scannerRequest)
+    .catch((error) => {
+      if (!isAbortError(error) && scannerRequest.isCurrent()) {
+        setScannerStatus(readableError(error), "error");
+      }
+    })
+    .finally(() => {
+      if (scannerRequest.isCurrent()) {
+        scannerRequest.complete();
+      }
+    });
+
+  await Promise.allSettled([levelsLoad, scannerLoad]);
+  setRunControlsDisabled(false);
+}
+
+async function fetchLevels(request) {
+  const report = await postJson("/api/levels", buildPayload(), { signal: request.signal });
+  if (!request.isCurrent()) return;
+  renderReport(report);
+  setStatus("", "");
+  loadChartHistory().catch((error) => {
+    if (!isAbortError(error)) setStatus(readableError(error), "error");
+  });
+}
+
+async function fetchScanner(request) {
+  const scanner = await postJson("/api/scanner", buildScannerPayload(), { signal: request.signal });
+  if (!request.isCurrent()) return;
+  renderScanner(scanner);
+  setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "", scanner.warnings?.length ? "error" : "");
+}
+
+function setRunControlsDisabled(disabled) {
+  runControlsDisableDepth = disabled
+    ? runControlsDisableDepth + 1
+    : Math.max(0, runControlsDisableDepth - 1);
+  const shouldDisable = runControlsDisableDepth > 0;
+  generateButton.disabled = shouldDisable;
+  pdfButton.disabled = shouldDisable;
 }
 
 async function loadSectorAnalytics() {

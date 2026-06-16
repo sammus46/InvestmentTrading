@@ -494,14 +494,18 @@ def test_streamlit_levels_copy_replaces_report_label():
     assert "Download PDF Report" not in source
 
 
-def test_streamlit_scanner_slot_stays_with_scanner_controls():
+def test_streamlit_levels_view_uses_one_levels_scanner_run_action():
     source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
 
-    scanner_controls = source.index('st.subheader("Scanner")')
-    scanner_slot = source.index("scanner_slot = st.empty()", scanner_controls)
-    report_slot = source.index("report_slot = st.empty()", scanner_controls)
+    action = source.index('st.button("Run Levels + Scanner"')
+    loader = source.index("load_levels_and_scanner_progressively(", action)
+    mark_loaded = source.index('mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), datasets=("report", "scanner"))', loader)
 
-    assert scanner_controls < scanner_slot < report_slot
+    assert action < loader < mark_loaded
+    assert '"Run Scanner"' not in source
+    assert "run_scanner" not in source
+    assert "streamlit-sidebar-run" not in source
+    assert "Run levels + news" not in source
 
 
 def test_streamlit_entrypoint_bootstraps_repo_root_before_app_imports():

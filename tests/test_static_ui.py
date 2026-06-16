@@ -21,6 +21,21 @@ def test_static_scanner_auto_mobile_keeps_scrollable_table_visible():
     assert "position: sticky" in css
 
 
+def test_static_levels_view_uses_one_levels_scanner_run_button():
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+
+    assert html.count('id="generate"') == 1
+    assert "Run Levels + Scanner" in html
+    assert 'id="run-scanner"' not in html
+    assert "Run Scanner" not in html
+    assert 'await loadLevelsAndScanner();' in js
+    assert "async function loadLevelsAndScanner()" in js
+    assert "runScannerButton" not in js
+    assert 'querySelector("#run-scanner")' not in js
+    assert "withScannerBusyState" not in js
+
+
 def test_static_theme_uses_light_surfaces_for_light_mode_actions():
     css = Path("app/static/styles.css").read_text(encoding="utf-8")
     dark_start = css.index("@media (prefers-color-scheme: dark)")
