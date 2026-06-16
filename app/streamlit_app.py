@@ -176,12 +176,17 @@ def scanner_service() -> ScannerService:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int = 0) -> GenerateResponse:
-    """Fetch and calculate metrics, cached briefly to avoid repeated provider calls."""
+def build_report_payload(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int = 0) -> dict[str, Any]:
+    """Fetch and calculate metrics as cache-safe JSON-compatible data."""
     return GenerateResponse(
         generated_at=datetime.now(timezone.utc),
         metrics=normalize_equity_metrics(market_data_service().build_metrics(list(tickers), list(metrics))),
-    )
+    ).model_dump(mode="json")
+
+
+def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refresh_token: int = 0) -> GenerateResponse:
+    """Fetch and calculate metrics, cached briefly to avoid repeated provider calls."""
+    return GenerateResponse.model_validate(build_report_payload(tickers, metrics, refresh_token=refresh_token))
 
 
 def ticker_batches(tickers: tuple[str, ...], batch_size: int = STREAMLIT_REPORT_BATCH_SIZE) -> list[tuple[str, ...]]:
@@ -262,6 +267,20 @@ def start_pipelined_levels_scanner_loader(
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def build_news_payload(
+    tickers: tuple[str, ...],
+    per_ticker: int = NEWS_EXPANDED_HEADLINE_COUNT,
+    general_count: int = 8,
+    refresh_token: int = 0,
+) -> dict[str, Any]:
+    """Fetch watchlist plus broad market news as cache-safe JSON-compatible data."""
+    return news_service().build_news(
+        list(tickers),
+        per_ticker=per_ticker,
+        general_count=general_count,
+    ).model_dump(mode="json")
+
+
 def build_news(
     tickers: tuple[str, ...],
     per_ticker: int = NEWS_EXPANDED_HEADLINE_COUNT,
@@ -269,29 +288,63 @@ def build_news(
     refresh_token: int = 0,
 ) -> NewsResponse:
     """Fetch and normalize watchlist plus broad market news."""
-    return news_service().build_news(list(tickers), per_ticker=per_ticker, general_count=general_count)
+    return NewsResponse.model_validate(
+        build_news_payload(
+            tickers,
+            per_ticker=per_ticker,
+            general_count=general_count,
+            refresh_token=refresh_token,
+        )
+    )
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+def build_market_snapshot_payload(tickers: tuple[str, ...], refresh_token: int = 0) -> dict[str, Any]:
+    """Fetch major market plus watchlist performance as cache-safe JSON-compatible data."""
+    return market_data_service().build_market_snapshot(list(tickers)).model_dump(mode="json")
+
+
 def build_market_snapshot(tickers: tuple[str, ...], refresh_token: int = 0) -> MarketSnapshotResponse:
     """Fetch major market plus watchlist day-to-date performance."""
-    return market_data_service().build_market_snapshot(list(tickers))
+    return MarketSnapshotResponse.model_validate(build_market_snapshot_payload(tickers, refresh_token=refresh_token))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+def build_scanner_payload(tickers: tuple[str, ...], refresh_token: int = 0) -> dict[str, Any]:
+    """Run setup scanner rows as cache-safe JSON-compatible data."""
+    return normalize_scanner_response(
+        scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=False)
+    ).model_dump(mode="json")
+
+
 def build_scanner(tickers: tuple[str, ...], refresh_token: int = 0) -> ScannerResponse:
     """Run setup scanner rows."""
-    return normalize_scanner_response(scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=False))
+    return ScannerResponse.model_validate(build_scanner_payload(tickers, refresh_token=refresh_token))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+def build_sector_analytics_payload(tickers: tuple[str, ...], refresh_token: int = 0) -> dict[str, Any]:
+    """Run sector analytics as cache-safe JSON-compatible data."""
+    del refresh_token
+    return scanner_service().build_sector_analytics(list(tickers)).model_dump(mode="json")
+
+
 def build_sector_analytics(tickers: tuple[str, ...], refresh_token: int = 0) -> SectorAnalyticsResponse:
     """Run sector trend and intraday pattern analytics."""
-    del refresh_token
-    return scanner_service().build_sector_analytics(list(tickers))
+    return SectorAnalyticsResponse.model_validate(build_sector_analytics_payload(tickers, refresh_token=refresh_token))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+def build_chart_history_payload(
+    tickers: tuple[str, ...],
+    chart_range: ChartRange,
+    interval: ChartInterval,
+    refresh_token: int = 0,
+) -> dict[str, Any]:
+    """Fetch OHLC chart history as cache-safe JSON-compatible data."""
+    return market_data_service().build_chart_history(list(tickers), chart_range, interval).model_dump(mode="json")
+
+
 def build_chart_history(
     tickers: tuple[str, ...],
     chart_range: ChartRange,
@@ -299,7 +352,9 @@ def build_chart_history(
     refresh_token: int = 0,
 ) -> ChartHistoryResponse:
     """Fetch OHLC chart history for line and candlestick charts."""
-    return market_data_service().build_chart_history(list(tickers), chart_range, interval)
+    return ChartHistoryResponse.model_validate(
+        build_chart_history_payload(tickers, chart_range, interval, refresh_token=refresh_token)
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -2511,6 +2566,20 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="secondary"] * {
               color: var(--button-secondary-text) !important;
             }
+            body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="primary"],
+            body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="primary"],
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
+              background: var(--brand-deep) !important;
+              border-color: var(--brand-border) !important;
+              color: #ffffff !important;
+              -webkit-text-fill-color: #ffffff !important;
+            }
+            body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="primary"] *,
+            body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="primary"] *,
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] * {
+              color: #ffffff !important;
+              -webkit-text-fill-color: #ffffff !important;
+            }
             body:has(.streamlit-theme-marker) .metric-section,
             body:has(.streamlit-theme-marker) .metric-cell,
             body:has(.streamlit-theme-marker) .levels-table td,
@@ -2560,6 +2629,12 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .levels-table .current td {
               background: var(--brand-deep) !important;
               color: #ffffff !important;
+            }
+            body:has(.streamlit-theme-marker) .metric-card-header *,
+            body:has(.streamlit-theme-marker) .compare-table th:first-child *,
+            body:has(.streamlit-theme-marker) .levels-table .current td * {
+              color: #ffffff !important;
+              -webkit-text-fill-color: #ffffff !important;
             }
             body:has(.streamlit-theme-marker) .streamlit-news-category-details > div {
               background: var(--surface-bg) !important;
@@ -2643,6 +2718,86 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) *,
             body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) p {
               color: #ffffff !important;
+            }
+            @media (max-width: 760px) {
+              body:has(.streamlit-theme-marker) .stApp .block-container {
+                padding-left: 0.45rem;
+                padding-right: 0.45rem;
+                padding-top: 0.35rem;
+              }
+              body:has(.streamlit-theme-marker) [data-testid="stSidebarCollapsedControl"],
+              body:has(.streamlit-theme-marker) [data-testid="stSidebarCollapseButton"],
+              body:has(.streamlit-theme-marker) [data-testid="stExpandSidebarButton"] {
+                height: 2.45rem !important;
+                left: 0.5rem !important;
+                top: 0.55rem !important;
+                width: 2.45rem !important;
+              }
+              body:has(.streamlit-theme-marker) [data-testid="stSidebarCollapsedControl"] button,
+              body:has(.streamlit-theme-marker) [data-testid="stSidebarCollapseButton"] button,
+              body:has(.streamlit-theme-marker) [data-testid="stExpandSidebarButton"] button,
+              body:has(.streamlit-theme-marker) [data-testid="stExpandSidebarButton"],
+              body:has(.streamlit-theme-marker) button[aria-label="Open sidebar"],
+              body:has(.streamlit-theme-marker) button[aria-label="Close sidebar"],
+              body:has(.streamlit-theme-marker) button[title="Open sidebar"],
+              body:has(.streamlit-theme-marker) button[title="Close sidebar"] {
+                background: var(--brand-deep) !important;
+                border-color: var(--brand-border) !important;
+                border-radius: 0.55rem !important;
+                box-shadow: 0 8px 18px rgba(17, 49, 47, 0.28) !important;
+                height: 2.45rem !important;
+                left: 0.5rem !important;
+                min-height: 2.45rem !important;
+                min-width: 2.45rem !important;
+                top: 0.55rem !important;
+                width: 2.45rem !important;
+              }
+              body:has(.streamlit-theme-marker) [data-testid="stSidebarCollapsedControl"] button::before,
+              body:has(.streamlit-theme-marker) [data-testid="stSidebarCollapseButton"] button::before,
+              body:has(.streamlit-theme-marker) [data-testid="stExpandSidebarButton"] button::before,
+              body:has(.streamlit-theme-marker) [data-testid="stExpandSidebarButton"]::before,
+              body:has(.streamlit-theme-marker) button[aria-label="Open sidebar"]::before,
+              body:has(.streamlit-theme-marker) button[aria-label="Close sidebar"]::before,
+              body:has(.streamlit-theme-marker) button[title="Open sidebar"]::before,
+              body:has(.streamlit-theme-marker) button[title="Close sidebar"]::before {
+                color: #ffffff !important;
+                font-size: 1.35rem;
+              }
+              body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)) {
+                margin: 0.5rem 0 0.75rem !important;
+                padding: 0.85rem !important;
+              }
+              body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)) h1 {
+                font-size: clamp(1.85rem, 9vw, 2.45rem) !important;
+                line-height: 1.08 !important;
+              }
+              body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)) [data-testid="stButton"] button[kind="primary"] {
+                font-size: 0.98rem !important;
+                min-height: 2.85rem !important;
+                padding: 0.55rem 0.8rem !important;
+              }
+              body:has(.streamlit-theme-marker) .metric-card-header {
+                min-height: 0 !important;
+                padding: 0.68rem 0.8rem !important;
+              }
+              body:has(.streamlit-theme-marker) .metric-card-header h3 {
+                font-size: 1.15rem !important;
+                line-height: 1.15 !important;
+              }
+              body:has(.streamlit-theme-marker) .metric-card-body,
+              body:has(.streamlit-theme-marker) .ladder-body,
+              body:has(.streamlit-theme-marker) .compact-body {
+                padding: 0.65rem !important;
+              }
+              body:has(.streamlit-theme-marker) div[role="radiogroup"] label {
+                font-size: 0.86rem !important;
+                min-height: 1.8rem;
+                padding: 0.32rem 0.62rem !important;
+              }
+              body:has(.streamlit-theme-marker) div[role="radiogroup"] label > div:last-child > div,
+              body:has(.streamlit-theme-marker) div[role="radiogroup"] label p {
+                font-size: 0.86rem !important;
+              }
             }
 	        </style>
         """,

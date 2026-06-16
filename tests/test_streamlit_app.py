@@ -8,20 +8,26 @@ from streamlit.testing.v1 import AppTest
 
 from app.models import (
     BollingerLevels,
+    ChartHistoryResponse,
+    ChartOhlcPoint,
     DisplayRow,
     DisplaySection,
     EarningsGap,
     EquityMetrics,
     FiftyTwoWeekRange,
     GenerateResponse,
+    MarketSnapshotResponse,
     NewsArticle,
+    NewsResponse,
     OpeningRange,
     Ohlc,
     PremarketRange,
     ScannerResponse,
     ScannerSetupRow,
+    SectorAnalyticsResponse,
     SwingLevels,
     TechnicalLevels,
+    TickerChartHistory,
     TickerNews,
 )
 from app.streamlit_app import (
@@ -257,6 +263,113 @@ def test_streamlit_settings_accept_sector_analytics_view():
 
     assert settings["default_view"] == ANALYTICS_VIEW
     assert ANALYTICS_VIEW in STREAMLIT_VIEWS
+
+
+def test_build_chart_history_payload_is_json_serializable(monkeypatch):
+    class FakeMarketData:
+        def build_chart_history(self, tickers, chart_range, interval):
+            assert tickers == ["AAPL"]
+            return ChartHistoryResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                range=chart_range,
+                interval=interval,
+                charts=[
+                    TickerChartHistory(
+                        ticker="AAPL",
+                        range=chart_range,
+                        interval=interval,
+                        points=[
+                            ChartOhlcPoint(
+                                timestamp=datetime(2026, 6, 15, 14, 35, tzinfo=timezone.utc),
+                                open=10,
+                                high=11,
+                                low=9,
+                                close=10.5,
+                            )
+                        ],
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(streamlit_app_module, "market_data_service", lambda: FakeMarketData())
+
+    payload = streamlit_app_module.build_chart_history_payload.__wrapped__(
+        ("AAPL",),
+        "1D",
+        "5m",
+        refresh_token=7,
+    )
+
+    json.dumps(payload)
+    assert isinstance(payload["generated_at"], str)
+    assert isinstance(payload["charts"][0]["points"][0]["timestamp"], str)
+    assert ChartHistoryResponse.model_validate(payload).charts[0].points[0].close == 10.5
+
+
+def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
+    class FakeMarketData:
+        def build_metrics(self, tickers, metrics):
+            return [streamlit_metric_fixture(ticker, metrics) for ticker in tickers]
+
+        def build_market_snapshot(self, tickers):
+            return MarketSnapshotResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                market=[],
+                watchlist=[],
+                warnings=list(tickers),
+            )
+
+    class FakeNews:
+        def build_news(self, tickers, per_ticker=5, general_count=8):
+            return NewsResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                watchlist=list(tickers),
+                general_market=[
+                    NewsArticle(
+                        title="Market update",
+                        published_at=datetime(2026, 6, 15, 14, 35, tzinfo=timezone.utc),
+                    )
+                ],
+                warnings=[f"{per_ticker}:{general_count}"],
+            )
+
+    class FakeScanner:
+        def build_scanner(self, tickers, include_setup=True, include_patterns=True):
+            del include_setup, include_patterns
+            return ScannerResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                watchlist=list(tickers),
+                setup_rows=[ScannerSetupRow(ticker=tickers[0], score=7)],
+            )
+
+        def build_sector_analytics(self, tickers):
+            return SectorAnalyticsResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                watchlist=list(tickers),
+                warnings=["sector note"],
+            )
+
+    monkeypatch.setattr(streamlit_app_module, "market_data_service", lambda: FakeMarketData())
+    monkeypatch.setattr(streamlit_app_module, "news_service", lambda: FakeNews())
+    monkeypatch.setattr(streamlit_app_module, "scanner_service", lambda: FakeScanner())
+
+    payloads = [
+        streamlit_app_module.build_report_payload.__wrapped__(("AAPL",), ("previous_day",), refresh_token=1),
+        streamlit_app_module.build_market_snapshot_payload.__wrapped__(("AAPL",), refresh_token=1),
+        streamlit_app_module.build_news_payload.__wrapped__(("AAPL",), per_ticker=3, general_count=4, refresh_token=1),
+        streamlit_app_module.build_scanner_payload.__wrapped__(("AAPL",), refresh_token=1),
+        streamlit_app_module.build_sector_analytics_payload.__wrapped__(("AAPL",), refresh_token=1),
+    ]
+
+    for payload in payloads:
+        json.dumps(payload)
+        assert isinstance(payload["generated_at"], str)
+
+    assert GenerateResponse.model_validate(payloads[0]).metrics[0].ticker == "AAPL"
+    assert MarketSnapshotResponse.model_validate(payloads[1]).warnings == ["AAPL"]
+    assert NewsResponse.model_validate(payloads[2]).general_market[0].title == "Market update"
+    assert ScannerResponse.model_validate(payloads[3]).setup_rows[0].score == 7
+    assert SectorAnalyticsResponse.model_validate(payloads[4]).warnings == ["sector note"]
 
 
 def test_save_streamlit_settings_preserves_watchlist(tmp_path):
@@ -833,6 +946,24 @@ def test_streamlit_scanner_auto_mobile_keeps_scrollable_table_visible():
     assert ".streamlit-scanner-render.view-cards .streamlit-scanner-card-panel" in source
     assert ".streamlit-scanner-table th.streamlit-scanner-cell-ticker" in source
     assert ".streamlit-scanner-table td.streamlit-scanner-cell-ticker" in source
+
+
+def test_streamlit_mobile_theme_css_covers_light_dark_and_system_modes():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    theme_start = source.index('body:has(.streamlit-theme-marker[data-app-theme="light"])')
+    theme_css = source[theme_start:]
+    mobile_start = theme_css.index("@media (max-width: 760px)")
+    mobile_css = theme_css[mobile_start : theme_css.index("</style>", mobile_start)]
+
+    assert 'body:has(.streamlit-theme-marker[data-app-theme="light"])' in theme_css
+    assert 'body:has(.streamlit-theme-marker[data-app-theme="dark"])' in theme_css
+    assert 'matchMedia("(prefers-color-scheme: dark)")' in source
+    assert 'button[kind="primary"]' in theme_css
+    assert "-webkit-text-fill-color: #ffffff !important" in theme_css
+    assert "body:has(.streamlit-theme-marker) .metric-card-header *" in theme_css
+    assert 'body:has(.streamlit-theme-marker) .stApp .block-container' in mobile_css
+    assert 'button[aria-label="Open sidebar"]' in mobile_css
+    assert "div[data-testid=\"stVerticalBlock\"]:has(.view-hero-marker)" in mobile_css
 
 
 def test_scanner_setup_table_html_escapes_values_and_renders_reasons():
