@@ -959,11 +959,27 @@ def test_streamlit_mobile_theme_css_covers_light_dark_and_system_modes():
     assert 'body:has(.streamlit-theme-marker[data-app-theme="dark"])' in theme_css
     assert 'matchMedia("(prefers-color-scheme: dark)")' in source
     assert 'button[kind="primary"]' in theme_css
-    assert "-webkit-text-fill-color: #ffffff !important" in theme_css
+    assert "--action-primary-bg: #ccfbf1" in theme_css
+    assert "--action-primary-text: #12312f" in theme_css
+    assert "--emphasis-bg: #ccfbf1" in theme_css
+    assert "--emphasis-text: #12312f" in theme_css
+    assert "--sidebar-toggle-bg: #ccfbf1" in theme_css
+    assert "--action-primary-bg: #0b3b37" in theme_css
+    assert "--action-primary-text: #ccfbf1" in theme_css
+    assert "-webkit-text-fill-color: var(--action-primary-text) !important" in theme_css
+    assert "background: var(--brand-deep) !important" not in theme_css
     assert "body:has(.streamlit-theme-marker) .metric-card-header *" in theme_css
     assert 'body:has(.streamlit-theme-marker) .stApp .block-container' in mobile_css
     assert 'button[aria-label="Open sidebar"]' in mobile_css
     assert "div[data-testid=\"stVerticalBlock\"]:has(.view-hero-marker)" in mobile_css
+
+
+def test_streamlit_html_embeds_use_components_api():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    assert "import streamlit.components.v1 as components" in source
+    assert "components.html(" in source
+    assert "st.iframe(" not in source
 
 
 def test_scanner_setup_table_html_escapes_values_and_renders_reasons():

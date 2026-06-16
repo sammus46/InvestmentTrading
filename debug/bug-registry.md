@@ -15,6 +15,7 @@ This registry is the durable index for bugs tracked under `debug/bugs/`. Keep it
 | [BUG-0009](bugs/BUG-0009-streamlit-scanner-rendered-offscreen.md) | Fixed | P1 High | Streamlit UI, Scanner | Scanner data could load and render offscreen away from the Scanner controls, making the table appear missing. | Keep scanner slot directly under Scanner controls and smoke first viewport after loading. |
 | [BUG-0010](bugs/BUG-0010-streamlit-cloud-poetry-package-mode.md) | Fixed | P0 Critical | Streamlit Community Cloud, Deployment | Streamlit Cloud dependency install succeeded, then Poetry failed installing the root project package. | Redeploy clean branch and verify logs reach app startup. |
 | [BUG-0011](bugs/BUG-0011-streamlit-cloud-app-import-path.md) | Fixed | P0 Critical | Streamlit Community Cloud, Deployment | Streamlit reached app startup, then failed importing the local `app` package. | Redeploy import-path branch and verify logs avoid `ModuleNotFoundError`. |
+| [BUG-0012](bugs/BUG-0012-mobile-theme-surface-colors.md) | Fixed | P2 Medium | Static UI, Streamlit UI, Mobile | Mobile light mode could show dark-mode surface colors on large controls, headers, and table identity rows. | Smoke light, dark, and system modes on mobile before marking verified. |
 
 ## Registry Rules
 

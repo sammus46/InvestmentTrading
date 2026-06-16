@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from pydantic import ValidationError
 
 from app.models import (
@@ -593,9 +594,14 @@ def streamlit_theme_type() -> str:
     return "dark" if theme_type == "dark" else "light"
 
 
+def render_html_component(html: str, *, height: int, scrolling: bool = False) -> None:
+    """Render iframe-backed HTML using Streamlit's stable components API."""
+    components.html(html, height=height, scrolling=scrolling)
+
+
 def render_streamlit_theme_bridge() -> None:
     """Mirror Streamlit's actual rendered theme onto a page marker for CSS."""
-    st.iframe(
+    render_html_component(
         """
         <script>
           (function () {
@@ -713,6 +719,22 @@ def render_app_chrome() -> str:
 	            --signal-neutral-fg: #64748b;
 	            --signal-info-bg: #dbeafe;
 	            --signal-info-fg: #1d4ed8;
+	            --action-primary-bg: #ccfbf1;
+	            --action-primary-border: #5eead4;
+	            --action-primary-text: #12312f;
+	            --action-primary-shadow: 0 10px 20px rgba(15, 118, 110, 0.14);
+	            --emphasis-bg: #ccfbf1;
+	            --emphasis-border: #99f6e4;
+	            --emphasis-text: #12312f;
+	            --emphasis-muted: #0f766e;
+	            --sidebar-toggle-bg: #ccfbf1;
+	            --sidebar-toggle-border: #5eead4;
+	            --sidebar-toggle-text: #12312f;
+	            --sidebar-toggle-shadow: 0 8px 18px rgba(15, 118, 110, 0.16);
+	            --major-market-bg: #f0fdfa;
+	            --major-market-border: #99f6e4;
+	            --major-market-text: #12312f;
+	            --major-market-tile-border: rgba(15, 118, 110, 0.18);
 	            background: #eef2f1;
 	            color: #111827;
 	          }
@@ -825,14 +847,14 @@ def render_app_chrome() -> str:
           }
           div[data-testid="stButton"] button[kind="primary"],
           div[data-testid="stDownloadButton"] button[kind="primary"] {
-            background: #0f766e;
-            border: 1px solid #0f766e;
-            box-shadow: 0 10px 20px rgba(15, 118, 110, 0.18);
-            color: #ffffff;
+            background: var(--action-primary-bg);
+            border: 1px solid var(--action-primary-border);
+            box-shadow: var(--action-primary-shadow);
+            color: var(--action-primary-text);
           }
           div[data-testid="stButton"] button[kind="primary"] *,
           div[data-testid="stDownloadButton"] button[kind="primary"] * {
-            color: #ffffff !important;
+            color: var(--action-primary-text) !important;
           }
           div[data-testid="stButton"] button[kind="secondary"],
           div[data-testid="stDownloadButton"] button[kind="secondary"] {
@@ -907,20 +929,21 @@ def render_app_chrome() -> str:
           }
           .metric-card-header {
             align-items: center;
-            background: #12312f;
-            color: #ffffff;
+            background: var(--emphasis-bg);
+            border-bottom: 1px solid var(--emphasis-border);
+            color: var(--emphasis-text);
             display: flex;
             gap: 0.6rem;
             justify-content: space-between;
             padding: 0.95rem 1.1rem;
           }
           .metric-card-header h3 {
-            color: #ffffff;
+            color: var(--emphasis-text);
             letter-spacing: 0.06em;
             margin: 0;
           }
           .drag-glyph {
-            color: #bfdbfe;
+            color: var(--emphasis-muted);
             font-weight: 900;
           }
           .metric-card-body {
@@ -984,7 +1007,8 @@ def render_app_chrome() -> str:
             margin: 0.5rem 0 1rem;
           }
           .streamlit-market-grid.major {
-            background: #111827;
+            background: var(--major-market-bg);
+            border: 1px solid var(--major-market-border);
             border-radius: 0.5rem;
             padding: 0.8rem;
           }
@@ -998,8 +1022,8 @@ def render_app_chrome() -> str:
           }
           .streamlit-market-grid.major .streamlit-market-tile {
             background: transparent;
-            border-color: rgba(148, 163, 184, 0.24);
-            color: #ffffff !important;
+            border-color: var(--major-market-tile-border);
+            color: var(--major-market-text) !important;
           }
           .streamlit-market-tile h4 {
             color: inherit !important;
@@ -1071,10 +1095,11 @@ def render_app_chrome() -> str:
             padding: 0.25rem 0.45rem;
           }
           .streamlit-news-category {
-            background: #12312f;
+            background: var(--emphasis-bg);
+            border: 1px solid var(--emphasis-border);
             border-left: 4px solid #0f766e;
             border-radius: 0.45rem;
-            color: #ffffff !important;
+            color: var(--emphasis-text) !important;
             font-size: 0.82rem;
             font-weight: 900;
             letter-spacing: 0.02em;
@@ -1556,11 +1581,11 @@ def render_app_chrome() -> str:
           button[title="Open sidebar"],
           button[title="Close sidebar"] {
             align-items: center !important;
-            background: #0b2f2d !important;
-            border: 2px solid #2dd4bf !important;
+            background: var(--sidebar-toggle-bg, #ccfbf1) !important;
+            border: 2px solid var(--sidebar-toggle-border, #5eead4) !important;
             border-radius: 0.7rem !important;
-            box-shadow: 0 12px 28px rgba(17, 49, 47, 0.34) !important;
-            color: #ccfbf1 !important;
+            box-shadow: var(--sidebar-toggle-shadow, 0 8px 18px rgba(15, 118, 110, 0.16)) !important;
+            color: var(--sidebar-toggle-text, #12312f) !important;
             display: inline-flex !important;
             height: 3rem !important;
             justify-content: center !important;
@@ -1583,8 +1608,8 @@ def render_app_chrome() -> str:
           button[aria-label="Close sidebar"]:hover,
           button[title="Open sidebar"]:hover,
           button[title="Close sidebar"]:hover {
-            background: #0f766e !important;
-            border-color: #5eead4 !important;
+            background: var(--brand-soft, #99f6e4) !important;
+            border-color: var(--sidebar-toggle-border, #5eead4) !important;
           }
           [data-testid="stSidebarCollapsedControl"] button:focus-visible,
           [data-testid="stSidebarCollapseButton"] button:focus-visible,
@@ -1606,7 +1631,7 @@ def render_app_chrome() -> str:
           button[title="Open sidebar"]::before,
           button[title="Close sidebar"]::before {
             align-items: center;
-            color: #ccfbf1 !important;
+            color: var(--sidebar-toggle-text, #12312f) !important;
             content: "\\00AB";
             display: flex;
             font-family: Arial, Helvetica, sans-serif;
@@ -1650,10 +1675,10 @@ def render_app_chrome() -> str:
           button[aria-label="Close sidebar"] svg *,
           button[title="Open sidebar"] svg *,
           button[title="Close sidebar"] svg * {
-            color: #ccfbf1 !important;
-            fill: #ccfbf1 !important;
-            stroke: #ccfbf1 !important;
-            -webkit-text-fill-color: #ccfbf1 !important;
+            color: var(--sidebar-toggle-text, #12312f) !important;
+            fill: var(--sidebar-toggle-text, #12312f) !important;
+            stroke: var(--sidebar-toggle-text, #12312f) !important;
+            -webkit-text-fill-color: var(--sidebar-toggle-text, #12312f) !important;
           }
           [data-testid="stSidebar"] input,
           [data-testid="stSidebar"] textarea,
@@ -1681,14 +1706,14 @@ def render_app_chrome() -> str:
             white-space: nowrap;
           }
           [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
-            background: #0f766e !important;
-            border-color: #0f766e !important;
-            color: #ffffff !important;
-            box-shadow: 0 10px 20px rgba(15, 118, 110, 0.22) !important;
+            background: var(--action-primary-bg, #ccfbf1) !important;
+            border-color: var(--action-primary-border, #5eead4) !important;
+            color: var(--action-primary-text, #12312f) !important;
+            box-shadow: var(--action-primary-shadow, 0 10px 20px rgba(15, 118, 110, 0.14)) !important;
           }
           [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover {
-            background: #115e59 !important;
-            border-color: #115e59 !important;
+            background: var(--brand-soft, #99f6e4) !important;
+            border-color: var(--action-primary-border, #5eead4) !important;
           }
           [data-testid="stSidebar"] [data-testid="stButton"] button:disabled {
             opacity: 0.45 !important;
@@ -1890,8 +1915,8 @@ def render_app_chrome() -> str:
             padding: 0.5rem 0.65rem;
           }
           .levels-table .current td {
-            background: #12312f;
-            color: #ffffff;
+            background: var(--emphasis-bg);
+            color: var(--emphasis-text);
             font-weight: 900;
           }
           .levels-table .above td {
@@ -1963,8 +1988,8 @@ def render_app_chrome() -> str:
             min-width: 980px;
           }
           .compare-table th:first-child {
-            background: #12312f;
-            color: #ffffff;
+            background: var(--emphasis-bg);
+            color: var(--emphasis-text);
             left: 0;
             position: sticky;
             z-index: 1;
@@ -2093,8 +2118,8 @@ def render_app_chrome() -> str:
             overflow: hidden;
           }
           .streamlit-news-category-details summary {
-            background: #12312f;
-            color: #ffffff;
+            background: var(--emphasis-bg);
+            color: var(--emphasis-text);
             cursor: pointer;
             font-size: 0.78rem;
             font-weight: 900;
@@ -2170,6 +2195,22 @@ def render_app_chrome() -> str:
 	              --signal-neutral-fg: #cbd5e1;
 	              --signal-info-bg: #172554;
 	              --signal-info-fg: #bfdbfe;
+	              --action-primary-bg: #0b3b37;
+	              --action-primary-border: #0f766e;
+	              --action-primary-text: #ccfbf1;
+	              --action-primary-shadow: 0 10px 20px rgba(45, 212, 191, 0.12);
+	              --emphasis-bg: #0b2f2d;
+	              --emphasis-border: #0f766e;
+	              --emphasis-text: #ccfbf1;
+	              --emphasis-muted: #99f6e4;
+	              --sidebar-toggle-bg: #0b3b37;
+	              --sidebar-toggle-border: #0f766e;
+	              --sidebar-toggle-text: #ccfbf1;
+	              --sidebar-toggle-shadow: 0 8px 18px rgba(0, 0, 0, 0.26);
+	              --major-market-bg: #080d12;
+	              --major-market-border: #263241;
+	              --major-market-text: #f8fafc;
+	              --major-market-tile-border: rgba(148, 163, 184, 0.26);
 	              background: var(--app-bg) !important;
 	              color: var(--text) !important;
 	            }
@@ -2319,13 +2360,13 @@ def render_app_chrome() -> str:
 	              color: var(--warning-text) !important;
 	            }
 	            .streamlit-market-grid.major {
-	              background: #080d12 !important;
-	              border: 1px solid var(--border) !important;
+	              background: var(--major-market-bg) !important;
+	              border: 1px solid var(--major-market-border) !important;
 	            }
 	            .streamlit-market-grid.major .streamlit-market-tile {
 	              background: transparent !important;
-	              border-color: rgba(148, 163, 184, 0.26) !important;
-	              color: #ffffff !important;
+	              border-color: var(--major-market-tile-border) !important;
+	              color: var(--major-market-text) !important;
 	              box-shadow: none !important;
 	            }
 	            .streamlit-news-toggle-arrow {
@@ -2337,8 +2378,9 @@ def render_app_chrome() -> str:
 	            .metric-card-header,
 	            .compare-table th:first-child,
 	            .levels-table .current td {
-	              background: var(--brand-deep) !important;
-	              color: #ffffff !important;
+	              background: var(--emphasis-bg) !important;
+	              border-color: var(--emphasis-border) !important;
+	              color: var(--emphasis-text) !important;
 	            }
 	            .streamlit-news-category-details > div {
 	              background: var(--surface-bg) !important;
@@ -2390,8 +2432,25 @@ def render_app_chrome() -> str:
               --signal-neutral-fg: #64748b;
               --signal-info-bg: #dbeafe;
               --signal-info-fg: #1d4ed8;
-              --major-market-bg: #111827;
-              --major-market-border: #1f2937;
+              --action-primary-bg: #ccfbf1;
+              --action-primary-border: #5eead4;
+              --action-primary-text: #12312f;
+              --action-primary-shadow: 0 10px 20px rgba(15, 118, 110, 0.14);
+              --emphasis-bg: #ccfbf1;
+              --emphasis-border: #99f6e4;
+              --emphasis-text: #12312f;
+              --emphasis-muted: #0f766e;
+              --nav-active-bg: linear-gradient(135deg, #ccfbf1, #f0fdfa);
+              --nav-active-border: #99f6e4;
+              --nav-active-text: #12312f;
+              --sidebar-toggle-bg: #ccfbf1;
+              --sidebar-toggle-border: #5eead4;
+              --sidebar-toggle-text: #12312f;
+              --sidebar-toggle-shadow: 0 8px 18px rgba(15, 118, 110, 0.16);
+              --major-market-bg: #f0fdfa;
+              --major-market-border: #99f6e4;
+              --major-market-text: #12312f;
+              --major-market-tile-border: rgba(15, 118, 110, 0.18);
               --button-secondary-text: #334155;
               --link: #0284c7;
               --link-hover: #0f766e;
@@ -2429,8 +2488,25 @@ def render_app_chrome() -> str:
               --signal-neutral-fg: #cbd5e1;
               --signal-info-bg: #172554;
               --signal-info-fg: #bfdbfe;
+              --action-primary-bg: #0b3b37;
+              --action-primary-border: #0f766e;
+              --action-primary-text: #ccfbf1;
+              --action-primary-shadow: 0 10px 20px rgba(45, 212, 191, 0.12);
+              --emphasis-bg: #0b2f2d;
+              --emphasis-border: #0f766e;
+              --emphasis-text: #ccfbf1;
+              --emphasis-muted: #99f6e4;
+              --nav-active-bg: linear-gradient(135deg, #0b2f2d, #0f766e);
+              --nav-active-border: rgba(45, 212, 191, 0.58);
+              --nav-active-text: #ffffff;
+              --sidebar-toggle-bg: #0b3b37;
+              --sidebar-toggle-border: #0f766e;
+              --sidebar-toggle-text: #ccfbf1;
+              --sidebar-toggle-shadow: 0 8px 18px rgba(0, 0, 0, 0.26);
               --major-market-bg: #080d12;
               --major-market-border: #263241;
+              --major-market-text: #f8fafc;
+              --major-market-tile-border: rgba(148, 163, 184, 0.26);
               --button-secondary-text: #e5edf4;
               --link: #67e8f9;
               --link-hover: #5eead4;
@@ -2569,16 +2645,17 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="primary"],
             body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="primary"],
             body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
-              background: var(--brand-deep) !important;
-              border-color: var(--brand-border) !important;
-              color: #ffffff !important;
-              -webkit-text-fill-color: #ffffff !important;
+              background: var(--action-primary-bg) !important;
+              border-color: var(--action-primary-border) !important;
+              box-shadow: var(--action-primary-shadow) !important;
+              color: var(--action-primary-text) !important;
+              -webkit-text-fill-color: var(--action-primary-text) !important;
             }
             body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="primary"] *,
             body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="primary"] *,
             body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] * {
-              color: #ffffff !important;
-              -webkit-text-fill-color: #ffffff !important;
+              color: var(--action-primary-text) !important;
+              -webkit-text-fill-color: var(--action-primary-text) !important;
             }
             body:has(.streamlit-theme-marker) .metric-section,
             body:has(.streamlit-theme-marker) .metric-cell,
@@ -2619,22 +2696,23 @@ def render_app_chrome() -> str:
             }
             body:has(.streamlit-theme-marker) .streamlit-market-grid.major .streamlit-market-tile {
               background: transparent !important;
-              border-color: rgba(148, 163, 184, 0.26) !important;
-              color: #ffffff !important;
+              border-color: var(--major-market-tile-border) !important;
+              color: var(--major-market-text) !important;
               box-shadow: none !important;
             }
             body:has(.streamlit-theme-marker) .streamlit-news-category-details summary,
             body:has(.streamlit-theme-marker) .metric-card-header,
             body:has(.streamlit-theme-marker) .compare-table th:first-child,
             body:has(.streamlit-theme-marker) .levels-table .current td {
-              background: var(--brand-deep) !important;
-              color: #ffffff !important;
+              background: var(--emphasis-bg) !important;
+              border-color: var(--emphasis-border) !important;
+              color: var(--emphasis-text) !important;
             }
             body:has(.streamlit-theme-marker) .metric-card-header *,
             body:has(.streamlit-theme-marker) .compare-table th:first-child *,
             body:has(.streamlit-theme-marker) .levels-table .current td * {
-              color: #ffffff !important;
-              -webkit-text-fill-color: #ffffff !important;
+              color: var(--emphasis-text) !important;
+              -webkit-text-fill-color: var(--emphasis-text) !important;
             }
             body:has(.streamlit-theme-marker) .streamlit-news-category-details > div {
               background: var(--surface-bg) !important;
@@ -2709,15 +2787,15 @@ def render_app_chrome() -> str:
               margin: 0 !important;
             }
             body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) {
-              background: linear-gradient(135deg, var(--brand-deep), var(--brand));
-              border-color: color-mix(in srgb, var(--brand-border) 70%, transparent);
+              background: var(--nav-active-bg);
+              border-color: var(--nav-active-border);
               box-shadow: 0 8px 18px rgba(15, 118, 110, 0.24);
-              color: #ffffff !important;
+              color: var(--nav-active-text) !important;
               font-weight: 900;
             }
             body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) *,
             body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) p {
-              color: #ffffff !important;
+              color: var(--nav-active-text) !important;
             }
             @media (max-width: 760px) {
               body:has(.streamlit-theme-marker) .stApp .block-container {
@@ -2741,10 +2819,10 @@ def render_app_chrome() -> str:
               body:has(.streamlit-theme-marker) button[aria-label="Close sidebar"],
               body:has(.streamlit-theme-marker) button[title="Open sidebar"],
               body:has(.streamlit-theme-marker) button[title="Close sidebar"] {
-                background: var(--brand-deep) !important;
-                border-color: var(--brand-border) !important;
+                background: var(--sidebar-toggle-bg) !important;
+                border-color: var(--sidebar-toggle-border) !important;
                 border-radius: 0.55rem !important;
-                box-shadow: 0 8px 18px rgba(17, 49, 47, 0.28) !important;
+                box-shadow: var(--sidebar-toggle-shadow) !important;
                 height: 2.45rem !important;
                 left: 0.5rem !important;
                 min-height: 2.45rem !important;
@@ -2760,7 +2838,7 @@ def render_app_chrome() -> str:
               body:has(.streamlit-theme-marker) button[aria-label="Close sidebar"]::before,
               body:has(.streamlit-theme-marker) button[title="Open sidebar"]::before,
               body:has(.streamlit-theme-marker) button[title="Close sidebar"]::before {
-                color: #ffffff !important;
+                color: var(--sidebar-toggle-text) !important;
                 font-size: 1.35rem;
               }
               body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)) {
@@ -2951,7 +3029,7 @@ def render_single_chart(
     if not chart.points:
         st.caption("No chart data returned.")
         return
-    st.iframe(
+    render_html_component(
         lightweight_chart_html(chart, chart_type, chart_range, interval, streamlit_theme_type()),
         height=332,
     )
@@ -3575,7 +3653,7 @@ def render_ticker_news_grid(ticker_news: list[Any], empty_message: str = "No wat
 def render_x_timeline() -> None:
     """Embed the public @unusual_whales X.com timeline with a fallback link."""
     theme = streamlit_theme_type()
-    st.iframe(
+    render_html_component(
         """
         <a
           class="twitter-timeline"
