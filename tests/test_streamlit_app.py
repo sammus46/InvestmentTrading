@@ -361,6 +361,16 @@ def test_streamlit_scanner_slot_stays_with_scanner_controls():
     assert scanner_controls < scanner_slot < report_slot
 
 
+def test_streamlit_entrypoint_bootstraps_repo_root_before_app_imports():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    project_root = source.index("PROJECT_ROOT = Path(__file__).resolve().parents[1]")
+    sys_path_insert = source.index("sys.path.insert(0, str(PROJECT_ROOT))", project_root)
+    app_import = source.index("from app.models import")
+
+    assert project_root < sys_path_insert < app_import
+
+
 def test_streamlit_level_search_filters_report_metrics():
     metrics = [
         EquityMetrics(
