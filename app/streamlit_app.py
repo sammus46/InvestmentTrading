@@ -3249,7 +3249,7 @@ def lightweight_chart_html(
       const tickerLabel = document.getElementById("ticker-label");
       const metaLabel = document.getElementById("chart-meta");
       const lastPrice = document.getElementById("last-price");
-      const intradayIntervals = new Set(["5m", "15m", "1h"]);
+      const intradayIntervals = new Set(["1m", "2m", "5m", "15m", "30m", "1h"]);
       const isIntraday = intradayIntervals.has(payload.interval);
       const easternFormatter = new Intl.DateTimeFormat("en-US", {
         timeZone: "America/New_York",

@@ -306,6 +306,36 @@ def test_build_chart_history_payload_is_json_serializable(monkeypatch):
     assert ChartHistoryResponse.model_validate(payload).charts[0].points[0].close == 10.5
 
 
+def test_lightweight_chart_html_treats_one_minute_as_intraday(monkeypatch):
+    monkeypatch.setattr(streamlit_app_module, "lightweight_charts_bundle_b64", lambda: "")
+    chart = TickerChartHistory(
+        ticker="AAPL",
+        range="1D",
+        interval="1m",
+        points=[
+            ChartOhlcPoint(
+                timestamp=datetime(2026, 6, 15, 14, 30, tzinfo=timezone.utc),
+                open=10,
+                high=11,
+                low=9,
+                close=10.5,
+            ),
+            ChartOhlcPoint(
+                timestamp=datetime(2026, 6, 15, 14, 31, tzinfo=timezone.utc),
+                open=10.5,
+                high=11.5,
+                low=10,
+                close=11,
+            ),
+        ],
+    )
+
+    html = streamlit_app_module.lightweight_chart_html(chart, "Line", "1D", "1m")
+
+    assert 'const intradayIntervals = new Set(["1m", "2m", "5m", "15m", "30m", "1h"]);' in html
+    assert '"interval":"1m"' in html
+
+
 def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
     class FakeMarketData:
         def build_metrics(self, tickers, metrics):
