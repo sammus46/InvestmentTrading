@@ -621,6 +621,8 @@ def render_app_chrome() -> str:
 	            --signal-danger-fg: #991b1b;
 	            --signal-neutral-bg: #f1f5f9;
 	            --signal-neutral-fg: #64748b;
+	            --signal-info-bg: #dbeafe;
+	            --signal-info-fg: #1d4ed8;
 	            background: #eef2f1;
 	            color: #111827;
 	          }
@@ -1004,6 +1006,177 @@ def render_app_chrome() -> str:
           .streamlit-scanner-card h3,
           .streamlit-scanner-card p {
             color: #111827;
+          }
+          .streamlit-scanner-table-wrap {
+            border: 1px solid var(--border-soft, #dbe3ef);
+            border-radius: 0.5rem;
+            margin: 0.25rem 0 1rem;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            width: 100%;
+            -webkit-overflow-scrolling: touch;
+          }
+          .streamlit-scanner-table {
+            background: var(--surface-bg, #ffffff);
+            border-collapse: separate;
+            border-spacing: 0;
+            min-width: 1240px;
+            width: 100%;
+          }
+          .streamlit-scanner-table th {
+            background: var(--surface-soft, #f8fafc);
+            border-bottom: 1px solid var(--border-soft, #dbe3ef);
+            color: var(--text-muted, #64748b) !important;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.06em;
+            padding: 0.55rem 0.65rem;
+            position: sticky;
+            text-align: left;
+            text-transform: uppercase;
+            top: 0;
+            white-space: nowrap;
+            z-index: 1;
+          }
+          .streamlit-scanner-table td {
+            border-bottom: 1px solid var(--border-soft, #dbe3ef);
+            color: var(--text, #111827) !important;
+            font-size: 0.84rem;
+            padding: 0.62rem 0.65rem;
+            vertical-align: top;
+            white-space: nowrap;
+          }
+          .streamlit-scanner-table tr:last-child td {
+            border-bottom: 0;
+          }
+          .streamlit-scanner-table tbody tr {
+            position: relative;
+          }
+          .streamlit-scanner-table tbody tr[class*="tone-"] td:first-child {
+            border-left: 4px solid transparent;
+          }
+          .streamlit-scanner-table tbody tr.tone-strong td:first-child {
+            border-left-color: var(--signal-strong-fg, #166534);
+          }
+          .streamlit-scanner-table tbody tr.tone-good td:first-child {
+            border-left-color: var(--signal-good-fg, #0f766e);
+          }
+          .streamlit-scanner-table tbody tr.tone-watch td:first-child {
+            border-left-color: var(--signal-watch-fg, #92400e);
+          }
+          .streamlit-scanner-table tbody tr.tone-danger td:first-child {
+            border-left-color: var(--signal-danger-fg, #991b1b);
+          }
+          .streamlit-scanner-pill {
+            align-items: center;
+            border-radius: 999px;
+            display: inline-flex;
+            font-size: 0.76rem;
+            font-weight: 900;
+            gap: 0.35rem;
+            justify-content: center;
+            min-width: 3.6rem;
+            padding: 0.24rem 0.48rem;
+          }
+          .streamlit-scanner-pill.tone-strong {
+            background: var(--signal-strong-bg, #dcfce7);
+            color: var(--signal-strong-fg, #166534) !important;
+          }
+          .streamlit-scanner-pill.tone-good {
+            background: var(--signal-good-bg, #ccfbf1);
+            color: var(--signal-good-fg, #0f766e) !important;
+          }
+          .streamlit-scanner-pill.tone-watch {
+            background: var(--signal-watch-bg, #fef3c7);
+            color: var(--signal-watch-fg, #92400e) !important;
+          }
+          .streamlit-scanner-pill.tone-danger {
+            background: var(--signal-danger-bg, #fee2e2);
+            color: var(--signal-danger-fg, #991b1b) !important;
+          }
+          .streamlit-scanner-pill.tone-neutral {
+            background: var(--signal-neutral-bg, #f1f5f9);
+            color: var(--signal-neutral-fg, #64748b) !important;
+          }
+          .streamlit-scanner-pill.tone-info {
+            background: var(--signal-info-bg, #dbeafe);
+            color: var(--signal-info-fg, #1d4ed8) !important;
+          }
+          .streamlit-scanner-score {
+            min-width: 5.25rem;
+          }
+          .streamlit-scanner-score-bar {
+            background: color-mix(in srgb, currentColor 20%, transparent);
+            border-radius: 999px;
+            display: inline-flex;
+            height: 0.38rem;
+            overflow: hidden;
+            width: 2rem;
+          }
+          .streamlit-scanner-score-bar span {
+            background: currentColor;
+            border-radius: inherit;
+            display: block;
+            height: 100%;
+          }
+          .streamlit-scanner-text {
+            font-weight: 800;
+          }
+          .streamlit-scanner-text.tone-strong,
+          .streamlit-scanner-text.tone-good {
+            color: var(--signal-good-fg, #0f766e) !important;
+          }
+          .streamlit-scanner-text.tone-watch {
+            color: var(--signal-watch-fg, #92400e) !important;
+          }
+          .streamlit-scanner-text.tone-danger {
+            color: var(--signal-danger-fg, #991b1b) !important;
+          }
+          .streamlit-scanner-text.tone-info {
+            color: var(--signal-info-fg, #1d4ed8) !important;
+          }
+          .streamlit-scanner-muted,
+          .streamlit-scanner-reason {
+            color: var(--text-muted, #64748b) !important;
+          }
+          .streamlit-scanner-reason {
+            display: block;
+            font-size: 0.74rem;
+            font-weight: 700;
+            margin-top: 0.2rem;
+            max-width: 22rem;
+            white-space: normal;
+          }
+          .streamlit-scanner-zone {
+            font-weight: 900;
+          }
+          .streamlit-scanner-warning-row td {
+            background: var(--warning-bg, #fef3c7);
+            color: var(--warning-text, #92400e) !important;
+            font-weight: 800;
+            white-space: normal;
+          }
+          .streamlit-scanner-data-notes {
+            background: var(--surface-soft, #f8fafc);
+            border: 1px solid var(--border-soft, #dbe3ef);
+            border-radius: 0.5rem;
+            color: var(--text-muted, #64748b) !important;
+            margin-top: 0.75rem;
+            padding: 0.65rem 0.8rem;
+          }
+          .streamlit-scanner-data-notes summary {
+            cursor: pointer;
+            font-size: 0.84rem;
+            font-weight: 900;
+          }
+          .streamlit-scanner-data-notes ul {
+            margin: 0.5rem 0 0;
+            padding-left: 1.15rem;
+          }
+          .streamlit-scanner-data-notes li {
+            margin-bottom: 0.25rem;
+            white-space: normal;
           }
           .streamlit-heatmap {
             border: 1px solid #dbe3ef;
@@ -1683,6 +1856,8 @@ def render_app_chrome() -> str:
 	              --signal-danger-fg: #fecaca;
 	              --signal-neutral-bg: #1f2937;
 	              --signal-neutral-fg: #cbd5e1;
+	              --signal-info-bg: #172554;
+	              --signal-info-fg: #bfdbfe;
 	              background: var(--app-bg) !important;
 	              color: var(--text) !important;
 	            }
@@ -1901,6 +2076,8 @@ def render_app_chrome() -> str:
               --signal-danger-fg: #991b1b;
               --signal-neutral-bg: #f1f5f9;
               --signal-neutral-fg: #64748b;
+              --signal-info-bg: #dbeafe;
+              --signal-info-fg: #1d4ed8;
               --major-market-bg: #111827;
               --major-market-border: #1f2937;
               --button-secondary-text: #334155;
@@ -1938,6 +2115,8 @@ def render_app_chrome() -> str:
               --signal-danger-fg: #fecaca;
               --signal-neutral-bg: #1f2937;
               --signal-neutral-fg: #cbd5e1;
+              --signal-info-bg: #172554;
+              --signal-info-fg: #bfdbfe;
               --major-market-bg: #080d12;
               --major-market-border: #263241;
               --button-secondary-text: #e5edf4;
@@ -3160,21 +3339,7 @@ def render_scanner(report: ScannerResponse) -> None:
         st.info("No setup scanner rows were returned.")
         return
 
-    st.dataframe(
-        scanner_setup_frame(report),
-        use_container_width=True,
-        hide_index=True,
-        row_height=42,
-        height=dataframe_height(len(report.setup_rows), row_height=42),
-        column_config={
-            "Score": st.column_config.TextColumn("Score", width="small"),
-            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-        },
-    )
-    row_warnings = [(row.ticker, warning) for row in report.setup_rows for warning in row.warnings]
-    render_scanner_message_notes("scanner warning(s)", row_warnings)
-    data_notes = [(row.ticker, note) for row in report.setup_rows for note in row.data_notes]
-    render_scanner_message_notes("scanner data note(s)", data_notes)
+    st.markdown(scanner_setup_table_html(report), unsafe_allow_html=True)
 
 
 def render_pattern_analysis(report: Any) -> None:
@@ -3306,48 +3471,302 @@ def scanner_setup_frame(report: ScannerResponse) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def scanner_cell_style(value: str) -> str:
-    """Return Streamlit dataframe CSS for scanner signal cells."""
-    text = str(value)
-    if text.endswith("/8"):
-        try:
-            score = int(text.split("/", 1)[0])
-        except ValueError:
-            score = -1
-        if score >= 7:
-            return "background-color:var(--signal-strong-bg,#dcfce7);color:var(--signal-strong-fg,#166534);font-weight:800"
-        if score >= 5:
-            return "background-color:var(--signal-good-bg,#ccfbf1);color:var(--signal-good-fg,#0f766e);font-weight:800"
-        if score >= 3:
-            return "background-color:var(--signal-watch-bg,#fef3c7);color:var(--signal-watch-fg,#92400e);font-weight:800"
-        if score >= 0:
-            return "background-color:var(--signal-danger-bg,#fee2e2);color:var(--signal-danger-fg,#991b1b);font-weight:800"
-    if text.endswith("x"):
-        try:
-            lows = int(text[:-1])
-        except ValueError:
-            lows = 0
-        if lows >= 3:
-            return "background-color:var(--signal-strong-bg,#dcfce7);color:var(--signal-strong-fg,#166534);font-weight:800"
-        if lows == 2:
-            return "background-color:var(--signal-good-bg,#ccfbf1);color:var(--signal-good-fg,#0f766e);font-weight:800"
-        if lows == 1:
-            return "background-color:var(--signal-watch-bg,#fef3c7);color:var(--signal-watch-fg,#92400e);font-weight:800"
-    if text == "Turning Up":
-        return "background-color:var(--signal-strong-bg,#dcfce7);color:var(--signal-strong-fg,#166534);font-weight:800"
-    if text == "Ticking Up":
-        return "background-color:var(--signal-good-bg,#ccfbf1);color:var(--signal-good-fg,#0f766e);font-weight:800"
-    if text == "Still Falling":
-        return "background-color:var(--signal-danger-bg,#fee2e2);color:var(--signal-danger-fg,#991b1b);font-weight:800"
-    return "background-color:var(--signal-neutral-bg,#f1f5f9);color:var(--signal-neutral-fg,#64748b);font-weight:700" if text == "-" or text == "Flat" else ""
+def scanner_tone_class(tone: str | None) -> str:
+    """Return a supported scanner tone class suffix."""
+    return tone if tone in {"strong", "good", "watch", "danger", "neutral", "info"} else "neutral"
 
 
-def styled_scanner_setup_frame(report: ScannerResponse):
-    """Build a styled setup scanner frame with color-coded signal columns."""
-    frame = scanner_setup_frame(report)
-    if frame.empty:
-        return frame
-    return frame.style.map(scanner_cell_style, subset=["Score", "Lows Held", "Momentum"])
+def scanner_dash_html() -> str:
+    """Return muted scanner empty-cell markup."""
+    return '<span class="streamlit-scanner-muted">&mdash;</span>'
+
+
+def scanner_pill_html(label: str, tone: str | None, *, extra_class: str = "") -> str:
+    """Return a compact scanner pill."""
+    classes = f"streamlit-scanner-pill tone-{scanner_tone_class(tone)}"
+    if extra_class:
+        classes = f"{classes} {extra_class}"
+    return f'<span class="{classes}">{escape(label)}</span>'
+
+
+def scanner_empty_pill_html(*, extra_class: str = "") -> str:
+    """Return a neutral empty-state pill."""
+    classes = "streamlit-scanner-pill tone-neutral"
+    if extra_class:
+        classes = f"{classes} {extra_class}"
+    return f'<span class="{classes}">&mdash;</span>'
+
+
+def scanner_text_html(label: str | None, tone: str | None = None) -> str:
+    """Return colored scanner text, or a muted dash when no label is available."""
+    if not label:
+        return scanner_dash_html()
+    return f'<span class="streamlit-scanner-text tone-{scanner_tone_class(tone)}">{escape(label)}</span>'
+
+
+def scanner_score_tone(score: int | None) -> str:
+    """Return scanner setup-score tone."""
+    if score is None:
+        return "neutral"
+    if score >= 7:
+        return "strong"
+    if score >= 5:
+        return "good"
+    if score >= 3:
+        return "watch"
+    return "danger"
+
+
+def scanner_score_html(score: int | None) -> str:
+    """Return visible setup score with a tiny fill bar."""
+    if score is None:
+        return scanner_empty_pill_html(extra_class="streamlit-scanner-score")
+    number = max(0, min(8, int(score)))
+    width = round((number / 8) * 100, 1)
+    tone = scanner_score_tone(number)
+    return (
+        f'<span class="streamlit-scanner-pill streamlit-scanner-score tone-{tone}">'
+        f"<span>{number}/8</span>"
+        f'<span class="streamlit-scanner-score-bar"><span style="width:{width}%"></span></span>'
+        "</span>"
+    )
+
+
+def scanner_confidence_tone(value: int | None) -> str:
+    """Return tone for support/resistance confidence."""
+    if value is None:
+        return "neutral"
+    if value >= 80:
+        return "strong"
+    if value >= 65:
+        return "good"
+    if value >= 50:
+        return "watch"
+    return "danger"
+
+
+def scanner_confidence_html(value: int | None) -> str:
+    """Return support/resistance confidence pill."""
+    if value is None:
+        return scanner_empty_pill_html()
+    return scanner_pill_html(str(value), scanner_confidence_tone(value))
+
+
+def scanner_risk_reward_tone(value: float | None) -> str:
+    """Return tone for risk/reward."""
+    if value is None:
+        return "neutral"
+    if value >= 3:
+        return "strong"
+    if value >= 2:
+        return "good"
+    if value >= 1:
+        return "watch"
+    return "danger"
+
+
+def scanner_risk_reward_html(value: float | None) -> str:
+    """Return risk/reward pill."""
+    if value is None:
+        return scanner_empty_pill_html()
+    return scanner_pill_html(f"{value:.1f}R", scanner_risk_reward_tone(value))
+
+
+def scanner_lows_held_html(value: int | None) -> str:
+    """Return lows-held pill."""
+    if not value:
+        return scanner_empty_pill_html()
+    tone = "strong" if value >= 3 else "good" if value >= 2 else "watch"
+    return scanner_pill_html(f"{value}x", tone)
+
+
+def scanner_range_html(value: str | None) -> str:
+    """Return range-compression pill."""
+    if not value:
+        return scanner_empty_pill_html()
+    tone = "good" if value == "Tight" else "danger" if value == "Wide" else "neutral"
+    return scanner_pill_html(value, tone)
+
+
+def scanner_momentum_html(value: str | None) -> str:
+    """Return momentum pill."""
+    if not value:
+        return scanner_empty_pill_html()
+    if value == "Turning Up":
+        tone = "strong"
+    elif value == "Ticking Up":
+        tone = "good"
+    elif value == "Still Falling":
+        tone = "danger"
+    else:
+        tone = "neutral"
+    return scanner_pill_html(value, tone)
+
+
+def scanner_vwap_tone(percent: float | None, label: str | None) -> str:
+    """Return VWAP extension tone."""
+    text = label or ""
+    if percent is None:
+        return "neutral"
+    if "Chase" in text or "Below" in text or percent < -0.75:
+        return "danger"
+    if "Extended" in text or percent >= 0.75:
+        return "watch"
+    if "Near" in text or percent < 0:
+        return "info"
+    return "good"
+
+
+def scanner_relative_strength_tone(percent: float | None, label: str | None) -> str:
+    """Return relative-strength tone."""
+    text = label or ""
+    if percent is None:
+        return "neutral"
+    if "Strong" in text and "↑↑" in text:
+        return "strong"
+    if "Strong" in text:
+        return "good"
+    if "Weak" in text:
+        return "danger"
+    return "neutral"
+
+
+def scanner_signal_tone(value: str | None) -> str:
+    """Return reclaim/rejection signal tone."""
+    text = value or ""
+    if text.startswith("Reclaimed"):
+        return "strong"
+    if text.startswith("Rejecting"):
+        return "danger"
+    return "neutral"
+
+
+def scanner_setup_distance_tone(value: float | None) -> str:
+    """Return tone for distance from setup level."""
+    if value is None:
+        return "neutral"
+    distance = abs(value)
+    if distance <= 0.25:
+        return "strong"
+    if distance <= 0.5:
+        return "good"
+    if distance <= 1:
+        return "watch"
+    return "neutral"
+
+
+def scanner_off_high_tone(value: float | None) -> str:
+    """Return tone for distance from session high."""
+    if value is None:
+        return "neutral"
+    if value > 0:
+        return "strong"
+    if -3 <= value <= -0.5:
+        return "good"
+    if -0.5 < value <= 0:
+        return "watch"
+    return "danger"
+
+
+def scanner_percent_html(value: float | None, tone: str | None) -> str:
+    """Return colored percent text."""
+    if value is None:
+        return scanner_dash_html()
+    return scanner_text_html(f"{value:.2f}%", tone)
+
+
+def scanner_plain_html(value: object) -> str:
+    """Return escaped plain scanner cell text."""
+    if value is None or value == "":
+        return scanner_dash_html()
+    return escape(str(value))
+
+
+def scanner_zone_html(zone: str | None, reason: str | None) -> str:
+    """Return support/resistance zone markup with an optional evidence subline."""
+    if not zone:
+        return scanner_dash_html()
+    reason_html = f'<span class="streamlit-scanner-reason">{escape(reason)}</span>' if reason else ""
+    return f'<span class="streamlit-scanner-zone">{escape(zone)}</span>{reason_html}'
+
+
+def scanner_data_notes_html(report: ScannerResponse) -> str:
+    """Return escaped scanner data notes markup."""
+    notes = [(row.ticker, note) for row in report.setup_rows for note in row.data_notes]
+    if not notes:
+        return ""
+    items = "".join(f"<li><strong>{escape(ticker)}:</strong> {escape(note)}</li>" for ticker, note in notes)
+    label = "scanner data note" if len(notes) == 1 else "scanner data notes"
+    return (
+        '<details class="streamlit-scanner-data-notes">'
+        f"<summary>{len(notes)} {label}</summary>"
+        f"<ul>{items}</ul>"
+        "</details>"
+    )
+
+
+def scanner_setup_table_html(report: ScannerResponse) -> str:
+    """Return an app-owned HTML setup scanner table with reliable visual cues."""
+    columns = [
+        "Score",
+        "Ticker",
+        "Price",
+        "Signal",
+        "VWAP Ext",
+        "RS vs SPY",
+        "RS vs Sec",
+        "Best Support",
+        "Sup Conf",
+        "Best Resistance",
+        "Res Conf",
+        "R/R",
+        "Setup At",
+        "% Away",
+        "Lows Held",
+        "Range",
+        "Off High",
+        "Momentum",
+    ]
+    header_html = "".join(f"<th>{escape(column)}</th>" for column in columns)
+    body_rows: list[str] = []
+    for row in report.setup_rows:
+        score_tone = scanner_score_tone(row.score)
+        cells = [
+            scanner_score_html(row.score),
+            f"<strong>{escape(row.ticker)}</strong>",
+            scanner_plain_html(fmt(row.price)),
+            scanner_text_html(row.signal, scanner_signal_tone(row.signal)),
+            scanner_text_html(row.vwap_extension_label, scanner_vwap_tone(row.vwap_extension_percent, row.vwap_extension_label)),
+            scanner_text_html(row.rs_vs_spy_label, scanner_relative_strength_tone(row.rs_vs_spy_percent, row.rs_vs_spy_label)),
+            scanner_text_html(row.rs_vs_sector_label, scanner_relative_strength_tone(row.rs_vs_sector_percent, row.rs_vs_sector_label)),
+            scanner_zone_html(row.best_support, row.support_reason),
+            scanner_confidence_html(row.support_confidence),
+            scanner_zone_html(row.best_resistance, row.resistance_reason),
+            scanner_confidence_html(row.resistance_confidence),
+            scanner_risk_reward_html(row.risk_reward),
+            scanner_plain_html(row.setup_level),
+            scanner_percent_html(row.setup_distance_percent, scanner_setup_distance_tone(row.setup_distance_percent)),
+            scanner_lows_held_html(row.lows_held),
+            scanner_range_html(row.range_compression),
+            scanner_percent_html(row.off_high_percent, scanner_off_high_tone(row.off_high_percent)),
+            scanner_momentum_html(row.momentum),
+        ]
+        body_rows.append(f'<tr class="tone-{score_tone}">{"".join(f"<td>{cell}</td>" for cell in cells)}</tr>')
+        if row.warnings:
+            warnings = " ".join(escape(warning) for warning in row.warnings)
+            body_rows.append(
+                f'<tr class="streamlit-scanner-warning-row"><td colspan="{len(columns)}">'
+                f"<strong>{escape(row.ticker)}:</strong> {warnings}</td></tr>"
+            )
+    return (
+        '<div class="streamlit-scanner-table-wrap">'
+        '<table class="streamlit-scanner-table">'
+        f"<thead><tr>{header_html}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
+        "</div>"
+        f"{scanner_data_notes_html(report)}"
+    )
 
 
 def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
