@@ -236,6 +236,67 @@ def dataset_refresh_token(dataset: str) -> int:
     return int(st.session_state.streamlit_refresh_tokens.get(dataset, 0))
 
 
+def streamlit_theme_type() -> str:
+    """Return Streamlit's resolved light/dark theme for this browser session."""
+    theme_type = getattr(st.context.theme, "type", None)
+    return "dark" if theme_type == "dark" else "light"
+
+
+def render_streamlit_theme_bridge() -> None:
+    """Mirror Streamlit's actual rendered theme onto a page marker for CSS."""
+    st.iframe(
+        """
+        <script>
+          (function () {
+            function detectTheme(parentDocument) {
+              const selectors = [
+                "[data-testid='stSidebar']",
+                "[data-testid='stAppViewContainer']",
+                ".stApp"
+              ];
+              for (const selector of selectors) {
+                const element = parentDocument.querySelector(selector);
+                if (!element) continue;
+                const scheme = parentDocument.defaultView.getComputedStyle(element).colorScheme || "";
+                if (scheme.includes("dark")) return "dark";
+                if (scheme.includes("light")) return "light";
+              }
+              return parentDocument.defaultView.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+
+            function syncTheme() {
+              try {
+                const parentDocument = window.parent.document;
+                const theme = detectTheme(parentDocument);
+                if (parentDocument.documentElement.dataset.streamlitTheme !== theme) {
+                  parentDocument.documentElement.dataset.streamlitTheme = theme;
+                }
+                if (parentDocument.body.dataset.streamlitTheme !== theme) {
+                  parentDocument.body.dataset.streamlitTheme = theme;
+                }
+                parentDocument.querySelectorAll(".streamlit-theme-marker").forEach(function (marker) {
+                  if (marker.getAttribute("data-app-theme") !== theme) {
+                    marker.setAttribute("data-app-theme", theme);
+                  }
+                });
+              } catch (error) {
+                // The component iframe is best-effort; CSS falls back to Streamlit's initial context value.
+              }
+            }
+
+            syncTheme();
+            try {
+              const parentDocument = window.parent.document;
+              parentDocument.defaultView.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncTheme);
+              window.setInterval(syncTheme, 800);
+            } catch (error) {}
+          })();
+        </script>
+        """,
+        height=1,
+    )
+
+
 def bump_streamlit_refresh_token(
     reason: str | None = None,
     datasets: tuple[str, ...] = STREAMLIT_DATASETS,
@@ -257,18 +318,52 @@ def render_app_chrome() -> str:
         st.session_state.active_view = LEVELS_VIEW
 
     st.markdown(
+        f'<span class="streamlit-theme-marker" data-app-theme="{streamlit_theme_type()}"></span>',
+        unsafe_allow_html=True,
+    )
+    render_streamlit_theme_bridge()
+
+    st.markdown(
         """
         <style>
-          :root {
-            color-scheme: light;
-          }
-          .stApp {
-            --page-gutter: clamp(0.75rem, 2vw, 2.75rem);
-            --content-max: 2600px;
-            --content-width: min(var(--content-max), calc(100vw - (var(--page-gutter) * 2)));
-            background: #eef2f1;
-            color: #111827;
-          }
+	          :root {
+	            color-scheme: light dark;
+	          }
+	          .stApp {
+	            --page-gutter: clamp(0.75rem, 2vw, 2.75rem);
+	            --content-max: 2600px;
+	            --content-width: min(var(--content-max), calc(100vw - (var(--page-gutter) * 2)));
+	            --app-bg: #eef2f1;
+	            --surface-bg: #ffffff;
+	            --surface-soft: #f8fafc;
+	            --surface-muted: #f1f5f9;
+	            --border: #d5ddd9;
+	            --border-soft: #dbe3ef;
+	            --text: #111827;
+	            --text-strong: #020617;
+	            --text-muted: #64748b;
+	            --text-subtle: #334155;
+	            --brand-deep: #12312f;
+	            --brand: #0f766e;
+	            --brand-soft: #ccfbf1;
+	            --brand-border: #99f6e4;
+	            --warning-bg: #fef3c7;
+	            --warning-border: #fde68a;
+	            --warning-text: #92400e;
+	            --shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+	            --signal-strong-bg: #dcfce7;
+	            --signal-strong-fg: #166534;
+	            --signal-good-bg: #ccfbf1;
+	            --signal-good-fg: #0f766e;
+	            --signal-watch-bg: #fef3c7;
+	            --signal-watch-fg: #92400e;
+	            --signal-danger-bg: #fee2e2;
+	            --signal-danger-fg: #991b1b;
+	            --signal-neutral-bg: #f1f5f9;
+	            --signal-neutral-fg: #64748b;
+	            background: #eef2f1;
+	            color: #111827;
+	          }
           .stApp,
           .stApp p,
           .stApp label,
@@ -1241,11 +1336,486 @@ def render_app_chrome() -> str:
               align-items: stretch;
               display: grid;
             }
-            .streamlit-chart-controls {
-              grid-template-columns: 1fr;
+	            .streamlit-chart-controls {
+	              grid-template-columns: 1fr;
+	            }
+	          }
+	          @media (prefers-color-scheme: dark) {
+	            .stApp {
+	              --app-bg: #0b1115;
+	              --surface-bg: #111827;
+	              --surface-soft: #17202c;
+	              --surface-muted: #1f2937;
+	              --border: #263241;
+	              --border-soft: #334155;
+	              --text: #e5edf4;
+	              --text-strong: #f8fafc;
+	              --text-muted: #94a3b8;
+	              --text-subtle: #cbd5e1;
+	              --brand-deep: #0b2f2d;
+	              --brand: #2dd4bf;
+	              --brand-soft: #0b3b37;
+	              --brand-border: #0f766e;
+	              --warning-bg: #3f2e12;
+	              --warning-border: #92400e;
+	              --warning-text: #fde68a;
+	              --shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+	              --signal-strong-bg: #064e3b;
+	              --signal-strong-fg: #d1fae5;
+	              --signal-good-bg: #0b3b37;
+	              --signal-good-fg: #99f6e4;
+	              --signal-watch-bg: #3f2e12;
+	              --signal-watch-fg: #fde68a;
+	              --signal-danger-bg: #4c1d1d;
+	              --signal-danger-fg: #fecaca;
+	              --signal-neutral-bg: #1f2937;
+	              --signal-neutral-fg: #cbd5e1;
+	              background: var(--app-bg) !important;
+	              color: var(--text) !important;
+	            }
+	            .stApp,
+	            .stApp p,
+	            .stApp label,
+	            .stApp li,
+	            .stApp div[data-testid="stMarkdownContainer"],
+	            .stApp h1,
+	            .stApp h2,
+	            .stApp h3,
+	            .stApp h4,
+	            .stApp h5 {
+	              color: var(--text) !important;
+	            }
+	            .stApp a {
+	              color: #67e8f9 !important;
+	            }
+	            div[data-testid="stCaptionContainer"],
+	            div[data-testid="stCaptionContainer"] * {
+	              color: var(--text-muted) !important;
+	            }
+	            header[data-testid="stHeader"],
+	            .streamlit-brand-ribbon,
+	            div[data-testid="stHorizontalBlock"]:has(.streamlit-nav-marker) {
+	              background: rgba(12, 18, 24, 0.96) !important;
+	              border-color: var(--border) !important;
+	            }
+	            [data-testid="stSidebar"],
+	            [data-testid="stVerticalBlockBorderWrapper"],
+	            div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)),
+	            .report-panel,
+	            .metric-card,
+	            .streamlit-news-card,
+	            .streamlit-market-tile,
+	            .streamlit-scanner-card,
+	            .streamlit-page-hero,
+	            .streamlit-section-panel,
+	            .streamlit-report-panel,
+	            .streamlit-scanner-panel,
+	            .compare-wrap,
+	            .streamlit-chart-card,
+	            .streamlit-ticker-news-card,
+	            .streamlit-news-category-details,
+	            div[data-testid="stExpander"] details {
+	              background: var(--surface-bg) !important;
+	              border-color: var(--border) !important;
+	              box-shadow: var(--shadow) !important;
+	              color: var(--text) !important;
+	            }
+	            [data-testid="stSidebar"] *,
+	            .report-header h2,
+	            .streamlit-page-hero h1,
+	            .streamlit-section-header h2,
+	            .streamlit-chart-header h2,
+	            .metric-value,
+	            .streamlit-news-title,
+	            .streamlit-scanner-card h2,
+	            .streamlit-scanner-card h3,
+	            .streamlit-scanner-card p,
+	            .levels-table .neutral td,
+	            .ladder-notes strong,
+	            .compact-metric strong,
+	            .streamlit-chart-card h4,
+	            .streamlit-ticker-news-title h4,
+	            div[data-testid="stExpander"] summary,
+	            div[data-testid="stExpander"] summary * {
+	              color: var(--text) !important;
+	            }
+	            .report-header p,
+	            .metric-label,
+	            .streamlit-news-meta,
+	            .streamlit-news-related,
+	            .streamlit-news-summary,
+	            .streamlit-ticker-news-title span,
+	            .levels-table th,
+	            .compare-table th,
+	            .ladder-notes span,
+	            .compact-metric span,
+	            .metric-empty,
+	            .streamlit-market-change,
+	            .streamlit-watchlist-row strong {
+	              color: var(--text-muted) !important;
+	            }
+	            [data-testid="stSidebar"] input,
+	            [data-testid="stSidebar"] textarea,
+	            [data-testid="stSidebar"] [data-baseweb="input"] input,
+	            [data-testid="stSidebar"] [data-baseweb="select"] > div,
+	            .stApp input,
+	            .stApp textarea,
+	            .stApp [data-baseweb="input"] input,
+	            .stApp [data-baseweb="select"] > div {
+	              background: #1a2230 !important;
+	              border-color: var(--border-soft) !important;
+	              color: var(--text) !important;
+	            }
+	            .stApp input::placeholder,
+	            [data-testid="stSidebar"] input::placeholder {
+	              color: var(--text-muted) !important;
+	            }
+	            div[data-testid="stButton"] button[kind="secondary"],
+	            div[data-testid="stDownloadButton"] button[kind="secondary"],
+	            [data-testid="stSidebar"] [data-testid="stButton"] button:not([kind="primary"]),
+	            .streamlit-watchlist-row,
+	            .metric-section-title,
+	            .streamlit-takeaway,
+	            div[data-testid="stExpander"] summary,
+	            .ladder-notes div,
+	            .compact-metric,
+	            .metric-empty,
+	            .streamlit-chart-frame {
+	              background: var(--surface-soft) !important;
+	              border-color: var(--border-soft) !important;
+	              color: var(--text) !important;
+	            }
+	            .metric-section,
+	            .metric-cell,
+	            .levels-table td,
+	            .compare-table td,
+	            .compare-table th,
+	            .streamlit-heatmap {
+	              border-color: var(--border) !important;
+	            }
+	            .streamlit-status-chip,
+	            .streamlit-refresh-banner,
+	            .brand-mark,
+	            .compact-metric.current {
+	              background: var(--brand-soft) !important;
+	              border-color: var(--brand-border) !important;
+	              color: #99f6e4 !important;
+	            }
+	            .streamlit-refresh-banner strong,
+	            .streamlit-refresh-banner span {
+	              color: #99f6e4 !important;
+	            }
+	            .compact-metric.priority,
+	            .streamlit-related-tickers span,
+	            div[data-testid="stAlert"],
+	            .inline-warning {
+	              background: var(--warning-bg) !important;
+	              border-color: var(--warning-border) !important;
+	              color: var(--warning-text) !important;
+	            }
+	            div[data-testid="stAlert"] *,
+	            div[data-testid="stAlert"] p,
+	            .inline-warning * {
+	              color: var(--warning-text) !important;
+	            }
+	            .streamlit-market-grid.major {
+	              background: #080d12 !important;
+	              border: 1px solid var(--border) !important;
+	            }
+	            .streamlit-market-grid.major .streamlit-market-tile {
+	              background: transparent !important;
+	              border-color: rgba(148, 163, 184, 0.26) !important;
+	              color: #ffffff !important;
+	              box-shadow: none !important;
+	            }
+	            .streamlit-news-toggle-arrow {
+	              background: #172554 !important;
+	              border-color: #1d4ed8 !important;
+	              color: #bfdbfe !important;
+	            }
+	            .streamlit-news-category-details summary,
+	            .metric-card-header,
+	            .compare-table th:first-child,
+	            .levels-table .current td {
+	              background: var(--brand-deep) !important;
+	              color: #ffffff !important;
+	            }
+	            .streamlit-news-category-details > div {
+	              background: var(--surface-bg) !important;
+	            }
+	            .streamlit-chart-card iframe,
+	            .stApp iframe {
+	              color-scheme: dark;
+	            }
+	            .stApp [data-testid="stDataFrame"],
+	            .stApp [data-testid="stDataFrame"] > div,
+	            .stApp [data-testid="stTable"],
+	            .stApp [data-testid="stTable"] > div {
+	              background: var(--surface-bg) !important;
+	              color: var(--text) !important;
+	            }
+	          }
+            .streamlit-theme-marker {
+              display: none !important;
             }
-          }
-        </style>
+            body:has(.streamlit-theme-marker[data-app-theme="light"]) .stApp {
+              --app-color-scheme: light;
+              --app-bg: #eef2f1;
+              --surface-bg: #ffffff;
+              --surface-soft: #f8fafc;
+              --surface-muted: #f1f5f9;
+              --border: #d5ddd9;
+              --border-soft: #dbe3ef;
+              --text: #111827;
+              --text-strong: #020617;
+              --text-muted: #64748b;
+              --text-subtle: #334155;
+              --brand-deep: #12312f;
+              --brand: #0f766e;
+              --brand-soft: #ccfbf1;
+              --brand-border: #99f6e4;
+              --warning-bg: #fef3c7;
+              --warning-border: #fde68a;
+              --warning-text: #92400e;
+              --shadow: 0 8px 28px rgba(17, 24, 39, 0.08);
+              --signal-strong-bg: #dcfce7;
+              --signal-strong-fg: #166534;
+              --signal-good-bg: #ccfbf1;
+              --signal-good-fg: #0f766e;
+              --signal-watch-bg: #fef3c7;
+              --signal-watch-fg: #92400e;
+              --signal-danger-bg: #fee2e2;
+              --signal-danger-fg: #991b1b;
+              --signal-neutral-bg: #f1f5f9;
+              --signal-neutral-fg: #64748b;
+              --major-market-bg: #111827;
+              --major-market-border: #1f2937;
+              --button-secondary-text: #334155;
+              --link: #0284c7;
+              --link-hover: #0f766e;
+              --input-bg: #ffffff;
+            }
+            body:has(.streamlit-theme-marker[data-app-theme="dark"]) .stApp {
+              --app-color-scheme: dark;
+              --app-bg: #0b1115;
+              --surface-bg: #111827;
+              --surface-soft: #17202c;
+              --surface-muted: #1f2937;
+              --border: #263241;
+              --border-soft: #334155;
+              --text: #e5edf4;
+              --text-strong: #f8fafc;
+              --text-muted: #94a3b8;
+              --text-subtle: #cbd5e1;
+              --brand-deep: #0b2f2d;
+              --brand: #2dd4bf;
+              --brand-soft: #0b3b37;
+              --brand-border: #0f766e;
+              --warning-bg: #3f2e12;
+              --warning-border: #92400e;
+              --warning-text: #fde68a;
+              --shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+              --signal-strong-bg: #064e3b;
+              --signal-strong-fg: #d1fae5;
+              --signal-good-bg: #0b3b37;
+              --signal-good-fg: #99f6e4;
+              --signal-watch-bg: #3f2e12;
+              --signal-watch-fg: #fde68a;
+              --signal-danger-bg: #4c1d1d;
+              --signal-danger-fg: #fecaca;
+              --signal-neutral-bg: #1f2937;
+              --signal-neutral-fg: #cbd5e1;
+              --major-market-bg: #080d12;
+              --major-market-border: #263241;
+              --button-secondary-text: #e5edf4;
+              --link: #67e8f9;
+              --link-hover: #5eead4;
+              --input-bg: #1a2230;
+            }
+            body:has(.streamlit-theme-marker) .stApp {
+              background: var(--app-bg) !important;
+              color: var(--text) !important;
+              color-scheme: var(--app-color-scheme, light);
+            }
+            body:has(.streamlit-theme-marker) .stApp,
+            body:has(.streamlit-theme-marker) .stApp p,
+            body:has(.streamlit-theme-marker) .stApp label,
+            body:has(.streamlit-theme-marker) .stApp li,
+            body:has(.streamlit-theme-marker) .stApp h1,
+            body:has(.streamlit-theme-marker) .stApp h2,
+            body:has(.streamlit-theme-marker) .stApp h3,
+            body:has(.streamlit-theme-marker) .stApp h4,
+            body:has(.streamlit-theme-marker) .stApp h5,
+            body:has(.streamlit-theme-marker) .stApp div[data-testid="stMarkdownContainer"] {
+              color: var(--text) !important;
+            }
+            body:has(.streamlit-theme-marker) .stApp a {
+              color: var(--link) !important;
+            }
+            body:has(.streamlit-theme-marker) .stApp a:hover {
+              color: var(--link-hover) !important;
+            }
+            body:has(.streamlit-theme-marker) header[data-testid="stHeader"],
+            body:has(.streamlit-theme-marker) .streamlit-brand-ribbon,
+            body:has(.streamlit-theme-marker) div[data-testid="stHorizontalBlock"]:has(.streamlit-nav-marker) {
+              background: color-mix(in srgb, var(--surface-bg) 96%, transparent) !important;
+              border-color: var(--border) !important;
+            }
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"],
+            body:has(.streamlit-theme-marker) [data-testid="stVerticalBlockBorderWrapper"],
+            body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.view-hero-marker):has(button):not(:has(.streamlit-brand)),
+            body:has(.streamlit-theme-marker) .report-panel,
+            body:has(.streamlit-theme-marker) .metric-card,
+            body:has(.streamlit-theme-marker) .streamlit-news-card,
+            body:has(.streamlit-theme-marker) .streamlit-market-tile,
+            body:has(.streamlit-theme-marker) .streamlit-scanner-card,
+            body:has(.streamlit-theme-marker) .streamlit-page-hero,
+            body:has(.streamlit-theme-marker) .streamlit-section-panel,
+            body:has(.streamlit-theme-marker) .streamlit-report-panel,
+            body:has(.streamlit-theme-marker) .streamlit-scanner-panel,
+            body:has(.streamlit-theme-marker) .compare-wrap,
+            body:has(.streamlit-theme-marker) .streamlit-chart-card,
+            body:has(.streamlit-theme-marker) .streamlit-ticker-news-card,
+            body:has(.streamlit-theme-marker) .streamlit-news-category-details,
+            body:has(.streamlit-theme-marker) div[data-testid="stExpander"] details,
+            body:has(.streamlit-theme-marker) .stApp [data-testid="stDataFrame"],
+            body:has(.streamlit-theme-marker) .stApp [data-testid="stDataFrame"] > div,
+            body:has(.streamlit-theme-marker) .stApp [data-testid="stTable"],
+            body:has(.streamlit-theme-marker) .stApp [data-testid="stTable"] > div {
+              background: var(--surface-bg) !important;
+              border-color: var(--border) !important;
+              box-shadow: var(--shadow) !important;
+              color: var(--text) !important;
+            }
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] *,
+            body:has(.streamlit-theme-marker) .report-header h2,
+            body:has(.streamlit-theme-marker) .streamlit-page-hero h1,
+            body:has(.streamlit-theme-marker) .streamlit-section-header h2,
+            body:has(.streamlit-theme-marker) .streamlit-chart-header h2,
+            body:has(.streamlit-theme-marker) .metric-value,
+            body:has(.streamlit-theme-marker) .streamlit-news-title,
+            body:has(.streamlit-theme-marker) .streamlit-scanner-card h2,
+            body:has(.streamlit-theme-marker) .streamlit-scanner-card h3,
+            body:has(.streamlit-theme-marker) .streamlit-scanner-card p,
+            body:has(.streamlit-theme-marker) .levels-table .neutral td,
+            body:has(.streamlit-theme-marker) .ladder-notes strong,
+            body:has(.streamlit-theme-marker) .compact-metric strong,
+            body:has(.streamlit-theme-marker) .streamlit-chart-card h4,
+            body:has(.streamlit-theme-marker) .streamlit-ticker-news-title h4,
+            body:has(.streamlit-theme-marker) div[data-testid="stExpander"] summary,
+            body:has(.streamlit-theme-marker) div[data-testid="stExpander"] summary * {
+              color: var(--text) !important;
+            }
+            body:has(.streamlit-theme-marker) .report-header p,
+            body:has(.streamlit-theme-marker) .metric-label,
+            body:has(.streamlit-theme-marker) .streamlit-news-meta,
+            body:has(.streamlit-theme-marker) .streamlit-news-related,
+            body:has(.streamlit-theme-marker) .streamlit-news-summary,
+            body:has(.streamlit-theme-marker) .streamlit-ticker-news-title span,
+            body:has(.streamlit-theme-marker) .levels-table th,
+            body:has(.streamlit-theme-marker) .compare-table th,
+            body:has(.streamlit-theme-marker) .ladder-notes span,
+            body:has(.streamlit-theme-marker) .compact-metric span,
+            body:has(.streamlit-theme-marker) .metric-empty,
+            body:has(.streamlit-theme-marker) .streamlit-market-change,
+            body:has(.streamlit-theme-marker) .streamlit-watchlist-row strong,
+            body:has(.streamlit-theme-marker) div[data-testid="stCaptionContainer"],
+            body:has(.streamlit-theme-marker) div[data-testid="stCaptionContainer"] * {
+              color: var(--text-muted) !important;
+            }
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] input,
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] textarea,
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-baseweb="input"] input,
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-baseweb="select"] > div,
+            body:has(.streamlit-theme-marker) .stApp input,
+            body:has(.streamlit-theme-marker) .stApp textarea,
+            body:has(.streamlit-theme-marker) .stApp [data-baseweb="input"] input,
+            body:has(.streamlit-theme-marker) .stApp [data-baseweb="select"] > div {
+              background: var(--input-bg) !important;
+              border-color: var(--border-soft) !important;
+              color: var(--text) !important;
+            }
+            body:has(.streamlit-theme-marker) .stApp input::placeholder,
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] input::placeholder {
+              color: var(--text-muted) !important;
+            }
+            body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="secondary"],
+            body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="secondary"],
+            body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-testid="stButton"] button:not([kind="primary"]),
+            body:has(.streamlit-theme-marker) .streamlit-watchlist-row,
+            body:has(.streamlit-theme-marker) .metric-section-title,
+            body:has(.streamlit-theme-marker) .streamlit-takeaway,
+            body:has(.streamlit-theme-marker) div[data-testid="stExpander"] summary,
+            body:has(.streamlit-theme-marker) .ladder-notes div,
+            body:has(.streamlit-theme-marker) .compact-metric,
+            body:has(.streamlit-theme-marker) .metric-empty,
+            body:has(.streamlit-theme-marker) .streamlit-chart-frame {
+              background: var(--surface-soft) !important;
+              border-color: var(--border-soft) !important;
+              color: var(--button-secondary-text) !important;
+            }
+            body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="secondary"] *,
+            body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="secondary"] * {
+              color: var(--button-secondary-text) !important;
+            }
+            body:has(.streamlit-theme-marker) .metric-section,
+            body:has(.streamlit-theme-marker) .metric-cell,
+            body:has(.streamlit-theme-marker) .levels-table td,
+            body:has(.streamlit-theme-marker) .compare-table td,
+            body:has(.streamlit-theme-marker) .compare-table th,
+            body:has(.streamlit-theme-marker) .streamlit-heatmap {
+              border-color: var(--border) !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-status-chip,
+            body:has(.streamlit-theme-marker) .streamlit-refresh-banner,
+            body:has(.streamlit-theme-marker) .brand-mark,
+            body:has(.streamlit-theme-marker) .compact-metric.current {
+              background: var(--brand-soft) !important;
+              border-color: var(--brand-border) !important;
+              color: var(--brand) !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-refresh-banner strong,
+            body:has(.streamlit-theme-marker) .streamlit-refresh-banner span {
+              color: var(--brand) !important;
+            }
+            body:has(.streamlit-theme-marker) .compact-metric.priority,
+            body:has(.streamlit-theme-marker) .streamlit-related-tickers span,
+            body:has(.streamlit-theme-marker) div[data-testid="stAlert"],
+            body:has(.streamlit-theme-marker) .inline-warning {
+              background: var(--warning-bg) !important;
+              border-color: var(--warning-border) !important;
+              color: var(--warning-text) !important;
+            }
+            body:has(.streamlit-theme-marker) div[data-testid="stAlert"] *,
+            body:has(.streamlit-theme-marker) div[data-testid="stAlert"] p,
+            body:has(.streamlit-theme-marker) .inline-warning * {
+              color: var(--warning-text) !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-market-grid.major {
+              background: var(--major-market-bg) !important;
+              border: 1px solid var(--major-market-border) !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-market-grid.major .streamlit-market-tile {
+              background: transparent !important;
+              border-color: rgba(148, 163, 184, 0.26) !important;
+              color: #ffffff !important;
+              box-shadow: none !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-news-category-details summary,
+            body:has(.streamlit-theme-marker) .metric-card-header,
+            body:has(.streamlit-theme-marker) .compare-table th:first-child,
+            body:has(.streamlit-theme-marker) .levels-table .current td {
+              background: var(--brand-deep) !important;
+              color: #ffffff !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-news-category-details > div {
+              background: var(--surface-bg) !important;
+            }
+            body:has(.streamlit-theme-marker) .streamlit-chart-card iframe,
+            body:has(.streamlit-theme-marker) .stApp iframe {
+              color-scheme: var(--app-color-scheme, light);
+            }
+	        </style>
         """,
         unsafe_allow_html=True,
     )
@@ -1386,7 +1956,7 @@ def render_single_chart(
         st.caption("No chart data returned.")
         return
     st.iframe(
-        lightweight_chart_html(chart, chart_type, chart_range, interval),
+        lightweight_chart_html(chart, chart_type, chart_range, interval, streamlit_theme_type()),
         height=332,
     )
 
@@ -1396,8 +1966,10 @@ def lightweight_chart_html(
     chart_type: str,
     chart_range: ChartRange,
     interval: ChartInterval,
+    theme_type: str | None = None,
 ) -> str:
     """Return an embeddable Lightweight Charts document for one ticker."""
+    chart_theme = "dark" if theme_type == "dark" else "light"
     payload = {
         "ticker": chart.ticker,
         "chartType": "candles" if chart_type == "Candles" else "line",
@@ -1419,15 +1991,31 @@ def lightweight_chart_html(
     return (
         """
 <!doctype html>
-<html>
+<html data-app-theme="__APP_THEME__">
 <head>
   <meta charset="utf-8" />
   <script src="data:text/javascript;base64,__LIGHTWEIGHT_CHARTS_BUNDLE__"></script>
+  <script>
+    (function () {
+      function parentTheme() {
+        try {
+          return window.parent.document.querySelector(".streamlit-theme-marker")?.getAttribute("data-app-theme");
+        } catch (error) {
+          return null;
+        }
+      }
+      function syncTheme() {
+        document.documentElement.dataset.appTheme = parentTheme() || document.documentElement.dataset.appTheme || "light";
+      }
+      syncTheme();
+      window.setInterval(syncTheme, 800);
+    })();
+  </script>
   <style>
-    :root {
-      color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
+	    :root {
+	      color-scheme: light dark;
+	      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	    }
     * { box-sizing: border-box; }
     body {
       background: transparent;
@@ -1534,12 +2122,34 @@ def lightweight_chart_html(
       font-weight: 700;
       padding: 3px 2px 0;
     }
-    .attribution a {
-      color: #0f766e;
-      font-weight: 900;
-      text-decoration: none;
-    }
-  </style>
+	    .attribution a {
+	      color: #0f766e;
+	      font-weight: 900;
+	      text-decoration: none;
+	    }
+	    html[data-app-theme="dark"] .chart-shell {
+	      background: linear-gradient(180deg, #111827 0%, #0b1115 100%);
+	      border-color: #263241;
+	      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+	    }
+	    html[data-app-theme="dark"] .ticker,
+	    html[data-app-theme="dark"] .last-price {
+	      color: #e5edf4;
+	    }
+	    html[data-app-theme="dark"] .meta,
+	    html[data-app-theme="dark"] .change,
+	    html[data-app-theme="dark"] .attribution {
+	      color: #94a3b8;
+	    }
+	    html[data-app-theme="dark"] .empty {
+	      background: #17202c;
+	      border-color: #334155;
+	      color: #94a3b8;
+	    }
+	    html[data-app-theme="dark"] .attribution a {
+	      color: #5eead4;
+	    }
+	  </style>
 </head>
 <body>
   <script type="application/json" id="chart-payload">__CHART_PAYLOAD__</script>
@@ -1650,19 +2260,37 @@ def lightweight_chart_html(
       const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
       lastPrice.innerHTML = `${price(last.close)}<span class="change ${changeClass}">${change >= 0 ? "+" : ""}${price(change)} ${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%</span>`;
 
-      const chartApi = LightweightCharts.createChart(container, {
-        width: container.clientWidth || 360,
-        height: 238,
-        layout: {
-          background: { type: "solid", color: "#ffffff" },
-          textColor: "#64748b",
-          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
-          fontSize: 11,
-        },
-        grid: {
-          vertLines: { color: "#f1f5f9" },
-          horzLines: { color: "#edf2f7" },
-        },
+	      const darkMode = document.documentElement.dataset.appTheme === "dark";
+	      const theme = darkMode
+	        ? {
+	          background: "#111827",
+	          text: "#94a3b8",
+	          gridVert: "#1f2937",
+	          gridHorz: "#1f2937",
+	          crosshair: "#64748b",
+	          crosshairLabel: "#0b1115",
+	        }
+	        : {
+	          background: "#ffffff",
+	          text: "#64748b",
+	          gridVert: "#f1f5f9",
+	          gridHorz: "#edf2f7",
+	          crosshair: "#94a3b8",
+	          crosshairLabel: "#0f172a",
+	        };
+	      const chartApi = LightweightCharts.createChart(container, {
+	        width: container.clientWidth || 360,
+	        height: 238,
+	        layout: {
+	          background: { type: "solid", color: theme.background },
+	          textColor: theme.text,
+	          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+	          fontSize: 11,
+	        },
+	        grid: {
+	          vertLines: { color: theme.gridVert },
+	          horzLines: { color: theme.gridHorz },
+	        },
         rightPriceScale: {
           borderVisible: false,
           scaleMargins: { top: 0.14, bottom: 0.14 },
@@ -1676,11 +2304,11 @@ def lightweight_chart_html(
           timeVisible: isIntraday,
           secondsVisible: false,
         },
-        crosshair: {
-          mode: LightweightCharts.CrosshairMode.Normal,
-          vertLine: { color: "#94a3b8", labelBackgroundColor: "#0f172a" },
-          horzLine: { color: "#94a3b8", labelBackgroundColor: "#0f172a" },
-        },
+	        crosshair: {
+	          mode: LightweightCharts.CrosshairMode.Normal,
+	          vertLine: { color: theme.crosshair, labelBackgroundColor: theme.crosshairLabel },
+	          horzLine: { color: theme.crosshair, labelBackgroundColor: theme.crosshairLabel },
+	        },
         localization: {
           priceFormatter: price,
         },
@@ -1767,6 +2395,7 @@ def lightweight_chart_html(
         """
         .replace("__LIGHTWEIGHT_CHARTS_BUNDLE__", bundle_b64)
         .replace("__CHART_PAYLOAD__", payload_json)
+        .replace("__APP_THEME__", chart_theme)
     )
 
 
@@ -1948,12 +2577,13 @@ def render_ticker_news_grid(ticker_news: list[Any], empty_message: str = "No wat
 
 def render_x_timeline() -> None:
     """Embed the public @unusual_whales X.com timeline with a fallback link."""
+    theme = streamlit_theme_type()
     st.iframe(
         """
         <a
           class="twitter-timeline"
           data-height="560"
-          data-theme="light"
+          data-theme="__X_THEME__"
           data-dnt="true"
           href="https://twitter.com/unusual_whales?ref_src=twsrc%5Etfw"
         >
@@ -1963,6 +2593,16 @@ def render_x_timeline() -> None:
           If the timeline does not load, open
           <a href="https://x.com/unusual_whales" target="_blank" rel="noopener noreferrer">@unusual_whales on X.com</a>.
         </p>
+        <script>
+          (function () {
+            try {
+              var theme = window.parent.document.querySelector(".streamlit-theme-marker")?.getAttribute("data-app-theme");
+              if (theme) {
+                document.querySelector(".twitter-timeline")?.setAttribute("data-theme", theme);
+              }
+            } catch (error) {}
+          })();
+        </script>
         <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
         <script>
           window.setTimeout(function () {
@@ -1971,7 +2611,7 @@ def render_x_timeline() -> None:
             }
           }, 6500);
         </script>
-        """,
+        """.replace("__X_THEME__", theme),
         height=640,
     )
 
@@ -2169,31 +2809,31 @@ def scanner_cell_style(value: str) -> str:
         except ValueError:
             score = -1
         if score >= 7:
-            return "background-color:#dcfce7;color:#166534;font-weight:800"
+            return "background-color:var(--signal-strong-bg,#dcfce7);color:var(--signal-strong-fg,#166534);font-weight:800"
         if score >= 5:
-            return "background-color:#ccfbf1;color:#0f766e;font-weight:800"
+            return "background-color:var(--signal-good-bg,#ccfbf1);color:var(--signal-good-fg,#0f766e);font-weight:800"
         if score >= 3:
-            return "background-color:#fef3c7;color:#92400e;font-weight:800"
+            return "background-color:var(--signal-watch-bg,#fef3c7);color:var(--signal-watch-fg,#92400e);font-weight:800"
         if score >= 0:
-            return "background-color:#fee2e2;color:#991b1b;font-weight:800"
+            return "background-color:var(--signal-danger-bg,#fee2e2);color:var(--signal-danger-fg,#991b1b);font-weight:800"
     if text.endswith("x"):
         try:
             lows = int(text[:-1])
         except ValueError:
             lows = 0
         if lows >= 3:
-            return "background-color:#dcfce7;color:#166534;font-weight:800"
+            return "background-color:var(--signal-strong-bg,#dcfce7);color:var(--signal-strong-fg,#166534);font-weight:800"
         if lows == 2:
-            return "background-color:#ccfbf1;color:#0f766e;font-weight:800"
+            return "background-color:var(--signal-good-bg,#ccfbf1);color:var(--signal-good-fg,#0f766e);font-weight:800"
         if lows == 1:
-            return "background-color:#fef3c7;color:#92400e;font-weight:800"
+            return "background-color:var(--signal-watch-bg,#fef3c7);color:var(--signal-watch-fg,#92400e);font-weight:800"
     if text == "Turning Up":
-        return "background-color:#dcfce7;color:#166534;font-weight:800"
+        return "background-color:var(--signal-strong-bg,#dcfce7);color:var(--signal-strong-fg,#166534);font-weight:800"
     if text == "Ticking Up":
-        return "background-color:#ccfbf1;color:#0f766e;font-weight:800"
+        return "background-color:var(--signal-good-bg,#ccfbf1);color:var(--signal-good-fg,#0f766e);font-weight:800"
     if text == "Still Falling":
-        return "background-color:#fee2e2;color:#991b1b;font-weight:800"
-    return "background-color:#f1f5f9;color:#64748b;font-weight:700" if text == "-" or text == "Flat" else ""
+        return "background-color:var(--signal-danger-bg,#fee2e2);color:var(--signal-danger-fg,#991b1b);font-weight:800"
+    return "background-color:var(--signal-neutral-bg,#f1f5f9);color:var(--signal-neutral-fg,#64748b);font-weight:700" if text == "-" or text == "Flat" else ""
 
 
 def styled_scanner_setup_frame(report: ScannerResponse):
