@@ -381,7 +381,7 @@ def benchmark_mine(tickers: tuple[str, ...], recorder: QueryRecorder) -> dict[st
         for index, batch in enumerate(batches, start=1):
             batch_started = time.perf_counter()
             levels_started = time.perf_counter()
-            metrics = market_data.build_metrics(list(batch), list(DEFAULT_METRICS))
+            metrics = market_data.build_metrics(list(batch), list(DEFAULT_METRICS), include_earnings=False)
             levels_seconds = time.perf_counter() - levels_started
             report_metrics.extend(metrics)
             if first_levels_seconds is None:
@@ -399,7 +399,12 @@ def benchmark_mine(tickers: tuple[str, ...], recorder: QueryRecorder) -> dict[st
             level_render_seconds = time.perf_counter() - render_started
 
             scanner_started = time.perf_counter()
-            scanner_response = scanner.build_scanner(list(batch), include_setup=True, include_patterns=True)
+            scanner_response = scanner.build_scanner(
+                list(batch),
+                include_setup=True,
+                include_patterns=True,
+                include_earnings=False,
+            )
             scanner_seconds = time.perf_counter() - scanner_started
             scanner_responses.append(scanner_response)
             if first_scanner_seconds is None:
@@ -421,11 +426,35 @@ def benchmark_mine(tickers: tuple[str, ...], recorder: QueryRecorder) -> dict[st
                 }
             )
 
+        final_scanner = ScannerService.merge_responses(tickers, scanner_responses)
+        earnings_started = time.perf_counter()
+        metrics_by_ticker = {metric.ticker: metric for metric in report_metrics}
+        for batch in batches:
+            batch_metrics = [
+                metrics_by_ticker[ticker]
+                for ticker in batch
+                if ticker in metrics_by_ticker
+            ]
+            completed_metrics = market_data.complete_metrics_earnings(batch_metrics)
+            metrics_by_ticker.update({metric.ticker: metric for metric in completed_metrics})
+            scanner_update = scanner.build_scanner(
+                list(batch),
+                include_setup=True,
+                include_patterns=False,
+                include_earnings=True,
+            )
+            final_scanner = ScannerService.replace_setup_rows(tickers, final_scanner, [scanner_update])
+        report_metrics = [
+            metrics_by_ticker[ticker]
+            for ticker in tickers
+            if ticker in metrics_by_ticker
+        ]
+        earnings_completion_seconds = time.perf_counter() - earnings_started
+
         chart_started = time.perf_counter()
         charts = market_data.build_chart_history(list(tickers), MINE_CHART_RANGE, MINE_CHART_INTERVAL)
         chart_seconds = time.perf_counter() - chart_started
 
-    final_scanner = ScannerService.merge_responses(tickers, scanner_responses)
     total_seconds = time.perf_counter() - started
     per_ticker = [
         {
@@ -444,6 +473,7 @@ def benchmark_mine(tickers: tuple[str, ...], recorder: QueryRecorder) -> dict[st
         "first_levels_visible_seconds": round(first_levels_seconds or 0.0, 3),
         "first_scanner_visible_seconds": round(first_scanner_seconds or 0.0, 3),
         "final_levels_and_scanner_seconds": round(total_seconds - chart_seconds, 3),
+        "earnings_completion_seconds": round(earnings_completion_seconds, 3),
         "chart_query_seconds": round(chart_seconds, 3),
         "end_to_end_with_charts_seconds": round(total_seconds, 3),
         "per_ticker": per_ticker,
@@ -457,6 +487,7 @@ def benchmark_mine(tickers: tuple[str, ...], recorder: QueryRecorder) -> dict[st
             "chart_cards": len(charts.charts),
         },
         "query_summary": recorder.summarize("mine"),
+        "earnings_cache_stats": provider.earnings_cache_stats(),
     }
 
 
@@ -538,6 +569,7 @@ def build_report(result: dict[str, Any]) -> str:
         f"| First Levels visible | {mine['first_levels_visible_seconds']:.3f}s | {adam['first_levels_visible_seconds']:.3f}s | {speedup_first_levels:.1f}x faster |",
         f"| First Scanner visible | {mine['first_scanner_visible_seconds']:.3f}s | {adam['first_scanner_visible_seconds']:.3f}s | {speedup_first_scanner:.1f}x faster |",
         f"| Final Levels + Scanner | {mine['final_levels_and_scanner_seconds']:.3f}s | {adam['estimated_as_app_levels_and_scanner_seconds']:.3f}s | {speedup_final:.1f}x faster |",
+        f"| Earnings completion pass | {mine['earnings_completion_seconds']:.3f}s | n/a | final-only in this app |",
         f"| yfinance query wall time | {mine_query_seconds:.3f}s | {adam_query_seconds:.3f}s | {query_delta} |",
         f"| yfinance call count | {mine['query_summary']['count']} | {adam['query_summary']['count']} | {adam['query_summary']['count'] - mine['query_summary']['count']:+d} calls |",
         "",
@@ -599,6 +631,12 @@ def build_report(result: dict[str, Any]) -> str:
             "",
             "```json",
             json.dumps(adam["query_summary"], indent=2),
+            "```",
+            "",
+            "### This App Earnings Cache",
+            "",
+            "```json",
+            json.dumps(mine.get("earnings_cache_stats", {}), indent=2),
             "```",
             "",
             "## Notes",

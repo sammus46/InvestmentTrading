@@ -38,7 +38,9 @@ from app.streamlit_app import (
     progressive_report_responses,
     report_layout_label,
     refresh_bucket,
+    replace_report_metrics,
     save_streamlit_watchlist,
+    split_scanner_global_messages,
     start_pipelined_levels_scanner_loader,
     streamlit_autoload_datasets,
     streamlit_dataset_current,
@@ -91,7 +93,8 @@ def streamlit_app_smoke_script(state_path: str) -> None:
     os.environ[app.STREAMLIT_STATE_ENV] = state_path
 
     class FakeMarketData:
-        def build_metrics(self, tickers, metrics):
+        def build_metrics(self, tickers, metrics, include_earnings=True):
+            del include_earnings
             return [
                 EquityMetrics(
                     ticker=ticker,
@@ -110,9 +113,12 @@ def streamlit_app_smoke_script(state_path: str) -> None:
                 for ticker in tickers
             ]
 
+        def complete_metrics_earnings(self, metrics):
+            return metrics
+
     class FakeScanner:
-        def build_scanner(self, tickers, include_setup=True, include_patterns=True):
-            del include_setup, include_patterns
+        def build_scanner(self, tickers, include_setup=True, include_patterns=True, include_earnings=True):
+            del include_setup, include_patterns, include_earnings
             return ScannerResponse(
                 generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
                 watchlist=list(tickers),
@@ -388,6 +394,25 @@ def test_progressive_report_responses_batch_and_preserve_ticker_order():
     assert all(call[2] == 42 for call in calls)
 
 
+def test_replace_report_metrics_preserves_watchlist_order_for_earnings_updates():
+    report = GenerateResponse(
+        generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        metrics=[
+            streamlit_metric_fixture("MSFT", ["previous_day"]),
+            streamlit_metric_fixture("AAPL", ["previous_day"]),
+            streamlit_metric_fixture("NVDA", ["previous_day"]),
+        ],
+    )
+    updated_aapl = streamlit_metric_fixture("AAPL", ["earnings_gap"])
+    updated_aapl.earnings_gap = EarningsGap(date=datetime(2026, 6, 10, tzinfo=timezone.utc).date(), gap=1.25)
+
+    updated = replace_report_metrics(("MSFT", "AAPL", "NVDA"), report, [updated_aapl])
+
+    assert [metric.ticker for metric in updated.metrics] == ["MSFT", "AAPL", "NVDA"]
+    assert updated.metrics[1].selected_metrics == ["earnings_gap"]
+    assert updated.metrics[1].earnings_gap.gap == 1.25
+
+
 def test_pipelined_levels_scanner_events_batch_and_preserve_order():
     calls = []
 
@@ -522,6 +547,18 @@ def test_streamlit_autoload_datasets_prioritize_levels_before_news():
     )
 
 
+def test_scanner_global_pattern_absences_render_as_notes():
+    visible, notes = split_scanner_global_messages(
+        [
+            "No pattern data was returned for SPCX.",
+            "Pattern analysis failed for AAPL: bad frame",
+        ]
+    )
+
+    assert visible == ["Pattern analysis failed for AAPL: bad frame"]
+    assert notes == ["No pattern data was returned for SPCX."]
+
+
 def test_price_ladder_rows_sort_and_insert_current_price():
     metric = EquityMetrics(
         ticker="AAPL",
@@ -545,6 +582,61 @@ def test_price_ladder_rows_sort_and_insert_current_price():
     assert non_price_rows == []
     assert [row["label"] for row in price_rows[:4]] == ["Prev High", "Prev Close", "Prev Open", "Prev Low"]
     assert [row["label"] for row in rows_with_current[:3]] == ["Prev High", "Current Price", "Prev Close"]
+
+
+def test_price_ladder_level_filters_match_scanner_and_weight_buckets():
+    metric = EquityMetrics(
+        ticker="AAPL",
+        selected_metrics=[
+            "previous_day",
+            "premarket",
+            "first_five_minutes",
+            "previous_session_vwap_5m",
+            "fifty_two_week",
+            "swing_levels",
+            "technical_levels",
+        ],
+        previous_day=Ohlc(open=10.0, high=12.0, low=9.0, close=11.0),
+        premarket=PremarketRange(high=11.8, low=10.4, bars=10),
+        previous_session_vwap_5m=10.75,
+        fifty_two_week=FiftyTwoWeekRange(high=25.0, low=5.0),
+        earnings_gap=EarningsGap(),
+        first_five_minutes=OpeningRange(high=11.7, low=10.25, bars=5),
+        swing_levels=SwingLevels(highs=[15.0], lows=[8.0]),
+        bollinger_bands=BollingerLevels(),
+        technical_levels=TechnicalLevels(
+            current_price=11.5,
+            today_vwap=11.25,
+            one_month_high=20.0,
+            one_month_low=6.0,
+            sma_50=10.2,
+            sma_200=9.7,
+            pivot=10.6,
+            r1=12.4,
+            s1=8.9,
+            r2=13.0,
+            s2=7.5,
+        ),
+        data_timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+    )
+
+    scanner_rows, _, scanner_notes = ladder_rows(metric, "scanner")
+    weight_rows, _, weight_notes = ladder_rows(metric, "weight_20")
+    scanner_labels = [row["label"] for row in scanner_rows]
+    weight_labels = [row["label"] for row in weight_rows]
+
+    assert "Prev Close" in scanner_labels
+    assert "R1" in scanner_labels
+    assert "R2" not in scanner_labels
+    assert "Prev Open" not in scanner_labels
+    assert "Premarket High" in weight_labels
+    assert "Swing Highs 1" in weight_labels
+    assert "1M High" in weight_labels
+    assert "Prev Close" not in weight_labels
+    assert "Pivot" not in weight_labels
+    assert scanner_notes == []
+    assert weight_notes == []
+    assert 'class="ladder-row above priority"' in metric_card_html(metric, "price_ladder", level_filter="weight_20")
 
 
 def test_streamlit_metric_rendering_supports_all_report_layouts():

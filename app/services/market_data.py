@@ -145,12 +145,57 @@ class MarketDataService:
         metrics: list[MetricName] | None = None,
         *,
         include_history: bool = False,
+        include_earnings: bool = True,
     ) -> list[EquityMetrics]:
         """Generate metric rows for the requested tickers and selected metrics."""
         selected = metrics or list(DEFAULT_METRICS)
         symbols = [ticker.upper().strip() for ticker in tickers if ticker.strip()]
-        self._prefetch_metric_downloads(symbols, selected, include_history=include_history)
-        return [self._build_metric(ticker, selected, include_history=include_history) for ticker in tickers]
+        self._prefetch_metric_downloads(symbols, selected, include_history=include_history, include_earnings=include_earnings)
+        return [
+            self._build_metric(ticker, selected, include_history=include_history, include_earnings=include_earnings)
+            for ticker in tickers
+        ]
+
+    def complete_metric_earnings(self, metric: EquityMetrics) -> EquityMetrics:
+        """Return a metric copy with earnings gap fields calculated and display rows rebuilt."""
+        selected = set(metric.selected_metrics)
+        if not ({"earnings_gap", "technical_levels"} & selected):
+            return metric
+
+        warnings: list[str] = []
+        daily = self._download_daily_history(metric.ticker)
+        earnings_source = self._earnings_gap(metric.ticker, daily, warnings)
+        earnings_gap = earnings_source if "earnings_gap" in selected else metric.earnings_gap
+        technical_levels = metric.technical_levels
+        if "technical_levels" in selected:
+            technical_levels = metric.technical_levels.model_copy(
+                update={
+                    "earnings_open": earnings_source.open,
+                    "pre_earnings_close": earnings_source.previous_close,
+                }
+            )
+        updated = metric.model_copy(
+            update={
+                "earnings_gap": earnings_gap,
+                "technical_levels": technical_levels,
+                "warnings": list(dict.fromkeys([*metric.warnings, *warnings])),
+                "data_timestamp": datetime.now(timezone.utc),
+            }
+        )
+        updated.display_sections = build_metric_display_sections(updated)
+        return updated
+
+    def complete_metrics_earnings(self, metrics: list[EquityMetrics]) -> list[EquityMetrics]:
+        """Return metric copies with earnings gap fields filled where selected."""
+        symbols = [
+            metric.ticker.upper().strip()
+            for metric in metrics
+            if {"earnings_gap", "technical_levels"} & set(metric.selected_metrics)
+        ]
+        if symbols and self._can_prefetch():
+            start, end = self._daily_history_window(self.settings.daily_history_days)
+            self._download_many(list(dict.fromkeys(symbols)), period=None, interval="1d", prepost=False, start=start, end=end)
+        return [self.complete_metric_earnings(metric) for metric in metrics]
 
     def build_market_snapshot(self, tickers: list[str]) -> MarketSnapshotResponse:
         """Return major market and watchlist day-to-date performance."""
@@ -233,22 +278,16 @@ class MarketDataService:
         selected_metrics: list[MetricName],
         *,
         include_history: bool = False,
+        include_earnings: bool = True,
     ) -> EquityMetrics:
         warnings: list[str] = []
         symbol = ticker.upper().strip()
 
         selected = set(selected_metrics)
-        needs_daily = bool(
-            {
-                "previous_day",
-                "fifty_two_week",
-                "earnings_gap",
-                "swing_levels",
-                "bollinger_bands",
-                "technical_levels",
-            }
-            & selected
-        ) or include_history
+        daily_metrics = {"previous_day", "fifty_two_week", "swing_levels", "bollinger_bands", "technical_levels"}
+        if include_earnings:
+            daily_metrics.add("earnings_gap")
+        needs_daily = bool(daily_metrics & selected) or include_history
         needs_intraday = bool({"previous_session_vwap_5m", "technical_levels"} & selected) or include_history
         needs_opening_intraday = bool({"premarket", "first_five_minutes", "technical_levels"} & selected)
 
@@ -262,7 +301,7 @@ class MarketDataService:
                 symbol,
                 period=self.settings.intraday_history_period,
                 interval=self.settings.intraday_interval,
-                prepost=True,
+                prepost=False,
             )
             if needs_intraday
             else pd.DataFrame()
@@ -290,7 +329,7 @@ class MarketDataService:
         )
         earnings_source = (
             self._earnings_gap(symbol, daily, warnings)
-            if {"earnings_gap", "technical_levels"} & selected
+            if include_earnings and {"earnings_gap", "technical_levels"} & selected
             else EarningsGap()
         )
         earnings_gap = earnings_source if "earnings_gap" in selected else EarningsGap()
@@ -468,21 +507,15 @@ class MarketDataService:
         selected_metrics: list[MetricName],
         *,
         include_history: bool,
+        include_earnings: bool = True,
     ) -> None:
         if not self._can_prefetch() or not symbols:
             return
         selected = set(selected_metrics)
-        needs_daily = bool(
-            {
-                "previous_day",
-                "fifty_two_week",
-                "earnings_gap",
-                "swing_levels",
-                "bollinger_bands",
-                "technical_levels",
-            }
-            & selected
-        ) or include_history
+        daily_metrics = {"previous_day", "fifty_two_week", "swing_levels", "bollinger_bands", "technical_levels"}
+        if include_earnings:
+            daily_metrics.add("earnings_gap")
+        needs_daily = bool(daily_metrics & selected) or include_history
         needs_intraday = bool({"previous_session_vwap_5m", "technical_levels"} & selected) or include_history
         needs_opening_intraday = bool({"premarket", "first_five_minutes", "technical_levels"} & selected)
         if needs_daily:
@@ -493,7 +526,7 @@ class MarketDataService:
                 symbols,
                 period=self.settings.intraday_history_period,
                 interval=self.settings.intraday_interval,
-                prepost=True,
+                prepost=False,
             )
         if needs_opening_intraday:
             self._download_many(
@@ -851,7 +884,7 @@ class MarketDataService:
             warnings.append(f"Earnings dates were unavailable: {exc}")
             return EarningsGap()
 
-        if earnings_dates is None or earnings_dates.empty:
+        if earnings_dates is None or len(pd.DatetimeIndex(earnings_dates.index)) == 0:
             warnings.append("No earnings dates were returned by the data source.")
             return EarningsGap()
 
@@ -859,15 +892,13 @@ class MarketDataService:
         if index.tz is None:
             index = index.tz_localize(timezone.utc)
         index = index.tz_convert(EASTERN)
-        past_earnings = earnings_dates.copy()
-        past_earnings.index = index
         today = datetime.now(EASTERN).date()
-        past_earnings = past_earnings[past_earnings.index.date < today]
-        if past_earnings.empty:
+        past_earnings_index = index[index.date < today]
+        if len(past_earnings_index) == 0:
             warnings.append("No completed earnings dates were returned by the data source.")
             return EarningsGap()
 
-        earnings_date = past_earnings.sort_index(ascending=False).index[0].date()
+        earnings_date = past_earnings_index.sort_values(ascending=False)[0].date()
         if (today - earnings_date).days > self.settings.earnings_gap_max_age_days:
             warnings.append(
                 f"Most recent earnings date {earnings_date.isoformat()} is older than "
