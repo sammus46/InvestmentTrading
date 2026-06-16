@@ -182,7 +182,7 @@ Then browse to `http://YOUR_SERVER_IP:8000`.
 
 For public internet access, put the app behind authentication or a private tunnel such as a VPN, Tailscale, Cloudflare Tunnel, or a reverse proxy with login. The app pulls market data and has no built-in user accounts, so avoid exposing it as an unauthenticated public service.
 
-For Streamlit Community Cloud, push this repository to GitHub, choose `app/streamlit_app.py` as the main file, and let the platform install dependencies from `pyproject.toml`.
+For Streamlit Community Cloud, push this repository to GitHub, choose `app/streamlit_app.py` as the main file, and let the platform install dependencies from `pyproject.toml`. Use Python 3.12 or 3.13 in the Streamlit Cloud advanced settings for the most stable dependency resolution. If an existing deployed app is using a different Python version, Streamlit Cloud requires deleting and redeploying the app to change Python versions.
 
 ## Ticker input
 
