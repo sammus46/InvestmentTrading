@@ -321,6 +321,77 @@ def test_earnings_gap_suppresses_provider_stderr(capsys):
     assert "No earnings dates found" not in capsys.readouterr().err
 
 
+def test_build_metrics_can_defer_earnings_metadata_until_completion():
+    today = datetime.now(EASTERN).date()
+    earnings_day = today - timedelta(days=5)
+    prior_day = earnings_day - timedelta(days=1)
+    earnings_calls = []
+
+    class EarningsProvider(FakeProvider):
+        def earnings_dates(self, symbol):
+            earnings_calls.append(symbol)
+            return pd.DataFrame(
+                index=pd.DatetimeIndex([datetime.combine(earnings_day, time(12, 0), tzinfo=EASTERN)])
+            )
+
+    frame = pd.DataFrame(
+        {
+            "Open": [90.0, 110.0],
+            "High": [95.0, 115.0],
+            "Low": [85.0, 105.0],
+            "Close": [100.0, 120.0],
+            "Volume": [1000, 1000],
+        },
+        index=pd.DatetimeIndex([prior_day, earnings_day]),
+    )
+    service = MarketDataService(provider=EarningsProvider(download_frame=frame))
+
+    [initial] = service.build_metrics(
+        ["AAPL"],
+        ["earnings_gap", "technical_levels"],
+        include_earnings=False,
+    )
+    [completed] = service.complete_metrics_earnings([initial])
+
+    assert earnings_calls == ["AAPL"]
+    assert initial.earnings_gap.date is None
+    assert initial.technical_levels.earnings_open is None
+    assert completed.earnings_gap.date == earnings_day
+    assert completed.earnings_gap.gap == 10.0
+    assert completed.technical_levels.earnings_open == 110.0
+    assert completed.technical_levels.pre_earnings_close == 100.0
+    assert any(row.label == "Earnings Date" and row.value == earnings_day.isoformat() for section in completed.display_sections for row in section.rows)
+
+
+def test_build_metrics_uses_regular_session_five_minute_and_prepost_one_minute():
+    today = datetime.now(EASTERN).date()
+    frame = pd.DataFrame(
+        {
+            "Open": [100.0, 101.0],
+            "High": [102.0, 103.0],
+            "Low": [99.0, 100.0],
+            "Close": [101.0, 102.0],
+            "Volume": [1000, 1000],
+        },
+        index=pd.DatetimeIndex(
+            [
+                datetime.combine(today - timedelta(days=1), time(9, 30), tzinfo=EASTERN),
+                datetime.combine(today, time(9, 30), tzinfo=EASTERN),
+            ]
+        ),
+    )
+    provider = FakeProvider(download_frame=frame)
+
+    MarketDataService(provider=provider).build_metrics(
+        ["AAPL"],
+        ["previous_session_vwap_5m", "technical_levels", "premarket", "first_five_minutes"],
+        include_earnings=False,
+    )
+
+    assert any(call["period"] == "5d" and call["interval"] == "5m" and call["prepost"] is False for call in provider.downloads)
+    assert any(call["period"] == "1d" and call["interval"] == "1m" and call["prepost"] is True for call in provider.downloads)
+
+
 def test_latest_session_bars_use_newest_available_date():
     index = pd.DatetimeIndex(
         [
@@ -462,6 +533,94 @@ def test_download_cache_reuses_equivalent_daily_windows_until_ttl(monkeypatch):
     assert third["Close"].tolist() == [102.0]
 
 
+def test_earnings_dates_disk_cache_reuses_between_provider_instances(monkeypatch, tmp_path):
+    calls = []
+    earnings_day = datetime(2026, 6, 1, 12, tzinfo=EASTERN)
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        @property
+        def earnings_dates(self):
+            calls.append(self.symbol)
+            return pd.DataFrame(index=pd.DatetimeIndex([earnings_day]))
+
+    monkeypatch.setattr("app.services.providers.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.services.providers.time.time", lambda: 1000.0)
+
+    first_provider = YFinanceProvider(metadata_cache_dir=tmp_path)
+    first = first_provider.earnings_dates("aapl")
+    second_provider = YFinanceProvider(metadata_cache_dir=tmp_path)
+    second = second_provider.earnings_dates("AAPL")
+
+    assert calls == ["aapl"]
+    assert first is not None
+    assert second is not None
+    assert list(first.index) == list(second.index)
+    assert first_provider.earnings_cache_stats()["misses"] == 1
+    assert first_provider.earnings_cache_stats()["writes"] == 1
+    assert second_provider.earnings_cache_stats()["disk_hits"] == 1
+
+
+def test_earnings_dates_disk_cache_refreshes_stale_entries(monkeypatch, tmp_path):
+    calls = []
+    clock = {"now": 1000.0}
+    first_day = datetime(2026, 6, 1, 12, tzinfo=EASTERN)
+    second_day = datetime(2026, 6, 10, 12, tzinfo=EASTERN)
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        @property
+        def earnings_dates(self):
+            calls.append(self.symbol)
+            day = first_day if len(calls) == 1 else second_day
+            return pd.DataFrame(index=pd.DatetimeIndex([day]))
+
+    monkeypatch.setattr("app.services.providers.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.services.providers.time.time", lambda: clock["now"])
+
+    YFinanceProvider(metadata_cache_dir=tmp_path).earnings_dates("AAPL")
+    clock["now"] += YFinanceProvider.METADATA_CACHE_TTL_SECONDS + 1
+    refreshed_provider = YFinanceProvider(metadata_cache_dir=tmp_path)
+    refreshed = refreshed_provider.earnings_dates("AAPL")
+
+    assert calls == ["AAPL", "AAPL"]
+    assert refreshed is not None
+    assert refreshed.index[0].date() == second_day.date()
+    assert refreshed_provider.earnings_cache_stats()["stale"] == 1
+    assert refreshed_provider.earnings_cache_stats()["misses"] == 1
+
+
+def test_earnings_dates_disk_cache_refetches_corrupt_entries(monkeypatch, tmp_path):
+    calls = []
+    (tmp_path / "AAPL.json").write_text("{not-json", encoding="utf-8")
+    earnings_day = datetime(2026, 6, 1, 12, tzinfo=EASTERN)
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        @property
+        def earnings_dates(self):
+            calls.append(self.symbol)
+            return pd.DataFrame(index=pd.DatetimeIndex([earnings_day]))
+
+    monkeypatch.setattr("app.services.providers.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.services.providers.time.time", lambda: 1000.0)
+
+    provider = YFinanceProvider(metadata_cache_dir=tmp_path)
+    dates = provider.earnings_dates("AAPL")
+
+    assert calls == ["AAPL"]
+    assert dates is not None
+    assert dates.index[0].date() == earnings_day.date()
+    assert provider.earnings_cache_stats()["errors"] == 1
+    assert provider.earnings_cache_stats()["misses"] == 1
+
+
 def test_technical_levels_bundle_adam_display_values():
     today = datetime.now(EASTERN).date()
     dates = pd.date_range(today - timedelta(days=220), periods=220, freq="D")
@@ -579,7 +738,7 @@ def test_build_metrics_include_history_keeps_pdf_chart_data(monkeypatch):
 
     [metric] = MarketDataService().build_metrics(["AAPL"], ["previous_day"], include_history=True)
 
-    assert downloads == [(None, "1d", False), ("5d", "5m", True)]
+    assert downloads == [(None, "1d", False), ("5d", "5m", False)]
     assert [point.close for point in metric.price_history] == [11.0]
     assert [point.close for point in metric.intraday_history] == [11.5]
 

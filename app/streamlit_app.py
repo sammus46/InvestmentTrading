@@ -45,7 +45,14 @@ from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 from app.services.scanner import ScannerService
-from app.services.display import DEFAULT_REPORT_LAYOUT, report_layout_catalog
+from app.services.display import (
+    DEFAULT_LEVEL_FILTER,
+    DEFAULT_REPORT_LAYOUT,
+    LEVEL_FILTER_OPTIONS,
+    level_filter_label,
+    normalize_level_filter,
+    report_layout_catalog,
+)
 from app.streamlit_ui.metrics import metric_card_html, metric_rows, render_metric, render_metric_grid
 
 
@@ -2796,10 +2803,50 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
     render_x_timeline()
 
 
+def split_scanner_global_messages(warnings: list[str]) -> tuple[list[str], list[str]]:
+    """Split scanner-wide warnings into visible failures and lower-priority notes."""
+    visible: list[str] = []
+    notes: list[str] = []
+    for warning in warnings:
+        if warning.startswith("No pattern data was returned for "):
+            notes.append(warning)
+        else:
+            visible.append(warning)
+    return visible, notes
+
+
+def render_scanner_message_notes(
+    label: str,
+    messages: list[tuple[str, str]],
+    *,
+    expanded: bool = False,
+) -> None:
+    """Render ticker-scoped scanner messages in a compact expander."""
+    if not messages:
+        return
+    grouped: dict[str, list[str]] = {}
+    for ticker, message in messages:
+        grouped.setdefault(ticker, []).append(message)
+    with st.expander(f"{len(grouped)} ticker(s) with {label}", expanded=expanded):
+        for ticker, ticker_messages in grouped.items():
+            st.caption(f"{ticker}: {' '.join(ticker_messages)}")
+
+
+def render_scanner_global_notes(label: str, messages: list[str], *, expanded: bool = False) -> None:
+    """Render scanner-wide informational notes without warning-block noise."""
+    if not messages:
+        return
+    with st.expander(f"{len(messages)} {label}", expanded=expanded):
+        for message in messages:
+            st.caption(message)
+
+
 def render_scanner(report: ScannerResponse) -> None:
     """Render setup scanner and intraday pattern analysis."""
-    for warning in report.warnings:
+    visible_warnings, pattern_notes = split_scanner_global_messages(report.warnings)
+    for warning in visible_warnings:
         st.warning(warning)
+    render_scanner_global_notes("scanner pattern note(s)", pattern_notes)
 
     setup_tab, pattern_tab = st.tabs(["Setup Scanner", "Intraday Pattern Analysis"])
     with setup_tab:
@@ -2813,14 +2860,10 @@ def render_scanner(report: ScannerResponse) -> None:
                 row_height=42,
                 height=dataframe_height(len(report.setup_rows), row_height=42),
             )
-            warned = [row for row in report.setup_rows if row.warnings]
-            for row in warned:
-                st.warning(f"{row.ticker}: {' '.join(row.warnings)}")
+            row_warnings = [(row.ticker, warning) for row in report.setup_rows for warning in row.warnings]
+            render_scanner_message_notes("scanner warning(s)", row_warnings)
             data_notes = [(row.ticker, note) for row in report.setup_rows for note in row.data_notes]
-            if data_notes:
-                with st.expander(f"{len(data_notes)} scanner data note(s)", expanded=False):
-                    for ticker, note in data_notes:
-                        st.caption(f"{ticker}: {note}")
+            render_scanner_message_notes("scanner data note(s)", data_notes)
 
     with pattern_tab:
         if not report.pattern_summary:
@@ -3299,6 +3342,23 @@ def render_report_layout_selector() -> str:
     )
 
 
+def render_level_filter_selector() -> str:
+    """Render and persist the Streamlit Levels card filter selector."""
+    st.session_state.level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
+    return str(
+        st.selectbox(
+            "Level filter",
+            LEVEL_FILTER_OPTIONS,
+            format_func=level_filter_label,
+            key="level_filter",
+            help=(
+                "All Levels shows every price level. Scanner Levels Only matches scanner support/resistance inputs. "
+                "Weight 20+ Only shows the highest-trust levels."
+            ),
+        )
+    )
+
+
 def normalize_level_search(query: object) -> str:
     """Normalize a report ticker search query."""
     return str(query or "").strip().upper()
@@ -3335,6 +3395,23 @@ def filter_report_metrics(metrics: list[EquityMetrics], query: object) -> list[E
     return [metric for metric in metrics if any(term in metric.ticker.upper() for term in terms)]
 
 
+def replace_report_metrics(
+    tickers: tuple[str, ...],
+    report: GenerateResponse,
+    updates: list[EquityMetrics],
+) -> GenerateResponse:
+    """Return report with updated metrics in original watchlist order."""
+    ticker_order = [ticker.upper().strip() for ticker in tickers if ticker.strip()]
+    metrics_by_ticker = {metric.ticker: metric for metric in report.metrics}
+    metrics_by_ticker.update({metric.ticker: metric for metric in updates})
+    ordered_metrics = [
+        metrics_by_ticker[ticker]
+        for ticker in ticker_order
+        if ticker in metrics_by_ticker
+    ]
+    return GenerateResponse(generated_at=datetime.now(timezone.utc), metrics=ordered_metrics)
+
+
 def render_report_panel(
     report: GenerateResponse,
     *,
@@ -3345,8 +3422,8 @@ def render_report_panel(
     """Render report cards, with optional final-only controls and charts."""
     with st.container(border=True):
         if complete:
-            header_col, search_col, layout_col, download_col = st.columns(
-                [1.35, 1.15, 0.9, 1],
+            header_col, search_col, layout_col, filter_col = st.columns(
+                [1.25, 1.1, 0.85, 1.05],
                 vertical_alignment="center",
             )
             with header_col:
@@ -3359,7 +3436,31 @@ def render_report_panel(
                 )
             with layout_col:
                 report_layout = render_report_layout_selector()
-            with download_col:
+            with filter_col:
+                level_filter = render_level_filter_selector()
+        else:
+            st.header("Levels")
+            loaded_count = len(report.metrics)
+            target_count = total_tickers or loaded_count
+            st.caption(f"Loaded {loaded_count} of {target_count} ticker(s). Charts and PDF will appear when loading completes.")
+            report_search = ""
+            report_layout = normalize_report_layout(st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT))
+            level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
+
+        visible_metrics = filter_report_metrics(report.metrics, report_search)
+        if report_search and not visible_metrics:
+            st.caption(f"No ticker matching '{normalize_level_search(report_search)}'")
+        elif report_search:
+            st.caption(f"Showing {len(visible_metrics)} of {len(report.metrics)} ticker(s).")
+
+        render_metric_grid(visible_metrics, report_layout, level_filter=level_filter)
+
+        if complete:
+            st.divider()
+            export_text_col, export_button_col = st.columns([2.1, 1], vertical_alignment="center")
+            with export_text_col:
+                st.caption("Export the completed Levels report after the on-screen cards are loaded.")
+            with export_button_col:
                 pdf = pdf_report_service().build_pdf(report)
                 st.download_button(
                     "Download PDF Levels",
@@ -3369,21 +3470,6 @@ def render_report_panel(
                     type="secondary",
                     width="stretch",
                 )
-        else:
-            st.header("Levels")
-            loaded_count = len(report.metrics)
-            target_count = total_tickers or loaded_count
-            st.caption(f"Loaded {loaded_count} of {target_count} ticker(s). Charts and PDF will appear when loading completes.")
-            report_search = ""
-            report_layout = normalize_report_layout(st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT))
-
-        visible_metrics = filter_report_metrics(report.metrics, report_search)
-        if report_search and not visible_metrics:
-            st.caption(f"No ticker matching '{normalize_level_search(report_search)}'")
-        elif report_search:
-            st.caption(f"Showing {len(visible_metrics)} of {len(report.metrics)} ticker(s).")
-
-        render_metric_grid(visible_metrics, report_layout)
 
     if complete and visible_metrics and chart_slot is not None:
         chart_slot.empty()
@@ -3451,12 +3537,12 @@ def load_levels_and_scanner_progressively(
         del refresh_token
         return GenerateResponse(
             generated_at=datetime.now(timezone.utc),
-            metrics=market_data.build_metrics(list(batch), list(selected_metrics)),
+            metrics=market_data.build_metrics(list(batch), list(selected_metrics), include_earnings=False),
         )
 
     def load_scanner_batch(batch: tuple[str, ...], refresh_token: int) -> ScannerResponse:
         del refresh_token
-        return scanner.build_scanner(list(batch), include_setup=True, include_patterns=True)
+        return scanner.build_scanner(list(batch), include_setup=True, include_patterns=True, include_earnings=False)
 
     with refresh_slot.container():
         st.markdown(
@@ -3478,7 +3564,7 @@ def load_levels_and_scanner_progressively(
         load_levels_batch,
         load_scanner_batch,
     )
-    total_events = max(1, len(batches) * 2)
+    total_events = max(1, len(batches) * 3)
     rendered_events = 0
     try:
         while True:
@@ -3511,17 +3597,42 @@ def load_levels_and_scanner_progressively(
                     min(rendered_events / total_events, 1.0),
                     text=f"Loaded scanner batch {event.batch_index} of {event.total_batches}.",
                 )
+
+        metrics_by_ticker = {metric.ticker: metric for metric in final_report.metrics}
+        for index, batch in enumerate(batches, start=1):
+            batch_metrics = [
+                metrics_by_ticker[ticker.upper().strip()]
+                for ticker in batch
+                if ticker.upper().strip() in metrics_by_ticker
+            ]
+            if not batch_metrics:
+                continue
+            completed_metrics = market_data.complete_metrics_earnings(batch_metrics)
+            final_report = replace_report_metrics(tickers, final_report, completed_metrics)
+            metrics_by_ticker = {metric.ticker: metric for metric in final_report.metrics}
+            st.session_state.report = final_report
+            render_report_panel_in_slot(report_slot, final_report, complete=False, total_tickers=len(tickers))
+
+            scanner_update = scanner.build_scanner(
+                list(batch),
+                include_setup=True,
+                include_patterns=False,
+                include_earnings=True,
+            )
+            final_scanner = ScannerService.replace_setup_rows(tickers, final_scanner, [scanner_update])
+            st.session_state.scanner = final_scanner
+            render_scanner_panel_in_slot(scanner_slot, final_scanner)
+
+            rendered_events += 1
+            progress.progress(
+                min(rendered_events / total_events, 1.0),
+                text=f"Loaded earnings metadata for batch {index} of {len(batches)}.",
+            )
     finally:
         worker.join()
         refresh_slot.empty()
         st.session_state.pop("refresh_banner_title", None)
 
-    if report_responses:
-        final_report = GenerateResponse(
-            generated_at=report_responses[-1].generated_at,
-            metrics=[metric for response in report_responses for metric in response.metrics],
-        )
-    final_scanner = ScannerService.merge_responses(tickers, scanner_responses)
     st.session_state.report = final_report
     st.session_state.scanner = final_scanner
     return final_report, final_scanner

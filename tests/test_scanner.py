@@ -239,6 +239,10 @@ def test_scanner_splits_optional_data_notes_from_visible_warnings():
     visible, notes = ScannerService._split_scanner_messages(
         [
             "At least 200 completed daily closes are required for 200 SMA.",
+            "No regular-session intraday bars were returned for today's VWAP.",
+            "No premarket bars were returned by the data source for today.",
+            "No intraday bars were returned for today's opening range.",
+            "At least 21 completed daily bars are required for swing levels.",
             "Earnings dates were unavailable: provider timeout",
             "Fast price lookup was unavailable for ABC: rate limited",
         ]
@@ -247,6 +251,10 @@ def test_scanner_splits_optional_data_notes_from_visible_warnings():
     assert visible == ["Fast price lookup was unavailable for ABC: rate limited"]
     assert notes == [
         "At least 200 completed daily closes are required for 200 SMA.",
+        "No regular-session intraday bars were returned for today's VWAP.",
+        "No premarket bars were returned by the data source for today.",
+        "No intraday bars were returned for today's opening range.",
+        "At least 21 completed daily bars are required for swing levels.",
         "Earnings dates were unavailable: provider timeout",
     ]
 
@@ -362,9 +370,54 @@ def test_merge_scanner_responses_sorts_and_preserves_output_shape():
     assert merged.takeaways[-1] == "Average consistency across scanned tickers: 60% of days had a 9-11am MT dip."
 
 
+def test_replace_setup_rows_preserves_pattern_outputs():
+    generated_at = datetime(2026, 6, 15, tzinfo=timezone.utc)
+    base = ScannerResponse(
+        generated_at=generated_at,
+        watchlist=["AAPL", "MSFT"],
+        setup_rows=[ScannerSetupRow(ticker="AAPL", score=2), ScannerSetupRow(ticker="MSFT", score=4)],
+        pattern_summary=[
+            PatternSummaryRow(
+                sector="Technology",
+                ticker="AAPL",
+                total_days=10,
+                dip_days=6,
+                consistency_percent=60,
+                average_dip_percent=-0.7,
+                average_recovery_percent=0.3,
+            )
+        ],
+        pattern_heatmap=[PatternHeatmapRow(ticker="AAPL", sector="Technology", values=[0.1])],
+        warnings=["base warning"],
+    )
+    update = ScannerResponse(
+        generated_at=generated_at + timedelta(minutes=1),
+        watchlist=["AAPL"],
+        setup_rows=[ScannerSetupRow(ticker="AAPL", score=8)],
+        warnings=["update warning"],
+    )
+
+    merged = ScannerService.replace_setup_rows(("AAPL", "MSFT"), base, [update])
+
+    assert merged.generated_at == generated_at + timedelta(minutes=1)
+    assert [row.ticker for row in merged.setup_rows] == ["AAPL", "MSFT"]
+    assert [row.score for row in merged.setup_rows] == [8, 4]
+    assert merged.pattern_summary == base.pattern_summary
+    assert merged.pattern_heatmap == base.pattern_heatmap
+    assert merged.warnings == ["base warning", "update warning"]
+
+
 def test_scanner_endpoint_uses_shared_watchlist(monkeypatch):
     class FakeScanner:
-        def build_scanner(self, tickers, include_setup=True, include_patterns=True, pattern_lookback_days=30):
+        def build_scanner(
+            self,
+            tickers,
+            include_setup=True,
+            include_patterns=True,
+            include_earnings=True,
+            pattern_lookback_days=30,
+        ):
+            del include_setup, include_patterns, include_earnings, pattern_lookback_days
             return ScannerResponse(
                 generated_at=datetime.now(EASTERN),
                 watchlist=tickers,

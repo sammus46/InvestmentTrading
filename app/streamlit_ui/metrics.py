@@ -7,7 +7,15 @@ from html import escape
 import streamlit as st
 
 from app.models import DisplayRow, EquityMetrics, ReportLayoutName
-from app.services.display import DEFAULT_REPORT_LAYOUT, build_metric_display_sections
+from app.services.display import (
+    DEFAULT_LEVEL_FILTER,
+    DEFAULT_REPORT_LAYOUT,
+    LevelFilterName,
+    build_metric_display_sections,
+    level_matches_filter,
+    level_type_weight,
+    normalize_level_filter,
+)
 
 
 def metric_rows(metric: EquityMetrics) -> list[dict[str, str]]:
@@ -25,33 +33,49 @@ def metric_card_html(
     layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT,
     index: int = 0,
     total_count: int = 1,
+    level_filter: LevelFilterName = DEFAULT_LEVEL_FILTER,
 ) -> str:
     """Return one ticker card for the selected report layout."""
     if layout == "price_ladder":
-        return price_ladder_card_html(metric, index, total_count)
+        return price_ladder_card_html(metric, index, total_count, level_filter)
     if layout == "compact":
         return compact_card_html(metric, index, total_count)
     return grid_card_html(metric, index, total_count)
 
 
-def render_metric_card(metric: EquityMetrics, layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT) -> None:
+def render_metric_card(
+    metric: EquityMetrics,
+    layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT,
+    level_filter: LevelFilterName = DEFAULT_LEVEL_FILTER,
+) -> None:
     """Render one ticker report card."""
-    st.markdown(metric_card_html(metric, layout), unsafe_allow_html=True)
+    st.markdown(metric_card_html(metric, layout, level_filter=level_filter), unsafe_allow_html=True)
 
 
-def render_metric_grid(metrics: list[EquityMetrics], layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT) -> None:
+def render_metric_grid(
+    metrics: list[EquityMetrics],
+    layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT,
+    level_filter: LevelFilterName = DEFAULT_LEVEL_FILTER,
+) -> None:
     """Render ticker report metrics in the selected layout."""
     if layout == "compare":
         st.markdown(compare_table_html(metrics), unsafe_allow_html=True)
         return
-    cards = "".join(metric_card_html(metric, layout, index, len(metrics)) for index, metric in enumerate(metrics))
+    cards = "".join(
+        metric_card_html(metric, layout, index, len(metrics), level_filter)
+        for index, metric in enumerate(metrics)
+    )
     class_name = layout.replace("_", "-")
     st.markdown(f'<div class="streamlit-report-grid streamlit-report-layout-{class_name}">{cards}</div>', unsafe_allow_html=True)
 
 
-def render_metric(metric: EquityMetrics, layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT) -> None:
+def render_metric(
+    metric: EquityMetrics,
+    layout: ReportLayoutName = DEFAULT_REPORT_LAYOUT,
+    level_filter: LevelFilterName = DEFAULT_LEVEL_FILTER,
+) -> None:
     """Render one ticker report section."""
-    render_metric_card(metric, layout)
+    render_metric_card(metric, layout, level_filter)
     if metric.warnings:
         with st.expander(f"{len(metric.warnings)} data warning(s)"):
             for warning in metric.warnings:
@@ -95,9 +119,14 @@ def grid_card_html(metric: EquityMetrics, index: int = 0, total_count: int = 1) 
     )
 
 
-def price_ladder_card_html(metric: EquityMetrics, index: int = 0, total_count: int = 1) -> str:
+def price_ladder_card_html(
+    metric: EquityMetrics,
+    index: int = 0,
+    total_count: int = 1,
+    level_filter: LevelFilterName = DEFAULT_LEVEL_FILTER,
+) -> str:
     """Return an Adam-style price ladder for one ticker."""
-    price_rows, current_price, non_price_rows = ladder_rows(metric)
+    price_rows, current_price, non_price_rows = ladder_rows(metric, level_filter)
     return (
         '<article class="metric-card ladder-card">'
         f"{card_header_html(metric, index, total_count)}"
@@ -192,7 +221,7 @@ def ladder_table_html(price_rows: list[dict[str, object]], current_price: float 
         numeric_value = float(row["numeric_value"])
         is_current = row["kind"] == "current"
         side = "current" if is_current else "neutral" if current_price is None else "above" if numeric_value > current_price else "below"
-        priority = " priority" if row["emphasis"] == "priority" else ""
+        priority = " priority" if row["emphasis"] == "priority" or level_type_weight(str(row["label"])) >= 20 else ""
         table_rows.append(
             f'<tr class="ladder-row {side}{priority}">'
             f'<td>{escape(str(row["label"]))}</td>'
@@ -233,8 +262,12 @@ def flatten_display_rows(metric: EquityMetrics) -> list[dict[str, object]]:
     return [row for row in rows if row["value"] not in ("", "-")]
 
 
-def ladder_rows(metric: EquityMetrics) -> tuple[list[dict[str, object]], float | None, list[dict[str, object]]]:
+def ladder_rows(
+    metric: EquityMetrics,
+    level_filter: LevelFilterName = DEFAULT_LEVEL_FILTER,
+) -> tuple[list[dict[str, object]], float | None, list[dict[str, object]]]:
     """Return price rows, current price, and non-price rows for price ladder rendering."""
+    normalized_filter = normalize_level_filter(level_filter)
     price_rows: list[dict[str, object]] = []
     non_price_rows: list[dict[str, object]] = []
     current_price: float | None = None
@@ -259,6 +292,13 @@ def ladder_rows(metric: EquityMetrics) -> tuple[list[dict[str, object]], float |
                         numeric_value=value,
                     )
                 )
+
+    price_rows = [
+        row for row in price_rows
+        if level_matches_filter(str(row["label"]), normalized_filter)
+    ]
+    if normalized_filter != "all":
+        non_price_rows = []
 
     price_rows.sort(key=lambda row: float(row["numeric_value"]), reverse=True)
     return price_rows, current_price, non_price_rows

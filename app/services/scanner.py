@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from app.models import (
+    EarningsGap,
     PatternDayDetail,
     PatternHeatmapRow,
     PatternSummaryRow,
@@ -18,6 +19,7 @@ from app.models import (
     ScannerSetupRow,
 )
 from app.services.market_data import EASTERN, MARKET_CLOSE, MARKET_OPEN, MarketDataService
+from app.services.display import level_type_weight
 
 MOUNTAIN = ZoneInfo("America/Denver")
 LOOKBACK_DAYS = 30
@@ -70,35 +72,6 @@ TICKER_ETF = {
     "HD": "XLY",
     "SPY": "SPY",
     "QQQ": "QQQ",
-}
-
-LEVEL_TYPE_WEIGHTS = {
-    "VWAP (Today)": 30,
-    "PM High": 28,
-    "PM Low": 28,
-    "Prev High": 26,
-    "Prev Low": 26,
-    "5-Min High": 22,
-    "5-Min Low": 22,
-    "1-Month High": 20,
-    "1-Month Low": 20,
-    "VWAP (Prev Session)": 18,
-    "Prev Close": 16,
-    "200 SMA (Daily)": 16,
-    "50 SMA (Daily)": 14,
-    "9 EMA (5-Min)": 14,
-    "20 EMA (Daily)": 12,
-    "20 EMA (5-Min)": 12,
-    "Pivot": 10,
-    "R1 (Pivot)": 10,
-    "S1 (Pivot)": 10,
-    "R2 (Pivot)": 8,
-    "S2 (Pivot)": 8,
-    "Earnings Gap Open": 8,
-    "Pre-Earnings Close": 8,
-    "Fib 61.8%": 8,
-    "Fib 50.0%": 7,
-    "Fib 38.2%": 6,
 }
 
 SIGNAL_PRIORITY = ["VWAP", "PM High", "Prev High", "Prev Low", "R1", "S1", "Pivot"]
@@ -218,6 +191,7 @@ class ScannerService:
         *,
         include_setup: bool = True,
         include_patterns: bool = True,
+        include_earnings: bool = True,
         pattern_lookback_days: int = LOOKBACK_DAYS,
     ) -> ScannerResponse:
         """Return setup scanner rows and optional intraday pattern analysis."""
@@ -238,7 +212,7 @@ class ScannerService:
         if include_setup:
             for symbol in watchlist:
                 try:
-                    scan_data = self._load_ticker_data(symbol, benchmark_cache)
+                    scan_data = self._load_ticker_data(symbol, benchmark_cache, include_earnings=include_earnings)
                     setup_rows.append(self._setup_row(scan_data))
                 except Exception as exc:
                     warnings.append(f"Scanner failed for {symbol}: {exc}")
@@ -320,7 +294,42 @@ class ScannerService:
             warnings=warnings,
         )
 
-    def _load_ticker_data(self, symbol: str, benchmark_cache: dict[str, float | None]) -> TickerScanData:
+    @classmethod
+    def replace_setup_rows(
+        cls,
+        tickers: list[str] | tuple[str, ...],
+        base: ScannerResponse,
+        updates: list[ScannerResponse],
+    ) -> ScannerResponse:
+        """Return scanner response with setup rows replaced by newer partial setup rows."""
+        watchlist = list(dict.fromkeys(ticker.upper().strip() for ticker in tickers if ticker.strip()))
+        ticker_order = {ticker: index for index, ticker in enumerate(watchlist)}
+        rows_by_ticker = {row.ticker: row for row in base.setup_rows}
+        warnings = list(base.warnings)
+        generated_at = base.generated_at
+        for response in updates:
+            generated_at = max(generated_at, response.generated_at)
+            rows_by_ticker.update({row.ticker: row for row in response.setup_rows})
+            warnings.extend(response.warnings)
+        setup_rows = sorted(
+            rows_by_ticker.values(),
+            key=lambda row: (-(row.score if row.score is not None else -1), ticker_order.get(row.ticker, len(ticker_order))),
+        )
+        return base.model_copy(
+            update={
+                "generated_at": generated_at,
+                "setup_rows": setup_rows,
+                "warnings": list(dict.fromkeys(warnings)),
+            }
+        )
+
+    def _load_ticker_data(
+        self,
+        symbol: str,
+        benchmark_cache: dict[str, float | None],
+        *,
+        include_earnings: bool = True,
+    ) -> TickerScanData:
         warnings: list[str] = []
         daily = self.market_data.download_scanner_daily_history(symbol)
         minute = self.market_data.download_today_minute_history(symbol)
@@ -331,7 +340,7 @@ class ScannerService:
         previous_session = self.market_data.previous_regular_session(five_minute, warnings)
         pivots = self.market_data.pivot_points(previous)
         fibs = self.market_data.fibonacci_levels(monthly_high, monthly_low)
-        earnings = self.market_data.earnings_gap(symbol, daily, warnings)
+        earnings = self.market_data.earnings_gap(symbol, daily, warnings) if include_earnings else EarningsGap()
         price = self.market_data.current_price(symbol, minute, warnings)
         today_vwap = self.market_data.today_vwap(minute, warnings)
         previous_vwap = self.market_data.vwap(previous_session, warnings)
@@ -475,6 +484,10 @@ class ScannerService:
             "was not present in daily bars",
             "Earnings gap could not be calculated",
             "earnings gap levels were suppressed",
+            "regular-session intraday bars were returned for today's VWAP",
+            "premarket bars were returned by the data source for today",
+            "intraday bars were returned for today's opening range",
+            "completed daily bars are required for swing levels",
         )
         return any(fragment in message for fragment in optional_fragments)
 
@@ -730,9 +743,7 @@ class ScannerService:
 
     @staticmethod
     def _level_weight(name: str) -> int:
-        if name.startswith("Daily Swing High") or name.startswith("Daily Swing Low"):
-            return 24
-        return LEVEL_TYPE_WEIGHTS.get(name, 5)
+        return level_type_weight(name)
 
     @staticmethod
     def _group_levels_into_zones(levels: list[dict[str, object]], tolerance_pct: float) -> list[dict[str, object]]:

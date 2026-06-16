@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from app.models import (
     DEFAULT_METRICS,
@@ -63,6 +65,69 @@ REPORT_LAYOUT_CATALOG: tuple[ReportLayoutDefinition, ...] = (
 )
 
 DEFAULT_REPORT_LAYOUT: ReportLayoutName = "price_ladder"
+LevelFilterName = Literal["all", "scanner", "weight_20"]
+DEFAULT_LEVEL_FILTER: LevelFilterName = "all"
+LEVEL_FILTER_LABELS: dict[LevelFilterName, str] = {
+    "all": "All Levels",
+    "scanner": "Scanner Levels Only",
+    "weight_20": "Weight 20+ Only",
+}
+LEVEL_FILTER_OPTIONS: tuple[LevelFilterName, ...] = tuple(LEVEL_FILTER_LABELS.keys())
+
+LEVEL_TYPE_WEIGHTS_PATH = Path(__file__).with_name("level_type_weights.json")
+LEVEL_TYPE_WEIGHT_ALIASES = {
+    "VWAP Today": "VWAP (Today)",
+    "Today VWAP": "VWAP (Today)",
+    "Premarket High": "PM High",
+    "Premarket Low": "PM Low",
+    "First 5m High": "5-Min High",
+    "First 5m Low": "5-Min Low",
+    "1M High": "1-Month High",
+    "1M Low": "1-Month Low",
+    "VWAP 5m": "VWAP (Prev Session)",
+    "200 SMA": "200 SMA (Daily)",
+    "50 SMA": "50 SMA (Daily)",
+    "9 EMA 5m": "9 EMA (5-Min)",
+    "20 EMA Daily": "20 EMA (Daily)",
+    "20 EMA 5m": "20 EMA (5-Min)",
+    "R1": "R1 (Pivot)",
+    "S1": "S1 (Pivot)",
+    "R2": "R2 (Pivot)",
+    "S2": "S2 (Pivot)",
+    "Earnings Open": "Earnings Gap Open",
+}
+
+SCANNER_LEVEL_LABELS = {
+    "VWAP (Today)",
+    "VWAP Today",
+    "Today VWAP",
+    "VWAP (Prev Session)",
+    "VWAP 5m",
+    "PM High",
+    "Premarket High",
+    "PM Low",
+    "Premarket Low",
+    "Prev High",
+    "Prev Low",
+    "Prev Close",
+    "5-Min High",
+    "First 5m High",
+    "5-Min Low",
+    "First 5m Low",
+    "1-Month High",
+    "1M High",
+    "1-Month Low",
+    "1M Low",
+    "200 SMA (Daily)",
+    "200 SMA",
+    "50 SMA (Daily)",
+    "50 SMA",
+    "Pivot",
+    "R1 (Pivot)",
+    "R1",
+    "S1 (Pivot)",
+    "S1",
+}
 
 PRIORITY_PRICE_LABELS = {
     "Prev High",
@@ -75,6 +140,53 @@ PRIORITY_PRICE_LABELS = {
     "R1",
     "S1",
 }
+
+
+def normalize_level_filter(level_filter: object) -> LevelFilterName:
+    """Return a supported Levels card filter."""
+    candidate = str(level_filter or "")
+    if candidate in LEVEL_FILTER_LABELS:
+        return candidate  # type: ignore[return-value]
+    return DEFAULT_LEVEL_FILTER
+
+
+def level_filter_label(level_filter: object) -> str:
+    """Return the visible label for a Levels card filter."""
+    return LEVEL_FILTER_LABELS[normalize_level_filter(level_filter)]
+
+
+def load_level_type_weights() -> dict[str, int]:
+    """Load canonical Adam level type weights from the checked-in JSON file."""
+    raw = json.loads(LEVEL_TYPE_WEIGHTS_PATH.read_text(encoding="utf-8"))
+    return {str(label): int(weight) for label, weight in raw.items()}
+
+
+LEVEL_TYPE_WEIGHTS = load_level_type_weights()
+
+
+def level_type_weight(label: str) -> int:
+    """Return Adam-compatible trust weight for a display level label."""
+    if label.startswith(("Daily Swing High", "Daily Swing Low", "Swing Highs", "Swing Lows")):
+        return 24
+    canonical_label = LEVEL_TYPE_WEIGHT_ALIASES.get(label, label)
+    return LEVEL_TYPE_WEIGHTS.get(canonical_label, 5)
+
+
+def is_scanner_level_label(label: str) -> bool:
+    """Return whether a display level is part of scanner support/resistance inputs."""
+    return label in SCANNER_LEVEL_LABELS or label.startswith(
+        ("Daily Swing High", "Daily Swing Low", "Swing Highs", "Swing Lows")
+    )
+
+
+def level_matches_filter(label: str, level_filter: object) -> bool:
+    """Return whether a level label should be shown for the selected filter."""
+    normalized = normalize_level_filter(level_filter)
+    if normalized == "scanner":
+        return is_scanner_level_label(label)
+    if normalized == "weight_20":
+        return level_type_weight(label) >= 20
+    return True
 
 
 def metric_catalog() -> list[MetricDefinition]:

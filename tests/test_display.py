@@ -16,6 +16,10 @@ from app.models import (
 )
 from app.services.display import (
     build_metric_display_sections,
+    is_scanner_level_label,
+    level_matches_filter,
+    load_level_type_weights,
+    level_type_weight,
     metric_catalog,
     metric_definitions_match_defaults,
     report_layout_catalog,
@@ -94,6 +98,30 @@ def test_report_layout_catalog_defaults_to_price_ladder():
 
     assert [layout.id for layout in layouts] == ["grid", "price_ladder", "compact", "compare"]
     assert [layout.id for layout in layouts if layout.default] == ["price_ladder"]
+
+
+def test_level_weights_and_filters_match_adam_semantics():
+    weights = load_level_type_weights()
+
+    assert weights["VWAP (Today)"] == 30
+    assert weights["PM High"] == 28
+    assert weights["Pivot"] == 10
+    assert weights["R1 (Pivot)"] == 10
+    assert level_type_weight("VWAP Today") == 30
+    assert level_type_weight("Premarket High") == 28
+    assert level_type_weight("Swing Highs 1") == 24
+    assert level_type_weight("First 5m Low") == 22
+    assert level_type_weight("1M High") == 20
+    assert level_type_weight("Prev Close") == 16
+    assert level_type_weight("Pivot") == 10
+
+    assert is_scanner_level_label("Prev Close")
+    assert is_scanner_level_label("Swing Lows 2")
+    assert not is_scanner_level_label("R2")
+    assert level_matches_filter("Swing Highs 1", "weight_20")
+    assert not level_matches_filter("Prev Close", "weight_20")
+    assert level_matches_filter("Prev Close", "scanner")
+    assert not level_matches_filter("20 EMA Daily", "scanner")
 
 
 def test_display_rows_include_numeric_and_emphasis_metadata():
