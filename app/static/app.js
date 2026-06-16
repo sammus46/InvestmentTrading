@@ -1628,23 +1628,24 @@ function hydrateTickerChart(ticker) {
   container.textContent = "";
   const seriesData = formatChartSeriesData(chart.points, settings.type, settings.interval);
   const barSpacing = chartBarSpacing(container, seriesData.length);
+  const theme = chartTheme();
 
   const api = LightweightCharts.createChart(container, {
     width: container.clientWidth || 360,
     height: 238,
     layout: {
-      background: { type: "solid", color: "#ffffff" },
-      textColor: "#475569",
+      background: { type: "solid", color: theme.background },
+      textColor: theme.text,
       fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
     },
     grid: {
-      vertLines: { color: "#eef2f7" },
-      horzLines: { color: "#eef2f7" },
+      vertLines: { color: theme.grid },
+      horzLines: { color: theme.grid },
     },
-    rightPriceScale: { borderColor: "#e2e8f0" },
+    rightPriceScale: { borderColor: theme.border },
     timeScale: {
       barSpacing,
-      borderColor: "#e2e8f0",
+      borderColor: theme.border,
       fixLeftEdge: true,
       fixRightEdge: true,
       minBarSpacing: 0.5,
@@ -1653,8 +1654,8 @@ function hydrateTickerChart(ticker) {
     },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: "#94a3b8" },
-      horzLine: { color: "#94a3b8" },
+      vertLine: { color: theme.crosshair },
+      horzLine: { color: theme.crosshair },
     },
   });
   const series = settings.type === "candles"
@@ -1690,6 +1691,29 @@ function hydrateTickerChart(ticker) {
     observer.observe(container);
     chartResizeObservers.set(ticker, observer);
   }
+}
+
+function chartTheme() {
+  if (!isDarkMode()) {
+    return {
+      background: "#ffffff",
+      border: "#e2e8f0",
+      crosshair: "#94a3b8",
+      grid: "#eef2f7",
+      text: "#475569",
+    };
+  }
+  return {
+    background: "#111827",
+    border: "#263241",
+    crosshair: "#64748b",
+    grid: "#1f2937",
+    text: "#94a3b8",
+  };
+}
+
+function isDarkMode() {
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false;
 }
 
 function disposeCharts() {
@@ -1874,13 +1898,17 @@ function formatSignedValue(value) {
 }
 
 function heatmapColor(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return "#f8fafc";
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return isDarkMode() ? "#1f2937" : "#f8fafc";
   const bounded = Math.max(-3, Math.min(3, Number(value)));
   const intensity = Math.abs(bounded) / 3;
   if (bounded < 0) {
-    return `rgba(185, 28, 28, ${0.12 + intensity * 0.62})`;
+    return isDarkMode()
+      ? `rgba(248, 113, 113, ${0.16 + intensity * 0.50})`
+      : `rgba(185, 28, 28, ${0.12 + intensity * 0.62})`;
   }
-  return `rgba(15, 118, 110, ${0.12 + intensity * 0.62})`;
+  return isDarkMode()
+    ? `rgba(45, 212, 191, ${0.16 + intensity * 0.50})`
+    : `rgba(15, 118, 110, ${0.12 + intensity * 0.62})`;
 }
 
 function formatValue(value) {
