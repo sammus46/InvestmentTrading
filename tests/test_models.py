@@ -10,6 +10,10 @@ from app.models import (
     MarketSnapshotRequest,
     MarketSnapshotRow,
     NewsRequest,
+    SectorAnalyticsRequest,
+    SectorAnalyticsResponse,
+    SectorAnalyticsRow,
+    SectorAnalyticsRecommendation,
     TickerChartHistory,
     GenerateRequest,
     DEFAULT_METRICS,
@@ -74,6 +78,42 @@ def test_market_snapshot_request_reuses_watchlist_normalization():
     request = MarketSnapshotRequest(tickers="spy, qqq\nSPY")
 
     assert request.tickers == ["SPY", "QQQ"]
+
+
+def test_sector_analytics_request_reuses_watchlist_normalization():
+    request = SectorAnalyticsRequest(tickers="aapl, msft\nAAPL $tsla brk.b")
+
+    assert request.tickers == ["AAPL", "MSFT", "TSLA", "BRK-B"]
+
+
+def test_sector_analytics_response_accepts_rows_and_recommendations():
+    response = SectorAnalyticsResponse(
+        generated_at=datetime.now(timezone.utc),
+        watchlist=["AAPL", "MSFT"],
+        sector_rows=[
+            SectorAnalyticsRow(
+                sector="Technology",
+                etf="XLK",
+                ticker_count=2,
+                weight_percent=100.0,
+                tickers=["AAPL", "MSFT"],
+                recommendation_tone="focus",
+                recommendation_text="Technology is showing better readiness.",
+            )
+        ],
+        recommendations=[
+            SectorAnalyticsRecommendation(
+                tone="focus",
+                sector="Technology",
+                title="Technology: Focus",
+                message="Technology is showing better readiness.",
+                tickers=["AAPL", "MSFT"],
+            )
+        ],
+    )
+
+    assert response.sector_rows[0].sector == "Technology"
+    assert response.recommendations[0].tone == "focus"
 
 
 def test_market_snapshot_row_accepts_intraday_sparkline_points():

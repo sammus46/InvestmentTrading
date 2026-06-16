@@ -17,6 +17,9 @@ from app.models import (
     PatternSummaryRow,
     ScannerResponse,
     ScannerSetupRow,
+    SectorAnalyticsRecommendation,
+    SectorAnalyticsResponse,
+    SectorAnalyticsRow,
 )
 from app.services.market_data import EASTERN, MARKET_CLOSE, MARKET_OPEN, MarketDataService
 from app.services.display import level_type_weight
@@ -159,6 +162,7 @@ class ScannerLevelData(TypedDict, total=False):
     sector: str
     etf: str | None
     stock_pct: float | None
+    sector_pct: float | None
     rs_vs_spy: float | None
     rs_vs_sector: float | None
     vwap_ext: float | None
@@ -242,6 +246,59 @@ class ScannerService:
             pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector, row.ticker)),
             pattern_details=pattern_details,
             takeaways=self._takeaways(pattern_summary),
+            warnings=warnings,
+        )
+
+    def build_sector_analytics(
+        self,
+        tickers: list[str],
+        *,
+        pattern_lookback_days: int = LOOKBACK_DAYS,
+    ) -> SectorAnalyticsResponse:
+        """Return sector aggregates plus intraday pattern analysis for a watchlist."""
+        watchlist = [ticker.upper().strip() for ticker in tickers if ticker.strip()]
+        warnings: list[str] = []
+        sector_inputs: list[tuple[ScannerLevelData, ScannerSetupRow]] = []
+        pattern_summary: list[PatternSummaryRow] = []
+        pattern_heatmap: list[PatternHeatmapRow] = []
+        pattern_details: list[PatternDayDetail] = []
+
+        self.market_data.prefetch_scanner_downloads(watchlist, include_setup=True, include_patterns=True)
+
+        benchmark_cache: dict[str, float | None] = {}
+        for symbol in watchlist:
+            try:
+                scan_data = self._load_ticker_data(symbol, benchmark_cache, include_earnings=False)
+                sector_inputs.append((scan_data.data, self._setup_row(scan_data)))
+            except Exception as exc:
+                warnings.append(f"Sector setup analytics failed for {symbol}: {exc}")
+
+            try:
+                result = self._pattern_analysis(symbol, pattern_lookback_days)
+                if result is None:
+                    warnings.append(f"No pattern data was returned for {symbol}.")
+                    continue
+                summary, heatmap, details = result
+                pattern_summary.append(summary)
+                pattern_heatmap.append(heatmap)
+                pattern_details.extend(details)
+            except Exception as exc:
+                warnings.append(f"Pattern analysis failed for {symbol}: {exc}")
+
+        sector_rows = self._sector_rows(watchlist, sector_inputs, pattern_summary)
+        recommendations = self._sector_recommendations(sector_rows, len(watchlist))
+        takeaways = self._sector_takeaways(sector_rows) + self._takeaways(pattern_summary)
+        return SectorAnalyticsResponse(
+            generated_at=datetime.now(timezone.utc),
+            watchlist=watchlist,
+            sector_rows=sector_rows,
+            pattern_summary=sorted(pattern_summary, key=lambda row: (row.sector, row.ticker)),
+            pattern_buckets=BUCKETS_ET,
+            pattern_bucket_labels=BUCKET_LABELS,
+            pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector, row.ticker)),
+            pattern_details=pattern_details,
+            recommendations=recommendations,
+            takeaways=takeaways,
             warnings=warnings,
         )
 
@@ -388,6 +445,7 @@ class ScannerService:
             "sector": sector,
             "etf": etf,
             "stock_pct": stock_pct,
+            "sector_pct": sector_pct,
             "rs_vs_spy": round(stock_pct - spy_pct, 2) if stock_pct is not None and spy_pct is not None else None,
             "rs_vs_sector": round(stock_pct - sector_pct, 2)
             if stock_pct is not None and sector_pct is not None
@@ -460,6 +518,161 @@ class ScannerService:
             warnings=warnings,
             data_notes=data_notes,
         )
+
+    @classmethod
+    def _sector_rows(
+        cls,
+        watchlist: list[str],
+        setup_inputs: list[tuple[ScannerLevelData, ScannerSetupRow]],
+        pattern_summary: list[PatternSummaryRow],
+    ) -> list[SectorAnalyticsRow]:
+        patterns_by_sector: dict[str, list[PatternSummaryRow]] = {}
+        for row in pattern_summary:
+            patterns_by_sector.setdefault(row.sector or "Other", []).append(row)
+
+        grouped: dict[str, list[tuple[ScannerLevelData, ScannerSetupRow]]] = {}
+        for data, setup_row in setup_inputs:
+            grouped.setdefault(str(data.get("sector") or "Other"), []).append((data, setup_row))
+
+        for sector, patterns in patterns_by_sector.items():
+            grouped.setdefault(sector, [])
+
+        rows: list[SectorAnalyticsRow] = []
+        total = max(len(watchlist), 1)
+        for sector, entries in grouped.items():
+            tickers = [str(data.get("ticker") or setup_row.ticker) for data, setup_row in entries]
+            if not tickers:
+                tickers = sorted({row.ticker for row in patterns_by_sector.get(sector, [])})
+            patterns = patterns_by_sector.get(sector, [])
+            common_low_times = cls._common_low_times(patterns)
+            average_setup_score = cls._avg([setup_row.score for _, setup_row in entries])
+            average_rs_vs_spy = cls._avg([cls._float(data.get("rs_vs_spy")) for data, _ in entries])
+            average_rs_vs_sector = cls._avg([cls._float(data.get("rs_vs_sector")) for data, _ in entries])
+            average_recovery = cls._avg([row.average_recovery_percent for row in patterns])
+            row = SectorAnalyticsRow(
+                sector=sector,
+                etf=next((str(data.get("etf")) for data, _ in entries if data.get("etf")), None),
+                ticker_count=len(tickers),
+                weight_percent=round((len(tickers) / total) * 100, 1),
+                tickers=tickers,
+                average_day_change_percent=cls._avg([cls._float(data.get("stock_pct")) for data, _ in entries]),
+                sector_etf_day_change_percent=cls._avg([cls._float(data.get("sector_pct")) for data, _ in entries]),
+                average_rs_vs_spy_percent=average_rs_vs_spy,
+                average_rs_vs_sector_percent=average_rs_vs_sector,
+                average_setup_score=average_setup_score,
+                strong_setup_count=sum(1 for _, setup_row in entries if setup_row.score is not None and setup_row.score >= 5),
+                average_pattern_consistency_percent=cls._avg([row.consistency_percent for row in patterns]),
+                average_dip_percent=cls._avg([row.average_dip_percent for row in patterns]),
+                average_recovery_percent=average_recovery,
+                common_low_times=common_low_times,
+                recommendation_tone=cls._sector_tone(average_rs_vs_spy, average_setup_score, average_recovery),
+                recommendation_text="",
+            )
+            row.recommendation_text = cls._sector_recommendation_text(row)
+            rows.append(row)
+        return sorted(rows, key=lambda row: (-row.weight_percent, row.sector))
+
+    @classmethod
+    def _sector_recommendations(
+        cls,
+        sector_rows: list[SectorAnalyticsRow],
+        watchlist_count: int,
+    ) -> list[SectorAnalyticsRecommendation]:
+        recommendations: list[SectorAnalyticsRecommendation] = []
+        for row in sector_rows:
+            recommendations.append(
+                SectorAnalyticsRecommendation(
+                    tone=row.recommendation_tone,
+                    sector=row.sector,
+                    title=f"{row.sector}: {row.recommendation_tone.title()}",
+                    message=row.recommendation_text,
+                    tickers=row.tickers,
+                )
+            )
+        if watchlist_count:
+            concentrated = [row for row in sector_rows if row.weight_percent > 50]
+            for row in concentrated:
+                recommendations.insert(
+                    0,
+                    SectorAnalyticsRecommendation(
+                        tone="note",
+                        sector=row.sector,
+                        title=f"{row.sector} concentration",
+                        message=(
+                            f"{row.sector} represents {row.weight_percent:.1f}% of the watchlist, "
+                            "so broad sector moves may dominate the list."
+                        ),
+                        tickers=row.tickers,
+                    ),
+                )
+        return recommendations
+
+    @classmethod
+    def _sector_takeaways(cls, sector_rows: list[SectorAnalyticsRow]) -> list[str]:
+        if not sector_rows:
+            return []
+        strongest = max(sector_rows, key=lambda row: row.average_rs_vs_spy_percent if row.average_rs_vs_spy_percent is not None else -999)
+        most_concentrated = max(sector_rows, key=lambda row: row.weight_percent)
+        takeaways = [
+            f"{most_concentrated.sector} has the largest watchlist weight at {most_concentrated.weight_percent:.1f}%.",
+        ]
+        if strongest.average_rs_vs_spy_percent is not None:
+            takeaways.append(
+                f"{strongest.sector} has the strongest average watchlist RS vs SPY at {strongest.average_rs_vs_spy_percent:+.2f}%."
+            )
+        return takeaways
+
+    @staticmethod
+    def _avg(values: list[float | int | None]) -> float | None:
+        numbers = [float(value) for value in values if value is not None]
+        return round(sum(numbers) / len(numbers), 2) if numbers else None
+
+    @staticmethod
+    def _sector_tone(
+        average_rs_vs_spy: float | None,
+        average_setup_score: float | None,
+        average_recovery: float | None,
+    ) -> str:
+        if (
+            (average_rs_vs_spy is not None and average_rs_vs_spy > 0)
+            or (average_setup_score is not None and average_setup_score >= 5)
+            or (average_recovery is not None and average_recovery >= 0.5)
+        ):
+            return "focus"
+        if (
+            average_rs_vs_spy is not None
+            and average_rs_vs_spy < 0
+            and (average_setup_score is None or average_setup_score < 3)
+            and (average_recovery is None or average_recovery < 0.25)
+        ):
+            return "wait"
+        return "watch"
+
+    @staticmethod
+    def _sector_recommendation_text(row: SectorAnalyticsRow) -> str:
+        if row.recommendation_tone == "focus":
+            return (
+                f"{row.sector} is showing better readiness through relative strength, setup quality, "
+                "or pattern recovery across the covered tickers."
+            )
+        if row.recommendation_tone == "wait":
+            return (
+                f"{row.sector} is lagging on relative strength and does not yet show broad setup confirmation."
+            )
+        return f"{row.sector} is mixed; keep it on watch until relative strength or setup quality becomes clearer."
+
+    @staticmethod
+    def _common_low_times(rows: list[PatternSummaryRow]) -> list[str]:
+        counter: Counter[str] = Counter()
+        for row in rows:
+            for item in row.top_low_times:
+                label, _, count_text = item.partition(" (")
+                try:
+                    count = int(count_text.rstrip("x)")) if count_text else 1
+                except ValueError:
+                    count = 1
+                counter[label] += count
+        return [f"{time} ({count}x)" for time, count in counter.most_common(3)]
 
     @classmethod
     def _split_scanner_messages(cls, warnings: list[str]) -> tuple[list[str], list[str]]:

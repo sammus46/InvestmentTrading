@@ -37,6 +37,7 @@ from app.models import (
     NewsResponse,
     ScannerRequest,
     ScannerResponse,
+    SectorAnalyticsResponse,
     TickerChartHistory,
     normalize_ticker_symbol,
     split_ticker_candidates,
@@ -50,6 +51,7 @@ from app.services.display import (
     DEFAULT_REPORT_LAYOUT,
     LEVEL_FILTER_OPTIONS,
     level_filter_label,
+    level_type_weight_defaults,
     normalize_level_filter,
     report_layout_catalog,
 )
@@ -58,6 +60,9 @@ from app.streamlit_ui.metrics import metric_card_html, metric_rows, render_metri
 
 NEWS_COLLAPSED_HEADLINE_COUNT = 5
 NEWS_EXPANDED_HEADLINE_COUNT = 10
+NEWS_MAX_HEADLINE_COUNT = 20
+LEVEL_WEIGHT_MIN = 0
+LEVEL_WEIGHT_MAX = 50
 NEWS_CATEGORY_LABELS = {
     "rating_changes": "Price Rating Changes",
     "contracts": "Company Contract Announcements",
@@ -71,7 +76,7 @@ AUTO_REFRESH_SECONDS = 60
 STREAMLIT_REPORT_BATCH_SIZE = 3
 REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
-STREAMLIT_DATASETS = ("report", "scanner", "news", "market_snapshot", "chart")
+STREAMLIT_DATASETS = ("report", "scanner", "sector_analytics", "news", "market_snapshot", "chart")
 LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
     Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
 )
@@ -82,6 +87,20 @@ ScannerBatchLoader = Callable[[tuple[str, ...], int], ScannerResponse]
 
 LEVELS_VIEW = "Investment Trading Levels"
 NEWS_VIEW = "Stock News"
+ANALYTICS_VIEW = "Sector Analytics"
+STREAMLIT_VIEWS = (LEVELS_VIEW, NEWS_VIEW, ANALYTICS_VIEW)
+STREAMLIT_DEFAULT_SETTINGS = {
+    "default_view": LEVELS_VIEW,
+    "report_layout": DEFAULT_REPORT_LAYOUT,
+    "level_filter": DEFAULT_LEVEL_FILTER,
+    "level_weights": {},
+    "chart_type": "Line",
+    "chart_range": "1D",
+    "chart_interval": "5m",
+    "auto_load": True,
+    "auto_refresh": True,
+    "news_per_ticker": NEWS_EXPANDED_HEADLINE_COUNT,
+}
 
 
 @dataclass(frozen=True)
@@ -233,8 +252,15 @@ def build_market_snapshot(tickers: tuple[str, ...], refresh_token: int = 0) -> M
 
 @st.cache_data(ttl=120, show_spinner=False)
 def build_scanner(tickers: tuple[str, ...], refresh_token: int = 0) -> ScannerResponse:
-    """Run setup scanner and intraday pattern analysis."""
-    return scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=True)
+    """Run setup scanner rows."""
+    return scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=False)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def build_sector_analytics(tickers: tuple[str, ...], refresh_token: int = 0) -> SectorAnalyticsResponse:
+    """Run sector trend and intraday pattern analytics."""
+    del refresh_token
+    return scanner_service().build_sector_analytics(list(tickers))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -288,27 +314,136 @@ def streamlit_state_path() -> Path:
     return Path.home() / ".investment_trading" / "streamlit_state.json"
 
 
-def load_streamlit_watchlist(path: Path | None = None) -> list[str]:
-    """Load a persisted Streamlit watchlist, falling back quietly to empty."""
+def load_streamlit_state(path: Path | None = None) -> dict[str, Any]:
+    """Load persisted Streamlit app state, falling back quietly to defaults."""
     state_path = path or streamlit_state_path()
     try:
         data = json.loads(state_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def normalize_news_count(value: object) -> int:
+    """Return a supported per-ticker news headline count."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return NEWS_EXPANDED_HEADLINE_COUNT
+    return max(1, min(NEWS_MAX_HEADLINE_COUNT, count))
+
+
+def normalize_chart_type(value: object) -> str:
+    """Return a supported Streamlit chart type label."""
+    candidate = str(value or "")
+    return candidate if candidate in CHART_TYPE_OPTIONS else str(STREAMLIT_DEFAULT_SETTINGS["chart_type"])
+
+
+def normalize_chart_range(value: object) -> ChartRange:
+    """Return a supported chart range."""
+    candidate = str(value or "")
+    return candidate if candidate in CHART_INTERVALS_BY_RANGE else STREAMLIT_DEFAULT_SETTINGS["chart_range"]  # type: ignore[return-value]
+
+
+def normalize_chart_interval(chart_range: ChartRange, value: object) -> ChartInterval:
+    """Return a supported interval for the selected chart range."""
+    candidate = str(value or "")
+    options = CHART_INTERVALS_BY_RANGE[chart_range]
+    return candidate if candidate in options else CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]  # type: ignore[return-value]
+
+
+def normalize_level_weight(value: object) -> int | None:
+    """Return a supported custom level weight."""
+    try:
+        number = round(float(value))
+    except (TypeError, ValueError):
+        return None
+    return max(LEVEL_WEIGHT_MIN, min(LEVEL_WEIGHT_MAX, number))
+
+
+def normalize_level_weights(value: object) -> dict[str, int]:
+    """Normalize custom level weight overrides and drop stale/default values."""
+    if not isinstance(value, dict):
+        return {}
+    defaults = level_type_weight_defaults()
+    normalized: dict[str, int] = {}
+    for label, raw_weight in value.items():
+        if label not in defaults:
+            continue
+        weight = normalize_level_weight(raw_weight)
+        if weight is None or weight == defaults[label]:
+            continue
+        normalized[str(label)] = weight
+    return normalized
+
+
+def active_streamlit_level_weights() -> dict[str, int]:
+    """Return default Streamlit level weights with session overrides applied."""
+    return {
+        **level_type_weight_defaults(),
+        **normalize_level_weights(st.session_state.get("level_weights", {})),
+    }
+
+
+def normalize_streamlit_settings(value: object) -> dict[str, Any]:
+    """Normalize persisted Streamlit settings and backfill missing keys."""
+    source = value if isinstance(value, dict) else {}
+    default_view = str(source.get("default_view") or STREAMLIT_DEFAULT_SETTINGS["default_view"])
+    chart_range = normalize_chart_range(source.get("chart_range"))
+    return {
+        "default_view": default_view if default_view in STREAMLIT_VIEWS else STREAMLIT_DEFAULT_SETTINGS["default_view"],
+        "report_layout": normalize_report_layout(source.get("report_layout")),
+        "level_filter": normalize_level_filter(source.get("level_filter")),
+        "level_weights": normalize_level_weights(source.get("level_weights")),
+        "chart_type": normalize_chart_type(source.get("chart_type")),
+        "chart_range": chart_range,
+        "chart_interval": normalize_chart_interval(chart_range, source.get("chart_interval")),
+        "auto_load": bool(source.get("auto_load", STREAMLIT_DEFAULT_SETTINGS["auto_load"])),
+        "auto_refresh": bool(source.get("auto_refresh", STREAMLIT_DEFAULT_SETTINGS["auto_refresh"])),
+        "news_per_ticker": normalize_news_count(source.get("news_per_ticker")),
+    }
+
+
+def load_streamlit_settings(path: Path | None = None) -> dict[str, Any]:
+    """Load persisted Streamlit settings while supporting old watchlist-only files."""
+    return normalize_streamlit_settings(load_streamlit_state(path).get("settings", {}))
+
+
+def save_streamlit_state(
+    tickers: list[str] | None = None,
+    settings: dict[str, Any] | None = None,
+    path: Path | None = None,
+) -> None:
+    """Persist Streamlit watchlist and settings to a small server-side JSON file."""
+    state_path = path or streamlit_state_path()
+    existing = load_streamlit_state(state_path)
+    watchlist_source = tickers if tickers is not None else existing.get("watchlist", [])
+    settings_source = settings if settings is not None else existing.get("settings", {})
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "watchlist": normalize_ticker_list(watchlist_source),
+        "settings": normalize_streamlit_settings(settings_source),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_streamlit_watchlist(path: Path | None = None) -> list[str]:
+    """Load a persisted Streamlit watchlist, falling back quietly to empty."""
+    data = load_streamlit_state(path)
+    if not data:
         return []
     return normalize_ticker_list(data.get("watchlist", []))
 
 
 def save_streamlit_watchlist(tickers: list[str], path: Path | None = None) -> None:
     """Persist the Streamlit watchlist to a small server-side JSON file."""
-    state_path = path or streamlit_state_path()
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "watchlist": normalize_ticker_list(tickers),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    save_streamlit_state(tickers=tickers, path=path)
+
+
+def save_streamlit_settings(settings: dict[str, Any], path: Path | None = None) -> None:
+    """Persist Streamlit settings while preserving the saved watchlist."""
+    save_streamlit_state(settings=settings, path=path)
 
 
 def refresh_bucket(now: datetime | None = None, interval_seconds: int = AUTO_REFRESH_SECONDS) -> int:
@@ -341,7 +476,8 @@ def dataset_refresh_token(dataset: str) -> int:
 
 def streamlit_theme_type() -> str:
     """Return Streamlit's resolved light/dark theme for this browser session."""
-    theme_type = getattr(st.context.theme, "type", None)
+    theme_type = getattr(getattr(st, "context", None), "theme", None)
+    theme_type = getattr(theme_type, "type", None)
     return "dark" if theme_type == "dark" else "light"
 
 
@@ -417,8 +553,7 @@ def bump_streamlit_refresh_token(
 
 def render_app_chrome() -> str:
     """Render app-level brand/navigation and return the active view."""
-    if "active_view" not in st.session_state:
-        st.session_state.active_view = LEVELS_VIEW
+    ensure_streamlit_settings()
 
     st.markdown(
         f'<span class="streamlit-theme-marker" data-app-theme="{streamlit_theme_type()}"></span>',
@@ -1057,6 +1192,59 @@ def render_app_chrome() -> str:
             position: sticky;
             top: 0;
             z-index: 30;
+          }
+          div[data-testid="stHorizontalBlock"]:has(.streamlit-brand-ribbon-marker) {
+            align-items: center;
+            background: rgba(255, 255, 255, 0.96);
+            border-bottom: 1px solid #d5ddd9;
+            margin: -0.75rem 0 0;
+            min-height: 4.25rem;
+            padding: 0 0.75rem;
+            position: sticky;
+            top: 0;
+            z-index: 30;
+          }
+          div[data-testid="stHorizontalBlock"]:has(.streamlit-brand-ribbon-marker) [data-testid="stButton"] button {
+            align-items: center;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.55rem;
+            box-shadow: none;
+            color: #12312f;
+            display: inline-flex;
+            font-size: 1rem;
+            height: 2.65rem;
+            justify-content: center;
+            min-height: 2.65rem;
+            padding: 0;
+          }
+          .streamlit-settings-panel-marker {
+            display: none !important;
+          }
+          div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker) {
+            background: #ffffff;
+            border-left: 1px solid #d5ddd9;
+            box-shadow: -18px 0 48px rgba(17, 24, 39, 0.18);
+            gap: 0.85rem;
+            height: calc(100vh - 4.25rem);
+            max-width: calc(100vw - 2rem);
+            overflow-y: auto;
+            padding: 1rem;
+            position: fixed;
+            right: 0;
+            top: 4.25rem;
+            width: 24rem;
+            z-index: 100002;
+          }
+          div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker) [data-testid="stButton"] button {
+            min-height: 2.25rem;
+            padding: 0.35rem 0.65rem;
+          }
+          .streamlit-settings-title {
+            color: #111827;
+            font-size: 1.35rem;
+            font-weight: 900;
+            margin: 0;
           }
           div[data-testid="stHorizontalBlock"]:has(.streamlit-nav-marker) {
             margin: 0 0 1rem;
@@ -1760,6 +1948,7 @@ def render_app_chrome() -> str:
             }
             body:has(.streamlit-theme-marker) header[data-testid="stHeader"],
             body:has(.streamlit-theme-marker) .streamlit-brand-ribbon,
+            body:has(.streamlit-theme-marker) div[data-testid="stHorizontalBlock"]:has(.streamlit-brand-ribbon-marker),
             body:has(.streamlit-theme-marker) div[data-testid="stHorizontalBlock"]:has(.streamlit-nav-marker) {
               background: color-mix(in srgb, var(--surface-bg) 96%, transparent) !important;
               border-color: var(--border) !important;
@@ -1776,6 +1965,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .streamlit-section-panel,
             body:has(.streamlit-theme-marker) .streamlit-report-panel,
             body:has(.streamlit-theme-marker) .streamlit-scanner-panel,
+            body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker),
             body:has(.streamlit-theme-marker) .compare-wrap,
             body:has(.streamlit-theme-marker) .streamlit-chart-card,
             body:has(.streamlit-theme-marker) .streamlit-ticker-news-card,
@@ -1806,6 +1996,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .streamlit-chart-card h4,
             body:has(.streamlit-theme-marker) .streamlit-ticker-news-title h4,
             body:has(.streamlit-theme-marker) div[data-testid="stExpander"] summary,
+            body:has(.streamlit-theme-marker) .streamlit-settings-title,
             body:has(.streamlit-theme-marker) div[data-testid="stExpander"] summary * {
               color: var(--text) !important;
             }
@@ -1844,6 +2035,7 @@ def render_app_chrome() -> str:
             }
             body:has(.streamlit-theme-marker) div[data-testid="stButton"] button[kind="secondary"],
             body:has(.streamlit-theme-marker) div[data-testid="stDownloadButton"] button[kind="secondary"],
+            body:has(.streamlit-theme-marker) div[data-testid="stHorizontalBlock"]:has(.streamlit-brand-ribbon-marker) [data-testid="stButton"] button,
             body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-testid="stButton"] button:not([kind="primary"]),
             body:has(.streamlit-theme-marker) .streamlit-watchlist-row,
             body:has(.streamlit-theme-marker) .metric-section-title,
@@ -1918,49 +2110,136 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .stApp iframe {
               color-scheme: var(--app-color-scheme, light);
             }
+            .streamlit-top-nav {
+              display: contents;
+            }
+            .streamlit-nav-marker {
+              display: none !important;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] {
+              align-items: center;
+              background: color-mix(in srgb, var(--surface-bg) 90%, transparent);
+              border: 1px solid var(--border);
+              border-radius: 999px;
+              box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 28px rgba(15, 23, 42, 0.12);
+              display: inline-flex;
+              gap: 0.25rem;
+              max-width: 100%;
+              overflow-x: auto;
+              padding: 0.2rem;
+              width: fit-content;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label {
+              align-items: center;
+              border: 1px solid transparent;
+              border-radius: 999px;
+              color: var(--text-muted);
+              display: inline-flex;
+              flex: 0 0 auto;
+              font-size: 0.92rem;
+              font-weight: 850;
+              justify-content: center;
+              line-height: 1.1;
+              min-height: 1.95rem;
+              min-width: 0;
+              padding: 0.38rem 0.85rem !important;
+              position: relative;
+              transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+              white-space: nowrap;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label:hover {
+              background: var(--surface-soft);
+              border-color: var(--border-soft);
+              color: var(--text);
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label > div:first-child,
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] input[type="radio"] {
+              height: 1px !important;
+              margin: 0 !important;
+              opacity: 0 !important;
+              overflow: hidden !important;
+              pointer-events: none !important;
+              position: absolute !important;
+              width: 1px !important;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label > div:last-child {
+              align-items: center !important;
+              display: inline-flex !important;
+              height: auto !important;
+              min-height: 0 !important;
+              padding: 0 !important;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label > div:last-child > div,
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label p {
+              font-size: 0.92rem !important;
+              line-height: 1.1 !important;
+              margin: 0 !important;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) {
+              background: linear-gradient(135deg, var(--brand-deep), var(--brand));
+              border-color: color-mix(in srgb, var(--brand-border) 70%, transparent);
+              box-shadow: 0 8px 18px rgba(15, 118, 110, 0.24);
+              color: #ffffff !important;
+              font-weight: 900;
+            }
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) *,
+            body:has(.streamlit-theme-marker) div[role="radiogroup"] label:has(input:checked) p {
+              color: #ffffff !important;
+            }
 	        </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        """
-        <div class="streamlit-brand-ribbon">
-          <div class="streamlit-brand">
-            <span class="brand-mark">IT</span>
-            <span class="brand-name">Investment Trading</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    brand_col, settings_col = st.columns([1, 0.08], vertical_alignment="center")
+    with brand_col:
+        st.markdown(
+            """
+            <span class="streamlit-brand-ribbon-marker"></span>
+            <div class="streamlit-brand">
+              <span class="brand-mark">IT</span>
+              <span class="brand-name">Investment Trading</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with settings_col:
+        st.button(
+            ":material/settings:",
+            key="streamlit-settings-toggle",
+            help="Open settings",
+            use_container_width=True,
+            on_click=toggle_streamlit_settings_panel,
+        )
+
+    st.markdown('<div class="streamlit-top-nav"><span class="streamlit-nav-marker"></span>', unsafe_allow_html=True)
+    active_view = st.radio(
+        "Primary view",
+        STREAMLIT_VIEWS,
+        key="active_view",
+        horizontal=True,
+        label_visibility="collapsed",
+        on_change=persist_session_settings,
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    nav_spacer, levels_col, news_col = st.columns([2.2, 1, 1], vertical_alignment="center")
-    with nav_spacer:
-        st.markdown('<span class="streamlit-nav-marker"></span>', unsafe_allow_html=True)
-    with levels_col:
-        st.button(
-            "Trading Levels",
-            type="primary" if st.session_state.active_view == LEVELS_VIEW else "secondary",
-            width="stretch",
-            on_click=set_active_view,
-            args=(LEVELS_VIEW,),
-        )
-    with news_col:
-        st.button(
-            "Stock News",
-            type="primary" if st.session_state.active_view == NEWS_VIEW else "secondary",
-            width="stretch",
-            on_click=set_active_view,
-            args=(NEWS_VIEW,),
-        )
-
-    return str(st.session_state.active_view)
+    return str(active_view)
 
 
 def set_active_view(view: str) -> None:
     """Persist the active Streamlit view."""
     st.session_state.active_view = view
+    persist_session_settings()
+
+
+def toggle_streamlit_settings_panel() -> None:
+    """Toggle the left-side Streamlit settings panel."""
+    st.session_state.settings_panel_open = not bool(st.session_state.get("settings_panel_open", False))
+
+
+def close_streamlit_settings_panel() -> None:
+    """Close the left-side Streamlit settings panel."""
+    st.session_state.settings_panel_open = False
 
 
 def chart_history_frame(chart: TickerChartHistory) -> pd.DataFrame:
@@ -2596,7 +2875,8 @@ def render_categorized_articles(articles: list[NewsArticle]) -> None:
 def ticker_news_body_html(ticker_group: Any, expanded: bool = False) -> str:
     """Return one watchlist news card body for collapsed or expanded state."""
     articles = list(ticker_group.articles or [])
-    visible_count = NEWS_EXPANDED_HEADLINE_COUNT if expanded else NEWS_COLLAPSED_HEADLINE_COUNT
+    configured_count = normalize_news_count(st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT))
+    visible_count = configured_count if expanded else min(NEWS_COLLAPSED_HEADLINE_COUNT, configured_count)
     visible_articles = articles[:visible_count]
     warnings = "".join(f'<div class="inline-warning">{escape(warning)}</div>' for warning in ticker_group.warnings)
 
@@ -2732,6 +3012,12 @@ def signed_pct_fmt(value: float | None) -> str:
     return f"{value:+.2f}%"
 
 
+def pct_fmt(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}%"
+
+
 def render_snapshot_grid(snapshot: MarketSnapshotResponse | None) -> None:
     """Render major market and watchlist day-to-date cards."""
     if snapshot is None:
@@ -2842,68 +3128,121 @@ def render_scanner_global_notes(label: str, messages: list[str], *, expanded: bo
 
 
 def render_scanner(report: ScannerResponse) -> None:
-    """Render setup scanner and intraday pattern analysis."""
+    """Render setup scanner rows."""
     visible_warnings, pattern_notes = split_scanner_global_messages(report.warnings)
     for warning in visible_warnings:
         st.warning(warning)
     render_scanner_global_notes("scanner pattern note(s)", pattern_notes)
 
-    setup_tab, pattern_tab = st.tabs(["Setup Scanner", "Intraday Pattern Analysis"])
-    with setup_tab:
-        if not report.setup_rows:
-            st.info("No setup scanner rows were returned.")
-        else:
-            st.dataframe(
-                styled_scanner_setup_frame(report),
-                width="stretch",
-                hide_index=True,
-                row_height=42,
-                height=dataframe_height(len(report.setup_rows), row_height=42),
-            )
-            row_warnings = [(row.ticker, warning) for row in report.setup_rows for warning in row.warnings]
-            render_scanner_message_notes("scanner warning(s)", row_warnings)
-            data_notes = [(row.ticker, note) for row in report.setup_rows for note in row.data_notes]
-            render_scanner_message_notes("scanner data note(s)", data_notes)
+    if not report.setup_rows:
+        st.info("No setup scanner rows were returned.")
+        return
+        st.dataframe(
+            styled_scanner_setup_frame(report),
+            use_container_width=True,
+        hide_index=True,
+        row_height=42,
+        height=dataframe_height(len(report.setup_rows), row_height=42),
+    )
+    row_warnings = [(row.ticker, warning) for row in report.setup_rows for warning in row.warnings]
+    render_scanner_message_notes("scanner warning(s)", row_warnings)
+    data_notes = [(row.ticker, note) for row in report.setup_rows for note in row.data_notes]
+    render_scanner_message_notes("scanner data note(s)", data_notes)
 
-    with pattern_tab:
-        if not report.pattern_summary:
-            st.info("No intraday pattern analysis was returned.")
-            return
-        st.subheader("Pattern Summary")
-        st.dataframe(
-            pattern_summary_frame(report),
-            width="stretch",
-            hide_index=True,
-            row_height=40,
-            height=dataframe_height(len(report.pattern_summary), row_height=40),
-        )
-        st.subheader("5-Min Heatmap")
-        st.caption("Average percent from open by 5-minute ET bucket. Negative values mark below-open periods.")
-        heatmap_frame = pattern_heatmap_frame(report)
-        st.dataframe(
-            heatmap_frame,
-            width="stretch",
-            hide_index=True,
-            row_height=40,
-            height=dataframe_height(len(heatmap_frame), row_height=40),
-        )
-        st.subheader("Per-Ticker Detail")
-        for ticker in sorted({detail.ticker for detail in report.pattern_details}):
-            rows = [detail for detail in report.pattern_details if detail.ticker == ticker]
-            with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
-                st.dataframe(
-                    pattern_detail_frame(rows),
-                    width="stretch",
-                    hide_index=True,
-                    row_height=40,
-                    height=dataframe_height(len(rows), row_height=40),
+
+def render_pattern_analysis(report: Any) -> None:
+    """Render intraday pattern sections shared by analytics surfaces."""
+    if not report.pattern_summary:
+        st.info("No intraday pattern analysis was returned.")
+        return
+    st.subheader("Pattern Summary")
+    st.dataframe(
+        pattern_summary_frame(report),
+        use_container_width=True,
+        hide_index=True,
+        row_height=40,
+        height=dataframe_height(len(report.pattern_summary), row_height=40),
+    )
+    st.subheader("5-Min Heatmap")
+    st.caption("Average percent from open by 5-minute ET bucket. Negative values mark below-open periods.")
+    heatmap_frame = pattern_heatmap_frame(report)
+    st.dataframe(
+        heatmap_frame,
+        use_container_width=True,
+        hide_index=True,
+        row_height=40,
+        height=dataframe_height(len(heatmap_frame), row_height=40),
+    )
+    st.subheader("Per-Ticker Detail")
+    for ticker in sorted({detail.ticker for detail in report.pattern_details}):
+        rows = [detail for detail in report.pattern_details if detail.ticker == ticker]
+        with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
+            st.dataframe(
+                pattern_detail_frame(rows),
+                use_container_width=True,
+                hide_index=True,
+                row_height=40,
+                height=dataframe_height(len(rows), row_height=40),
+            )
+    st.subheader("Key Takeaways")
+    if report.takeaways:
+        for takeaway in report.takeaways:
+            st.markdown(f'<div class="streamlit-takeaway">{escape(takeaway)}</div>', unsafe_allow_html=True)
+    else:
+        st.info("No strong recurring pattern takeaways were found.")
+
+
+def render_sector_analytics(report: SectorAnalyticsResponse) -> None:
+    """Render sector analytics and intraday pattern sections."""
+    for warning in report.warnings:
+        if not warning.startswith("No pattern data was returned for "):
+            st.warning(warning)
+    pattern_notes = [warning for warning in report.warnings if warning.startswith("No pattern data was returned for ")]
+    render_scanner_global_notes("pattern data note(s)", pattern_notes)
+
+    st.subheader("Sector Coverage")
+    if report.sector_rows:
+        coverage_cards = []
+        for row in report.sector_rows:
+            coverage_cards.append(
+                (
+                    '<article class="streamlit-market-tile">'
+                    f"<h4>{escape(row.sector)}</h4>"
+                    f'<div class="streamlit-market-price">{row.weight_percent:.1f}%</div>'
+                    f'<div class="streamlit-market-change">{row.ticker_count} ticker{"s" if row.ticker_count != 1 else ""}: '
+                    f"{escape(', '.join(row.tickers))}</div>"
+                    "</article>"
                 )
-        st.subheader("Key Takeaways")
-        if report.takeaways:
-            for takeaway in report.takeaways:
-                st.markdown(f'<div class="streamlit-takeaway">{escape(takeaway)}</div>', unsafe_allow_html=True)
-        else:
-            st.info("No strong recurring pattern takeaways were found.")
+            )
+        st.markdown(f'<div class="streamlit-market-grid">{"".join(coverage_cards)}</div>', unsafe_allow_html=True)
+    else:
+        st.info("No sector coverage was returned.")
+
+    st.subheader("Recommendations")
+    if report.recommendations:
+        for item in report.recommendations:
+            tickers = f" ({', '.join(item.tickers)})" if item.tickers else ""
+            st.markdown(
+                f'<div class="streamlit-takeaway"><strong>{escape(item.title)}</strong>{escape(tickers)}<br>{escape(item.message)}</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No sector recommendations were returned.")
+
+    st.subheader("Sector Trends")
+    if report.sector_rows:
+        st.dataframe(
+            sector_analytics_frame(report),
+            use_container_width=True,
+            hide_index=True,
+            row_height=40,
+            height=dataframe_height(len(report.sector_rows), row_height=40),
+        )
+    else:
+        st.info("No sector trend rows were returned.")
+
+    st.subheader("Intraday Pattern Analysis")
+    render_pattern_analysis(report)
 
 
 def dataframe_height(row_count: int, row_height: int = 40, min_height: int = 160, max_height: int = 520) -> int:
@@ -3003,6 +3342,34 @@ def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
     )
 
 
+def sector_analytics_frame(report: SectorAnalyticsResponse) -> pd.DataFrame:
+    """Build a display frame for sector trend analytics."""
+    return pd.DataFrame(
+        [
+            {
+                "Sector": row.sector,
+                "ETF": row.etf or "-",
+                "Weight": f"{row.weight_percent:.1f}%",
+                "Tickers": ", ".join(row.tickers),
+                "Avg Day": signed_pct_fmt(row.average_day_change_percent),
+                "ETF Day": signed_pct_fmt(row.sector_etf_day_change_percent),
+                "RS vs SPY": signed_pct_fmt(row.average_rs_vs_spy_percent),
+                "RS vs Sec": signed_pct_fmt(row.average_rs_vs_sector_percent),
+                "Setup": f"{row.average_setup_score:.2f}" if row.average_setup_score is not None else "-",
+                "Strong": row.strong_setup_count,
+                "Pattern": f"{row.average_pattern_consistency_percent:.2f}%"
+                if row.average_pattern_consistency_percent is not None
+                else "-",
+                "Avg Dip": pct_fmt(row.average_dip_percent),
+                "Recovery": signed_pct_fmt(row.average_recovery_percent),
+                "Low Times": ", ".join(row.common_low_times) or "-",
+                "Read": row.recommendation_tone,
+            }
+            for row in report.sector_rows
+        ]
+    )
+
+
 def pattern_heatmap_frame(report: ScannerResponse) -> pd.DataFrame:
     """Build a wide heatmap frame using existing table rendering."""
     labels = report.pattern_bucket_labels or report.pattern_buckets
@@ -3040,10 +3407,249 @@ def ensure_streamlit_watchlist() -> None:
         st.session_state.watchlist_tickers = load_streamlit_watchlist()
 
 
+def ensure_streamlit_settings() -> None:
+    """Initialize Streamlit session settings from persisted state."""
+    if st.session_state.get("streamlit_settings_loaded"):
+        return
+    settings = load_streamlit_settings()
+    st.session_state.active_view = settings["default_view"]
+    st.session_state.report_layout = settings["report_layout"]
+    st.session_state.level_filter = settings["level_filter"]
+    st.session_state.level_weights = settings["level_weights"]
+    st.session_state["global-chart-type"] = settings["chart_type"]
+    st.session_state.chart_range = settings["chart_range"]
+    st.session_state.chart_interval = settings["chart_interval"]
+    st.session_state.auto_load_saved_watchlist = settings["auto_load"]
+    st.session_state.auto_refresh_enabled = settings["auto_refresh"]
+    st.session_state.news_per_ticker = settings["news_per_ticker"]
+    st.session_state.streamlit_settings_loaded = True
+
+
+def current_streamlit_settings() -> dict[str, Any]:
+    """Return normalized settings from the current Streamlit session."""
+    chart_range = normalize_chart_range(st.session_state.get("chart_range"))
+    return normalize_streamlit_settings(
+        {
+            "default_view": st.session_state.get("active_view", LEVELS_VIEW),
+            "report_layout": st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT),
+            "level_filter": st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER),
+            "level_weights": st.session_state.get("level_weights", {}),
+            "chart_type": st.session_state.get("global-chart-type", "Line"),
+            "chart_range": chart_range,
+            "chart_interval": st.session_state.get("chart_interval", CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]),
+            "auto_load": st.session_state.get("auto_load_saved_watchlist", True),
+            "auto_refresh": st.session_state.get("auto_refresh_enabled", True),
+            "news_per_ticker": st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT),
+        }
+    )
+
+
+def persist_session_settings() -> None:
+    """Persist current Streamlit settings without changing the saved watchlist."""
+    save_streamlit_settings(current_streamlit_settings())
+
+
 def persist_session_watchlist() -> None:
     """Persist the current Streamlit session watchlist."""
     st.session_state.watchlist_tickers = normalize_ticker_list(list(st.session_state.watchlist_tickers))
     save_streamlit_watchlist(list(st.session_state.watchlist_tickers))
+
+
+def streamlit_level_weight_slug(label: str) -> str:
+    """Return a stable widget-key slug for a level weight label."""
+    slug = "".join(char.lower() if char.isalnum() else "_" for char in label).strip("_")
+    return "_".join(part for part in slug.split("_") if part)
+
+
+def streamlit_level_weight_widget_key(label: str, kind: str) -> str:
+    """Return the Streamlit widget key for one level weight control."""
+    return f"streamlit_level_weight_{kind}_{streamlit_level_weight_slug(label)}"
+
+
+def sync_streamlit_level_weight(label: str, source_key: str) -> None:
+    """Persist a custom level weight and sync its paired widget."""
+    defaults = level_type_weight_defaults()
+    if label not in defaults:
+        return
+    weight = normalize_level_weight(st.session_state.get(source_key))
+    if weight is None:
+        return
+
+    next_weights = normalize_level_weights(st.session_state.get("level_weights", {}))
+    if weight == defaults[label]:
+        next_weights.pop(label, None)
+    else:
+        next_weights[label] = weight
+    st.session_state.level_weights = next_weights
+
+    slider_key = streamlit_level_weight_widget_key(label, "slider")
+    number_key = streamlit_level_weight_widget_key(label, "number")
+    st.session_state[slider_key] = weight
+    st.session_state[number_key] = weight
+    persist_session_settings()
+
+
+def reset_streamlit_level_weights() -> None:
+    """Reset Streamlit level weights to backend defaults."""
+    st.session_state.level_weights = {}
+    for label, default_weight in level_type_weight_defaults().items():
+        st.session_state[streamlit_level_weight_widget_key(label, "slider")] = default_weight
+        st.session_state[streamlit_level_weight_widget_key(label, "number")] = default_weight
+    persist_session_settings()
+
+
+def render_streamlit_advanced_controls() -> None:
+    """Render report-only level weight controls in the Streamlit sidebar."""
+    ensure_streamlit_settings()
+    st.session_state.level_weights = normalize_level_weights(st.session_state.get("level_weights", {}))
+    defaults = level_type_weight_defaults()
+    active_weights = active_streamlit_level_weights()
+
+    with st.expander("Advanced Controls", expanded=False):
+        st.button(
+            "Reset weights",
+            key="streamlit-level-weights-reset",
+            use_container_width=True,
+            disabled=not bool(st.session_state.level_weights),
+            on_click=reset_streamlit_level_weights,
+        )
+        for label, default_weight in defaults.items():
+            weight = active_weights[label]
+            slider_key = streamlit_level_weight_widget_key(label, "slider")
+            number_key = streamlit_level_weight_widget_key(label, "number")
+            st.session_state.setdefault(slider_key, weight)
+            st.session_state.setdefault(number_key, weight)
+            if st.session_state[slider_key] != weight:
+                st.session_state[slider_key] = weight
+            if st.session_state[number_key] != weight:
+                st.session_state[number_key] = weight
+
+            slider_col, number_col = st.columns([3, 1], vertical_alignment="center")
+            with slider_col:
+                st.slider(
+                    label,
+                    min_value=LEVEL_WEIGHT_MIN,
+                    max_value=LEVEL_WEIGHT_MAX,
+                    step=1,
+                    key=slider_key,
+                    on_change=sync_streamlit_level_weight,
+                    args=(label, slider_key),
+                )
+            with number_col:
+                st.number_input(
+                    "Weight",
+                    min_value=LEVEL_WEIGHT_MIN,
+                    max_value=LEVEL_WEIGHT_MAX,
+                    step=1,
+                    key=number_key,
+                    label_visibility="collapsed",
+                    on_change=sync_streamlit_level_weight,
+                    args=(label, number_key),
+                )
+            current_weight = active_streamlit_level_weights()[label]
+            if current_weight == default_weight:
+                st.caption(f"Default {default_weight}")
+            else:
+                st.caption(f"Custom, default {default_weight}")
+
+
+def render_streamlit_settings_panel() -> None:
+    """Render persistent Streamlit preferences in a right-side overlay panel."""
+    ensure_streamlit_settings()
+    settings = current_streamlit_settings()
+    st.session_state.settings_default_view = settings["default_view"]
+    st.session_state.settings_report_layout = settings["report_layout"]
+    st.session_state.settings_level_filter = settings["level_filter"]
+    st.session_state.settings_chart_type = settings["chart_type"]
+    st.session_state.settings_chart_range = settings["chart_range"]
+    st.session_state.settings_chart_interval = settings["chart_interval"]
+    st.session_state.settings_auto_load = settings["auto_load"]
+    st.session_state.settings_auto_refresh = settings["auto_refresh"]
+    st.session_state.settings_news_per_ticker = settings["news_per_ticker"]
+
+    with st.container():
+        st.markdown('<span class="streamlit-settings-panel-marker"></span>', unsafe_allow_html=True)
+        title_col, collapse_col = st.columns([1, 0.24], vertical_alignment="center")
+        with title_col:
+            st.markdown('<h2 class="streamlit-settings-title">Settings</h2>', unsafe_allow_html=True)
+        with collapse_col:
+            st.button(
+                "<<",
+                key="streamlit-settings-collapse",
+                help="Collapse settings",
+                use_container_width=True,
+                on_click=close_streamlit_settings_panel,
+            )
+        st.selectbox(
+            "Default view",
+            STREAMLIT_VIEWS,
+            key="settings_default_view",
+        )
+        st.toggle("Auto-load saved watchlist", key="settings_auto_load")
+        st.toggle("Auto-refresh every minute", key="settings_auto_refresh")
+        st.selectbox(
+            "Report view",
+            report_layout_options(),
+            format_func=report_layout_label,
+            key="settings_report_layout",
+        )
+        st.selectbox(
+            "Level filter",
+            LEVEL_FILTER_OPTIONS,
+            format_func=level_filter_label,
+            key="settings_level_filter",
+        )
+        st.radio("Chart type", CHART_TYPE_OPTIONS, horizontal=True, key="settings_chart_type")
+        chart_range = st.selectbox(
+            "Chart range",
+            CHART_RANGE_OPTIONS,
+            key="settings_chart_range",
+            format_func=format_chart_option,
+        )
+        interval_options = CHART_INTERVALS_BY_RANGE[chart_range]
+        if st.session_state.settings_chart_interval not in interval_options:
+            st.session_state.settings_chart_interval = CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]
+        st.selectbox("Chart interval", interval_options, key="settings_chart_interval")
+        st.slider(
+            "Headlines per ticker",
+            min_value=1,
+            max_value=NEWS_MAX_HEADLINE_COUNT,
+            key="settings_news_per_ticker",
+        )
+
+    changed = (
+        settings["default_view"] != st.session_state.settings_default_view
+        or settings["report_layout"] != st.session_state.settings_report_layout
+        or settings["level_filter"] != st.session_state.settings_level_filter
+        or settings["chart_type"] != st.session_state.settings_chart_type
+        or settings["chart_range"] != st.session_state.settings_chart_range
+        or settings["chart_interval"] != st.session_state.settings_chart_interval
+        or settings["auto_load"] != st.session_state.settings_auto_load
+        or settings["auto_refresh"] != st.session_state.settings_auto_refresh
+        or settings["news_per_ticker"] != st.session_state.settings_news_per_ticker
+    )
+    if not changed:
+        return
+
+    st.session_state.active_view = st.session_state.settings_default_view
+    st.session_state.report_layout = st.session_state.settings_report_layout
+    st.session_state.level_filter = st.session_state.settings_level_filter
+    st.session_state["global-chart-type"] = st.session_state.settings_chart_type
+    st.session_state.chart_range = st.session_state.settings_chart_range
+    st.session_state.chart_interval = st.session_state.settings_chart_interval
+    st.session_state.auto_load_saved_watchlist = bool(st.session_state.settings_auto_load)
+    st.session_state.auto_refresh_enabled = bool(st.session_state.settings_auto_refresh)
+    st.session_state.news_per_ticker = normalize_news_count(st.session_state.settings_news_per_ticker)
+    if settings["news_per_ticker"] != st.session_state.news_per_ticker:
+        bump_streamlit_refresh_token("Refreshing news", datasets=("news",))
+    if (
+        settings["chart_type"] != st.session_state["global-chart-type"]
+        or settings["chart_range"] != st.session_state.chart_range
+        or settings["chart_interval"] != st.session_state.chart_interval
+    ):
+        bump_streamlit_refresh_token("Refreshing charts", datasets=("chart",))
+    persist_session_settings()
+    st.rerun()
 
 
 def render_streamlit_watchlist_controls() -> tuple[str, ...]:
@@ -3084,14 +3690,14 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
         key="streamlit_ticker_add_text",
         placeholder="Add ticker symbols",
     )
-    st.button("Add", type="primary", width="stretch", on_click=add_pending_tickers)
+    st.button("Add", type="primary", use_container_width=True, on_click=add_pending_tickers)
     if st.session_state.get("watchlist_validation_message"):
         st.warning(str(st.session_state.watchlist_validation_message))
     if st.button(
         "▶ Run levels + news",
         key="streamlit-sidebar-run",
         type="primary",
-        width="stretch",
+        use_container_width=True,
         disabled=not bool(st.session_state.watchlist_tickers),
         help="Refresh levels, news, scanner, market snapshot, and charts for the saved watchlist.",
     ):
@@ -3132,6 +3738,7 @@ def render_streamlit_watchlist_controls() -> tuple[str, ...]:
             st.rerun()
     if not st.session_state.watchlist_tickers:
         st.caption("No tickers saved.")
+    render_streamlit_advanced_controls()
     return tuple(st.session_state.watchlist_tickers)
 
 
@@ -3139,10 +3746,11 @@ def load_streamlit_data(tickers: tuple[str, ...], metrics: tuple[MetricName, ...
     """Load all Streamlit datasets for the current watchlist."""
     st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
     st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
+    st.session_state.sector_analytics = build_sector_analytics(tickers, refresh_token=refresh_token)
     st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
     st.session_state.news = build_news(
         tickers,
-        per_ticker=NEWS_EXPANDED_HEADLINE_COUNT,
+        per_ticker=normalize_news_count(st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT)),
         refresh_token=refresh_token,
     )
 
@@ -3207,6 +3815,8 @@ def loaded_streamlit_datasets() -> tuple[str, ...]:
         loaded.append("report")
     if st.session_state.get("scanner") is not None:
         loaded.append("scanner")
+    if st.session_state.get("sector_analytics") is not None:
+        loaded.append("sector_analytics")
     if st.session_state.get("news") is not None:
         loaded.append("news")
     if st.session_state.get("market_snapshot") is not None:
@@ -3241,10 +3851,16 @@ def load_streamlit_data_with_banner(
     def load_scanner() -> None:
         st.session_state.scanner = build_scanner(tickers, refresh_token=dataset_refresh_token("scanner"))
 
+    def load_analytics() -> None:
+        st.session_state.sector_analytics = build_sector_analytics(
+            tickers,
+            refresh_token=dataset_refresh_token("sector_analytics"),
+        )
+
     def load_headlines() -> None:
         st.session_state.news = build_news(
             tickers,
-            per_ticker=NEWS_EXPANDED_HEADLINE_COUNT,
+            per_ticker=normalize_news_count(st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT)),
             refresh_token=dataset_refresh_token("news"),
         )
 
@@ -3254,6 +3870,7 @@ def load_streamlit_data_with_banner(
     all_steps: dict[str, RefreshStep] = {
         "report": ("Calculating levels...", load_levels),
         "scanner": ("Running scanner...", load_scanner),
+        "sector_analytics": ("Refreshing sector analytics...", load_analytics),
         "market_snapshot": ("Refreshing market snapshot...", load_snapshot),
         "news": ("Loading headlines...", load_headlines),
     }
@@ -3288,6 +3905,8 @@ def streamlit_autoload_datasets(view: str, *, include_news: bool = False) -> tup
     """Return Streamlit datasets to load for the current view in priority order."""
     if include_news or view == NEWS_VIEW:
         return ("report", "scanner", "market_snapshot", "news")
+    if view == ANALYTICS_VIEW:
+        return ("sector_analytics",)
     return ("report", "scanner")
 
 
@@ -3309,6 +3928,7 @@ def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
         st.session_state.chart_interval = CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]
     with interval_col:
         chart_interval = st.selectbox("Interval", CHART_INTERVALS_BY_RANGE[chart_range], key="chart_interval")
+    persist_session_settings()
     return chart_type, chart_range, chart_interval
 
 
@@ -3332,7 +3952,7 @@ def normalize_report_layout(layout_id: object) -> str:
 def render_report_layout_selector() -> str:
     """Render and persist the Streamlit report layout selector."""
     st.session_state.report_layout = normalize_report_layout(st.session_state.get("report_layout", DEFAULT_REPORT_LAYOUT))
-    return str(
+    selected = str(
         st.selectbox(
             "View",
             report_layout_options(),
@@ -3340,12 +3960,14 @@ def render_report_layout_selector() -> str:
             key="report_layout",
         )
     )
+    persist_session_settings()
+    return selected
 
 
 def render_level_filter_selector() -> str:
     """Render and persist the Streamlit Levels card filter selector."""
     st.session_state.level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
-    return str(
+    selected = str(
         st.selectbox(
             "Level filter",
             LEVEL_FILTER_OPTIONS,
@@ -3357,6 +3979,8 @@ def render_level_filter_selector() -> str:
             ),
         )
     )
+    persist_session_settings()
+    return selected
 
 
 def normalize_level_search(query: object) -> str:
@@ -3453,7 +4077,12 @@ def render_report_panel(
         elif report_search:
             st.caption(f"Showing {len(visible_metrics)} of {len(report.metrics)} ticker(s).")
 
-        render_metric_grid(visible_metrics, report_layout, level_filter=level_filter)
+        render_metric_grid(
+            visible_metrics,
+            report_layout,
+            level_filter=level_filter,
+            level_type_weights=active_streamlit_level_weights(),
+        )
 
         if complete:
             st.divider()
@@ -3468,7 +4097,7 @@ def render_report_panel(
                     file_name=f"equity-levels-{report.generated_at.strftime('%Y%m%d-%H%M%S')}.pdf",
                     mime="application/pdf",
                     type="secondary",
-                    width="stretch",
+                use_container_width=True,
                 )
 
     if complete and visible_metrics and chart_slot is not None:
@@ -3542,7 +4171,7 @@ def load_levels_and_scanner_progressively(
 
     def load_scanner_batch(batch: tuple[str, ...], refresh_token: int) -> ScannerResponse:
         del refresh_token
-        return scanner.build_scanner(list(batch), include_setup=True, include_patterns=True, include_earnings=False)
+        return scanner.build_scanner(list(batch), include_setup=True, include_patterns=False, include_earnings=False)
 
     with refresh_slot.container():
         st.markdown(
@@ -3642,6 +4271,8 @@ def main() -> None:
     """Run the Streamlit application."""
     view = render_app_chrome()
     refresh_banner_slot = st.empty()
+    if st.session_state.get("settings_panel_open"):
+        render_streamlit_settings_panel()
 
     with st.sidebar:
         st.header("Controls")
@@ -3653,6 +4284,8 @@ def main() -> None:
         st.session_state.news = None
     if "scanner" not in st.session_state:
         st.session_state.scanner = None
+    if "sector_analytics" not in st.session_state:
+        st.session_state.sector_analytics = None
     if "market_snapshot" not in st.session_state:
         st.session_state.market_snapshot = None
     if "levels_status" not in st.session_state:
@@ -3668,7 +4301,9 @@ def main() -> None:
         st.session_state.report_layout = DEFAULT_REPORT_LAYOUT
 
     sidebar_run_requested = bool(st.session_state.pop("sidebar_run_requested", False))
-    render_auto_refresh_fragment(bool(tickers), view)
+    auto_refresh_enabled = bool(st.session_state.get("auto_refresh_enabled", True))
+    auto_load_enabled = bool(st.session_state.get("auto_load_saved_watchlist", True))
+    render_auto_refresh_fragment(bool(tickers) and auto_refresh_enabled, view)
     refresh_token = int(st.session_state.streamlit_refresh_token)
     if sidebar_run_requested and tickers:
         refresh_token = bump_streamlit_refresh_token("Refreshing levels and news")
@@ -3678,6 +4313,8 @@ def main() -> None:
         autoload_request = GenerateRequest(tickers=list(tickers), metrics=list(autoload_metrics))
     except ValidationError:
         autoload_request = None
+    if not auto_load_enabled and not sidebar_run_requested and not st.session_state.get("auto_refresh_pending_datasets"):
+        autoload_request = None
 
     if view == LEVELS_VIEW:
         with st.container():
@@ -3686,7 +4323,7 @@ def main() -> None:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Investment Trading Levels")
             with action_col:
-                generate = st.button("Generate Levels", type="primary", width="stretch")
+                generate = st.button("Generate Levels", type="primary", use_container_width=True)
             levels_status_slot = st.empty()
             if st.session_state.levels_status:
                 levels_status_slot.success(st.session_state.levels_status)
@@ -3695,11 +4332,26 @@ def main() -> None:
             with scanner_text_col:
                 st.subheader("Scanner")
             with scanner_action_col:
-                run_scanner = st.button("Run Scanner", type="primary", width="stretch")
+                run_scanner = st.button("Run Scanner", type="primary", use_container_width=True)
         refresh_news = False
+        refresh_analytics = False
         scanner_slot = st.empty()
         report_slot = st.empty()
         chart_slot = st.empty()
+    elif view == ANALYTICS_VIEW:
+        with st.container():
+            heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
+            with heading_col:
+                st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
+                st.title("Sector Analytics")
+            with action_col:
+                refresh_analytics = st.button("Refresh Analytics", type="primary", use_container_width=True)
+        generate = False
+        run_scanner = False
+        refresh_news = False
+        report_slot = None
+        chart_slot = None
+        scanner_slot = None
     else:
         with st.container():
             heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
@@ -3707,9 +4359,10 @@ def main() -> None:
                 st.markdown('<span class="view-hero-marker"></span>', unsafe_allow_html=True)
                 st.title("Stock News")
             with action_col:
-                refresh_news = st.button("Refresh News", type="primary", width="stretch")
+                refresh_news = st.button("Refresh News", type="primary", use_container_width=True)
         generate = False
         run_scanner = False
+        refresh_analytics = False
         report_slot = None
         chart_slot = None
         scanner_slot = None
@@ -3750,7 +4403,10 @@ def main() -> None:
 
     if refresh_news:
         try:
-            request = NewsRequest(tickers=list(tickers), per_ticker=NEWS_EXPANDED_HEADLINE_COUNT)
+            request = NewsRequest(
+                tickers=list(tickers),
+                per_ticker=normalize_news_count(st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT)),
+            )
             snapshot_request = MarketSnapshotRequest(tickers=list(tickers))
         except ValidationError as exc:
             st.error(exc.errors()[0]["msg"])
@@ -3781,6 +4437,33 @@ def main() -> None:
             autoload_metrics,
             refresh_token,
             datasets=("news", "market_snapshot"),
+        )
+
+    if refresh_analytics:
+        try:
+            request = ScannerRequest(tickers=list(tickers))
+        except ValidationError as exc:
+            st.error(exc.errors()[0]["msg"])
+            return
+
+        refresh_token = bump_streamlit_refresh_token("Refreshing sector analytics", datasets=("sector_analytics",))
+
+        def refresh_sector_analytics() -> None:
+            st.session_state.sector_analytics = build_sector_analytics(
+                tuple(request.tickers),
+                refresh_token=dataset_refresh_token("sector_analytics"),
+            )
+
+        run_refresh_steps(
+            refresh_banner_slot,
+            "Refreshing sector analytics",
+            [("Refreshing sector analytics...", refresh_sector_analytics)],
+        )
+        mark_streamlit_data_current(
+            tuple(request.tickers),
+            autoload_metrics,
+            refresh_token,
+            datasets=("sector_analytics",),
         )
 
     if autoload_request is not None:
@@ -3827,6 +4510,7 @@ def main() -> None:
     else:
         st.session_state.report = None
         st.session_state.scanner = None
+        st.session_state.sector_analytics = None
         st.session_state.news = None
         st.session_state.market_snapshot = None
         st.session_state.autoload_key = None
@@ -3838,6 +4522,13 @@ def main() -> None:
         if news is None:
             return
         render_news(news, st.session_state.market_snapshot)
+        return
+
+    if view == ANALYTICS_VIEW:
+        analytics: SectorAnalyticsResponse | None = st.session_state.sector_analytics
+        if analytics is None:
+            return
+        render_sector_analytics(analytics)
         return
 
     report: GenerateResponse | None = st.session_state.report

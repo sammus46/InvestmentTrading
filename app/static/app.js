@@ -7,9 +7,11 @@ const CARD_ORDER_STORAGE_KEY = "equity-levels-card-order";
 const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
 const CHART_SETTINGS_STORAGE_KEY = "equity-levels-chart-settings";
 const REPORT_LAYOUT_STORAGE_KEY = "equity-levels-report-layout";
+const SETTINGS_STORAGE_KEY = "investment-trading-settings-v1";
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
+const AUTO_REFRESH_SECONDS = 60;
 const TICKER_MAX_LENGTH = 20;
 const TICKER_PATTERN = /^(?:\^[A-Z0-9][A-Z0-9-]*|[A-Z0-9][A-Z0-9-]*(?:=[A-Z0-9]+)?)$/;
 
@@ -22,6 +24,55 @@ const NEWS_CATEGORY_LABELS = {
 
 const CHART_TYPES = ["line", "candles"];
 const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
+const LEVEL_WEIGHT_MIN = 0;
+const LEVEL_WEIGHT_MAX = 50;
+let LEVEL_TYPE_WEIGHT_DEFAULTS = {
+  "VWAP (Today)": 30,
+  "PM High": 28,
+  "PM Low": 28,
+  "Prev High": 26,
+  "Prev Low": 26,
+  "Daily Swing High": 24,
+  "Daily Swing Low": 24,
+  "5-Min High": 22,
+  "5-Min Low": 22,
+  "1-Month High": 20,
+  "1-Month Low": 20,
+  "VWAP (Prev Session)": 18,
+  "Prev Close": 16,
+  "200 SMA (Daily)": 16,
+  "50 SMA (Daily)": 14,
+  "9 EMA (5-Min)": 14,
+  "20 EMA (5-Min)": 12,
+  "20 EMA (Daily)": 12,
+  "Pivot": 10,
+  "R1 (Pivot)": 10,
+  "S1 (Pivot)": 10,
+  "R2 (Pivot)": 8,
+  "S2 (Pivot)": 8,
+  "Earnings Gap Open": 8,
+  "Pre-Earnings Close": 8,
+  "Fib 61.8%": 8,
+  "Fib 50.0%": 7,
+  "Fib 38.2%": 6,
+};
+const DEFAULT_SETTINGS = {
+  version: 1,
+  watchlist: [],
+  defaultView: "levels",
+  reportLayout: "grid",
+  levelFilter: "all",
+  levelWeights: {},
+  chartSettings: DEFAULT_CHART_SETTINGS,
+  autoLoad: true,
+  autoRefresh: true,
+  newsPerTicker: NEWS_EXPANDED_HEADLINE_COUNT,
+};
+const LEVEL_FILTERS = [
+  { id: "all", label: "All Levels", shortLabel: "All" },
+  { id: "scanner", label: "Scanner Levels Only", shortLabel: "Scanner" },
+  { id: "weight_20", label: "Weight 20+ Only", shortLabel: "Weight 20+" },
+];
 let RANGE_INTERVALS = {
   "1D": ["1m", "2m", "5m", "15m", "30m", "1h"],
   "WTD": ["1m", "2m", "5m", "15m", "30m", "1h"],
@@ -94,15 +145,21 @@ const runScannerButton = document.querySelector("#run-scanner");
 const scannerStatusEl = document.querySelector("#scanner-status");
 const scannerGeneratedAtEl = document.querySelector("#scanner-generated-at");
 const scannerSetupEl = document.querySelector("#scanner-setup-results");
-const scannerPatternEl = document.querySelector("#scanner-pattern-results");
-const scannerTabButtons = [...document.querySelectorAll("[data-scanner-tab]")];
 const saveStateEl = document.querySelector("#save-state");
 const chartsSectionEl = document.querySelector("#charts-section");
 const viewNavButtons = [...document.querySelectorAll("[data-view]")];
 const viewPanels = {
   levels: document.querySelector("#view-levels"),
   news: document.querySelector("#view-news"),
+  analytics: document.querySelector("#view-analytics"),
 };
+const refreshAnalyticsButton = document.querySelector("#refresh-analytics");
+const analyticsStatusEl = document.querySelector("#analytics-status");
+const analyticsGeneratedAtEl = document.querySelector("#analytics-generated-at");
+const sectorCoverageEl = document.querySelector("#sector-coverage");
+const sectorRecommendationsEl = document.querySelector("#sector-recommendations");
+const sectorTrendsEl = document.querySelector("#sector-trends");
+const analyticsPatternEl = document.querySelector("#analytics-pattern-results");
 const refreshNewsButton = document.querySelector("#refresh-news");
 const newsStatusEl = document.querySelector("#news-status");
 const newsGeneratedAtEl = document.querySelector("#news-generated-at");
@@ -114,22 +171,41 @@ const watchlistPerformanceEl = document.querySelector("#watchlist-performance");
 const xNewsEl = document.querySelector("#x-news");
 const newsInfoButtons = [...document.querySelectorAll("[data-news-info]")];
 const menuToggleButton = document.querySelector("#menu-toggle");
+const settingsToggleButton = document.querySelector("#settings-toggle");
 const controlsDrawerEl = document.querySelector("#controls-drawer");
+const settingsDrawerEl = document.querySelector("#settings-drawer");
 const drawerBackdropEl = document.querySelector("#drawer-backdrop");
 const drawerCloseButton = document.querySelector("#drawer-close");
+const settingsCloseButton = document.querySelector("#settings-close");
+const levelWeightsListEl = document.querySelector("#level-weights-list");
+const resetLevelWeightsButton = document.querySelector("#reset-level-weights");
+const settingsDefaultViewEl = document.querySelector("#setting-default-view");
+const settingsAutoLoadEl = document.querySelector("#setting-auto-load");
+const settingsAutoRefreshEl = document.querySelector("#setting-auto-refresh");
+const settingsReportLayoutEl = document.querySelector("#setting-report-layout");
+const settingsLevelFilterEl = document.querySelector("#setting-level-filter");
+const levelFilterSelectEl = document.querySelector("#level-filter");
+const settingsChartTypeEl = document.querySelector("#setting-chart-type");
+const settingsChartRangeEl = document.querySelector("#setting-chart-range");
+const settingsChartIntervalEl = document.querySelector("#setting-chart-interval");
+const settingsNewsCountEl = document.querySelector("#setting-news-count");
 
 let currentReport = null;
 let currentNews = null;
 let currentScanner = null;
+let currentAnalytics = null;
 let currentMarketSnapshot = null;
 let currentChartHistory = null;
+let appSettings = loadStoredSettings();
 let watchlistTickers = loadStoredWatchlist();
 let scannerSort = { key: "score", direction: "desc" };
 let draggedTicker = null;
 let expandedNewsTickers = new Set();
 let chartSettings = loadStoredChartSettings();
 let reportLayout = loadStoredReportLayout();
+let levelFilter = appSettings.levelFilter;
 let watchlistRefreshTimer = null;
+let autoRefreshTimer = null;
 const chartOverrides = {};
 const chartDataCache = new Map();
 const chartInstances = new Map();
@@ -139,6 +215,7 @@ const requestState = {
   levels: { controller: null, seq: 0 },
   news: { controller: null, seq: 0 },
   scanner: { controller: null, seq: 0 },
+  analytics: { controller: null, seq: 0 },
   snapshot: { controller: null, seq: 0 },
   chart: { controller: null, seq: 0 },
 };
@@ -158,11 +235,20 @@ menuToggleButton.addEventListener("click", () => {
   }
 });
 
+settingsToggleButton.addEventListener("click", () => {
+  if (document.body.classList.contains("settings-open")) {
+    closeSettingsDrawer();
+  } else {
+    openSettingsDrawer();
+  }
+});
+
 drawerCloseButton.addEventListener("click", closeControlsDrawer);
-drawerBackdropEl.addEventListener("click", closeControlsDrawer);
+settingsCloseButton.addEventListener("click", closeSettingsDrawer);
+drawerBackdropEl.addEventListener("click", closeAllDrawers);
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    closeControlsDrawer();
+    closeAllDrawers();
   }
 });
 
@@ -183,6 +269,10 @@ watchlistListEl.addEventListener("click", (event) => {
     moveWatchlistTicker(ticker, 1);
   }
 });
+
+levelWeightsListEl?.addEventListener("input", handleLevelWeightControlInput);
+levelWeightsListEl?.addEventListener("change", handleLevelWeightControlInput);
+resetLevelWeightsButton?.addEventListener("click", resetLevelWeights);
 
 generateButton.addEventListener("click", async () => {
   await loadLevels();
@@ -215,12 +305,62 @@ reportLayoutSelectEl?.addEventListener("change", () => {
   setReportLayout(reportLayoutSelectEl.value);
 });
 
+levelFilterSelectEl?.addEventListener("change", () => {
+  setLevelFilter(levelFilterSelectEl.value);
+});
+
 reportSearchEl?.addEventListener("input", () => {
   renderCurrentReport();
 });
 
+settingsDefaultViewEl?.addEventListener("change", () => {
+  updateSettings({ defaultView: settingsDefaultViewEl.value });
+  switchView(appSettings.defaultView);
+});
+
+settingsAutoLoadEl?.addEventListener("change", () => {
+  updateSettings({ autoLoad: settingsAutoLoadEl.checked });
+});
+
+settingsAutoRefreshEl?.addEventListener("change", () => {
+  updateSettings({ autoRefresh: settingsAutoRefreshEl.checked });
+  startAutoRefreshTimer();
+});
+
+settingsReportLayoutEl?.addEventListener("change", () => {
+  setReportLayout(settingsReportLayoutEl.value);
+});
+
+settingsLevelFilterEl?.addEventListener("change", () => {
+  setLevelFilter(settingsLevelFilterEl.value);
+});
+
+settingsChartTypeEl?.addEventListener("change", () => {
+  updateGlobalChartSetting("type", settingsChartTypeEl.value);
+});
+
+settingsChartRangeEl?.addEventListener("change", () => {
+  updateGlobalChartSetting("range", settingsChartRangeEl.value);
+});
+
+settingsChartIntervalEl?.addEventListener("change", () => {
+  updateGlobalChartSetting("interval", settingsChartIntervalEl.value);
+});
+
+settingsNewsCountEl?.addEventListener("change", () => {
+  updateSettings({ newsPerTicker: Number(settingsNewsCountEl.value) });
+  renderSettingsControls();
+  if (currentNews && watchlistTickers.length) {
+    loadNews();
+  }
+});
+
 refreshNewsButton.addEventListener("click", async () => {
   await Promise.all([loadMarketSnapshot(), loadNews()]);
+});
+
+refreshAnalyticsButton.addEventListener("click", async () => {
+  await loadSectorAnalytics();
 });
 
 watchlistNewsEl.addEventListener("click", (event) => {
@@ -241,10 +381,6 @@ watchlistNewsSearchEl?.addEventListener("input", () => {
 
 runScannerButton.addEventListener("click", async () => {
   await loadScanner();
-});
-
-scannerTabButtons.forEach((button) => {
-  button.addEventListener("click", () => switchScannerTab(button.dataset.scannerTab));
 });
 
 scannerSetupEl.addEventListener("click", (event) => {
@@ -323,11 +459,22 @@ resultsEl.addEventListener("dragend", () => {
 
 async function initializeApp() {
   await loadAppConfig();
+  appSettings = normalizeSettings(appSettings);
+  chartSettings = appSettings.chartSettings;
+  reportLayout = appSettings.reportLayout;
+  levelFilter = appSettings.levelFilter;
+  persistSettings();
   renderReportLayoutControl();
+  renderLevelFilterControl();
+  renderLevelWeightControls();
+  renderSettingsControls();
   renderWatchlistControls();
-  switchView(localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || "levels", { loadNews: false, loadSnapshot: false });
+  switchView(appSettings.defaultView, { loadNews: false, loadSnapshot: false, persist: false });
   updateNewsInfoTooltips();
-  autoloadSavedWatchlist();
+  if (appSettings.autoLoad) {
+    autoloadSavedWatchlist();
+  }
+  startAutoRefreshTimer();
 }
 
 async function loadAppConfig() {
@@ -350,7 +497,12 @@ async function loadAppConfig() {
     if (config.default_report_layout) {
       DEFAULT_REPORT_LAYOUT = config.default_report_layout;
     }
+    if (config.level_type_weights && typeof config.level_type_weights === "object") {
+      LEVEL_TYPE_WEIGHT_DEFAULTS = normalizeWeightDefaults(config.level_type_weights);
+    }
+    DEFAULT_SETTINGS.reportLayout = DEFAULT_REPORT_LAYOUT;
     reportLayout = normalizeReportLayout(reportLayout);
+    appSettings = normalizeSettings(appSettings);
   } catch (error) {
     console.warn("Using bundled UI config because /api/config failed.", error);
   }
@@ -359,25 +511,33 @@ async function loadAppConfig() {
 function renderReportLayoutControl() {
   if (!reportLayoutSelectEl) return;
   reportLayout = normalizeReportLayout(reportLayout);
-  reportLayoutSelectEl.innerHTML = REPORT_LAYOUTS
+  const options = REPORT_LAYOUTS
     .map((layout) => `<option value="${escapeHtml(layout.id)}">${escapeHtml(layout.label)}</option>`)
     .join("");
+  reportLayoutSelectEl.innerHTML = options;
+  if (settingsReportLayoutEl) {
+    settingsReportLayoutEl.innerHTML = options;
+  }
   reportLayoutSelectEl.value = reportLayout;
+  if (settingsReportLayoutEl) {
+    settingsReportLayoutEl.value = reportLayout;
+  }
   const selected = REPORT_LAYOUTS.find((layout) => layout.id === reportLayout);
   if (selected?.description) {
     reportLayoutSelectEl.title = selected.description;
+    if (settingsReportLayoutEl) settingsReportLayoutEl.title = selected.description;
   }
 }
 
 function setReportLayout(layout) {
   reportLayout = normalizeReportLayout(layout);
-  localStorage.setItem(REPORT_LAYOUT_STORAGE_KEY, reportLayout);
+  updateSettings({ reportLayout });
   renderReportLayoutControl();
   renderCurrentReport();
 }
 
 function loadStoredReportLayout() {
-  return normalizeReportLayout(localStorage.getItem(REPORT_LAYOUT_STORAGE_KEY));
+  return normalizeReportLayout(appSettings.reportLayout);
 }
 
 function normalizeReportLayout(layout) {
@@ -387,7 +547,9 @@ function normalizeReportLayout(layout) {
 
 function switchView(view, options = {}) {
   const nextView = viewPanels[view] ? view : "levels";
-  localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, nextView);
+  if (options.persist !== false) {
+    updateSettings({ defaultView: nextView });
+  }
   viewNavButtons.forEach((button) => {
     const active = button.dataset.view === nextView;
     button.classList.toggle("active", active);
@@ -411,6 +573,8 @@ function switchView(view, options = {}) {
     if (options.loadNews !== false && !currentNews) {
       loadNews();
     }
+  } else if (nextView === "analytics" && options.loadAnalytics !== false && !currentAnalytics) {
+    loadSectorAnalytics();
   }
 }
 
@@ -425,10 +589,62 @@ function closeControlsDrawer() {
   document.body.classList.remove("drawer-open");
   controlsDrawerEl.setAttribute("aria-hidden", "true");
   menuToggleButton.setAttribute("aria-expanded", "false");
-  drawerBackdropEl.hidden = true;
+  if (!document.body.classList.contains("settings-open")) {
+    drawerBackdropEl.hidden = true;
+  }
 }
 
-function loadStoredWatchlist() {
+function openSettingsDrawer() {
+  document.body.classList.add("settings-open");
+  settingsDrawerEl.setAttribute("aria-hidden", "false");
+  settingsToggleButton.setAttribute("aria-expanded", "true");
+  drawerBackdropEl.hidden = false;
+}
+
+function closeSettingsDrawer() {
+  document.body.classList.remove("settings-open");
+  settingsDrawerEl.setAttribute("aria-hidden", "true");
+  settingsToggleButton.setAttribute("aria-expanded", "false");
+  if (!document.body.classList.contains("drawer-open")) {
+    drawerBackdropEl.hidden = true;
+  }
+}
+
+function closeAllDrawers() {
+  closeControlsDrawer();
+  closeSettingsDrawer();
+}
+
+function loadStoredSettings() {
+  let stored = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)) || {};
+  } catch (_) {
+    stored = {};
+  }
+  return normalizeSettings({
+    ...migratedLegacySettings(),
+    ...stored,
+  });
+}
+
+function migratedLegacySettings() {
+  const legacyChartSettings = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(CHART_SETTINGS_STORAGE_KEY));
+    } catch (_) {
+      return null;
+    }
+  })();
+  return {
+    watchlist: loadLegacyWatchlist(),
+    defaultView: localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY) || DEFAULT_SETTINGS.defaultView,
+    reportLayout: localStorage.getItem(REPORT_LAYOUT_STORAGE_KEY) || DEFAULT_SETTINGS.reportLayout,
+    chartSettings: legacyChartSettings || DEFAULT_SETTINGS.chartSettings,
+  };
+}
+
+function loadLegacyWatchlist() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return [];
   try {
@@ -438,6 +654,133 @@ function loadStoredWatchlist() {
     // Older versions stored a delimited textarea string.
   }
   return normalizeTickers(stored);
+}
+
+function normalizeSettings(candidate = {}) {
+  const chart = normalizeChartSettings(candidate.chartSettings || candidate.chart || {});
+  return {
+    version: 1,
+    watchlist: normalizeTickers(candidate.watchlist || []),
+    defaultView: viewPanels[candidate.defaultView] ? candidate.defaultView : DEFAULT_SETTINGS.defaultView,
+    reportLayout: normalizeReportLayout(candidate.reportLayout),
+    levelFilter: normalizeLevelFilter(candidate.levelFilter),
+    levelWeights: normalizeLevelWeights(candidate.levelWeights),
+    chartSettings: chart,
+    autoLoad: typeof candidate.autoLoad === "boolean" ? candidate.autoLoad : DEFAULT_SETTINGS.autoLoad,
+    autoRefresh: typeof candidate.autoRefresh === "boolean" ? candidate.autoRefresh : DEFAULT_SETTINGS.autoRefresh,
+    newsPerTicker: normalizeNewsCount(candidate.newsPerTicker),
+  };
+}
+
+function updateSettings(patch) {
+  appSettings = normalizeSettings({
+    ...appSettings,
+    ...patch,
+  });
+  persistSettings();
+}
+
+function persistSettings() {
+  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appSettings));
+}
+
+function normalizeLevelFilter(value) {
+  return LEVEL_FILTERS.some((item) => item.id === value) ? value : DEFAULT_SETTINGS.levelFilter;
+}
+
+function normalizeNewsCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return DEFAULT_SETTINGS.newsPerTicker;
+  return Math.max(1, Math.min(NEWS_MAX_HEADLINE_COUNT, Math.round(number)));
+}
+
+function normalizeWeightDefaults(candidate = {}) {
+  const normalized = {};
+  Object.entries(candidate || {}).forEach(([label, value]) => {
+    const weight = clampLevelWeight(value);
+    if (weight !== null) normalized[label] = weight;
+  });
+  return Object.keys(normalized).length ? normalized : LEVEL_TYPE_WEIGHT_DEFAULTS;
+}
+
+function normalizeLevelWeights(candidate = {}) {
+  if (!candidate || typeof candidate !== "object") return {};
+  const normalized = {};
+  Object.entries(candidate).forEach(([label, value]) => {
+    if (!Object.prototype.hasOwnProperty.call(LEVEL_TYPE_WEIGHT_DEFAULTS, label)) return;
+    const weight = clampLevelWeight(value);
+    if (weight === null || weight === LEVEL_TYPE_WEIGHT_DEFAULTS[label]) return;
+    normalized[label] = weight;
+  });
+  return normalized;
+}
+
+function clampLevelWeight(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(LEVEL_WEIGHT_MIN, Math.min(LEVEL_WEIGHT_MAX, Math.round(number)));
+}
+
+function activeLevelTypeWeights() {
+  return {
+    ...LEVEL_TYPE_WEIGHT_DEFAULTS,
+    ...appSettings.levelWeights,
+  };
+}
+
+function renderLevelFilterControl() {
+  const options = LEVEL_FILTERS
+    .map((filter) => `<option value="${escapeHtml(filter.id)}">${escapeHtml(filter.shortLabel)}</option>`)
+    .join("");
+  if (levelFilterSelectEl) {
+    levelFilterSelectEl.innerHTML = options;
+    levelFilterSelectEl.value = levelFilter;
+  }
+  if (settingsLevelFilterEl) {
+    settingsLevelFilterEl.innerHTML = LEVEL_FILTERS
+      .map((filter) => `<option value="${escapeHtml(filter.id)}">${escapeHtml(filter.label)}</option>`)
+      .join("");
+    settingsLevelFilterEl.value = levelFilter;
+  }
+}
+
+function setLevelFilter(value) {
+  levelFilter = normalizeLevelFilter(value);
+  updateSettings({ levelFilter });
+  renderLevelFilterControl();
+  renderCurrentReport();
+}
+
+function renderSettingsControls() {
+  if (settingsDefaultViewEl) settingsDefaultViewEl.value = appSettings.defaultView;
+  if (settingsAutoLoadEl) settingsAutoLoadEl.checked = appSettings.autoLoad;
+  if (settingsAutoRefreshEl) settingsAutoRefreshEl.checked = appSettings.autoRefresh;
+  renderReportLayoutControl();
+  renderLevelFilterControl();
+  renderChartSettingsControls();
+  if (settingsNewsCountEl) settingsNewsCountEl.value = String(appSettings.newsPerTicker);
+}
+
+function renderChartSettingsControls() {
+  if (settingsChartTypeEl) {
+    settingsChartTypeEl.value = chartSettings.type;
+  }
+  if (settingsChartRangeEl) {
+    settingsChartRangeEl.innerHTML = Object.keys(RANGE_INTERVALS)
+      .map((range) => `<option value="${escapeHtml(range)}">${escapeHtml(formatChartOption(range))}</option>`)
+      .join("");
+    settingsChartRangeEl.value = chartSettings.range;
+  }
+  if (settingsChartIntervalEl) {
+    settingsChartIntervalEl.innerHTML = (RANGE_INTERVALS[chartSettings.range] || [])
+      .map((interval) => `<option value="${escapeHtml(interval)}">${escapeHtml(formatChartOption(interval))}</option>`)
+      .join("");
+    settingsChartIntervalEl.value = chartSettings.interval;
+  }
+}
+
+function loadStoredWatchlist() {
+  return normalizeTickers(appSettings.watchlist);
 }
 
 function normalizeTickers(value) {
@@ -485,6 +828,7 @@ function searchTickerTerms(value) {
 }
 
 function persistWatchlist() {
+  updateSettings({ watchlist: watchlistTickers });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlistTickers));
   saveStateEl.textContent = "Saved locally";
 }
@@ -502,6 +846,80 @@ function renderWatchlistControls() {
       </li>
     `).join("")
     : '<li class="watchlist-empty">No tickers saved.</li>';
+}
+
+function renderLevelWeightControls() {
+  if (!levelWeightsListEl) return;
+  const weights = activeLevelTypeWeights();
+  levelWeightsListEl.innerHTML = Object.entries(LEVEL_TYPE_WEIGHT_DEFAULTS)
+    .map(([label, defaultWeight]) => renderLevelWeightRow(label, weights[label], defaultWeight))
+    .join("");
+  renderLevelWeightResetState();
+}
+
+function renderLevelWeightRow(label, weight, defaultWeight) {
+  const inputId = `level-weight-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  const changed = weight !== defaultWeight;
+  const meta = changed ? `Custom, default ${defaultWeight}` : `Default ${defaultWeight}`;
+  return `
+    <div class="level-weight-row${changed ? " changed" : ""}">
+      <label class="level-weight-label" for="${escapeHtml(inputId)}">${escapeHtml(label)}</label>
+      <div class="level-weight-controls">
+        <input id="${escapeHtml(inputId)}" type="range" min="${LEVEL_WEIGHT_MIN}" max="${LEVEL_WEIGHT_MAX}" step="1" value="${weight}" data-level-weight-label="${escapeHtml(label)}" aria-label="${escapeHtml(label)} weight" />
+        <input type="number" min="${LEVEL_WEIGHT_MIN}" max="${LEVEL_WEIGHT_MAX}" step="1" value="${weight}" data-level-weight-label="${escapeHtml(label)}" aria-label="${escapeHtml(label)} weight value" />
+      </div>
+      <span class="level-weight-meta">${escapeHtml(meta)}</span>
+    </div>
+  `;
+}
+
+function handleLevelWeightControlInput(event) {
+  const control = event.target.closest("[data-level-weight-label]");
+  if (!control) return;
+  const label = control.dataset.levelWeightLabel;
+  if (!Object.prototype.hasOwnProperty.call(LEVEL_TYPE_WEIGHT_DEFAULTS, label)) return;
+  const weight = clampLevelWeight(control.value);
+  if (weight === null) return;
+  setLevelWeight(label, weight);
+  syncLevelWeightRow(control.closest(".level-weight-row"), label, weight);
+  renderCurrentReport();
+}
+
+function setLevelWeight(label, weight) {
+  const nextWeights = { ...appSettings.levelWeights };
+  if (weight === LEVEL_TYPE_WEIGHT_DEFAULTS[label]) {
+    delete nextWeights[label];
+  } else {
+    nextWeights[label] = weight;
+  }
+  updateSettings({ levelWeights: nextWeights });
+  renderLevelWeightResetState();
+}
+
+function syncLevelWeightRow(row, label, weight) {
+  if (!row) return;
+  const defaultWeight = LEVEL_TYPE_WEIGHT_DEFAULTS[label];
+  const changed = weight !== defaultWeight;
+  row.classList.toggle("changed", changed);
+  row.querySelectorAll("[data-level-weight-label]").forEach((control) => {
+    control.value = String(weight);
+  });
+  const meta = row.querySelector(".level-weight-meta");
+  if (meta) {
+    meta.textContent = changed ? `Custom, default ${defaultWeight}` : `Default ${defaultWeight}`;
+  }
+}
+
+function resetLevelWeights() {
+  updateSettings({ levelWeights: {} });
+  renderLevelWeightControls();
+  renderCurrentReport();
+}
+
+function renderLevelWeightResetState() {
+  if (resetLevelWeightsButton) {
+    resetLevelWeightsButton.disabled = !Object.keys(appSettings.levelWeights || {}).length;
+  }
 }
 
 function addTickersFromInput() {
@@ -555,6 +973,10 @@ function scheduleWatchlistRefresh() {
     clearLoadedData();
     return;
   }
+  if (!appSettings.autoLoad) {
+    setStatus("", "");
+    return;
+  }
   setStatus("Updating...", "");
   watchlistRefreshTimer = setTimeout(() => {
     autoloadSavedWatchlist();
@@ -566,6 +988,7 @@ function clearLoadedData() {
   currentReport = null;
   currentNews = null;
   currentScanner = null;
+  currentAnalytics = null;
   currentMarketSnapshot = null;
   currentChartHistory = null;
   chartDataCache.clear();
@@ -579,6 +1002,7 @@ function clearLoadedData() {
   renderNewsEmptyState();
   renderMarketSnapshotEmptyState();
   renderScannerEmptyState();
+  renderAnalyticsEmptyState();
   setStatus("", "");
 }
 
@@ -590,6 +1014,21 @@ function filterCurrentDataToWatchlist() {
   if (currentScanner?.setup_rows) {
     currentScanner.setup_rows = currentScanner.setup_rows.filter((row) => watchlistTickers.includes(row.ticker));
     renderScanner(currentScanner);
+  }
+  if (currentAnalytics) {
+    currentAnalytics.sector_rows = (currentAnalytics.sector_rows || [])
+      .map((row) => ({
+        ...row,
+        tickers: (row.tickers || []).filter((ticker) => watchlistTickers.includes(ticker)),
+      }))
+      .filter((row) => row.tickers.length);
+    currentAnalytics.pattern_summary = (currentAnalytics.pattern_summary || []).filter((row) => watchlistTickers.includes(row.ticker));
+    currentAnalytics.pattern_heatmap = (currentAnalytics.pattern_heatmap || []).filter((row) => watchlistTickers.includes(row.ticker));
+    currentAnalytics.pattern_details = (currentAnalytics.pattern_details || []).filter((row) => watchlistTickers.includes(row.ticker));
+    currentAnalytics.recommendations = (currentAnalytics.recommendations || [])
+      .map((item) => ({ ...item, tickers: (item.tickers || []).filter((ticker) => watchlistTickers.includes(ticker)) }))
+      .filter((item) => item.tickers.length || item.tone === "note");
+    renderSectorAnalytics(currentAnalytics);
   }
   if (currentNews?.ticker_news) {
     currentNews.ticker_news = currentNews.ticker_news.filter((group) => watchlistTickers.includes(group.ticker));
@@ -610,6 +1049,13 @@ function reorderCurrentDataToWatchlist() {
   if (currentNews?.ticker_news) {
     currentNews.ticker_news.sort(byTickerOrder);
     renderWatchlistNews(currentNews.ticker_news);
+  }
+  if (currentAnalytics) {
+    currentAnalytics.pattern_summary?.sort(byTickerOrder);
+    currentAnalytics.pattern_heatmap?.sort(byTickerOrder);
+    currentAnalytics.pattern_details?.sort(byTickerOrder);
+    currentAnalytics.sector_rows?.forEach((row) => row.tickers?.sort((left, right) => watchlistTickers.indexOf(left) - watchlistTickers.indexOf(right)));
+    renderSectorAnalytics(currentAnalytics);
   }
   if (currentMarketSnapshot?.watchlist) {
     currentMarketSnapshot.watchlist.sort(byTickerOrder);
@@ -654,7 +1100,7 @@ function buildPayload(options = {}) {
 function buildNewsPayload() {
   return {
     tickers: [...watchlistTickers],
-    per_ticker: Math.min(NEWS_EXPANDED_HEADLINE_COUNT, NEWS_MAX_HEADLINE_COUNT),
+    per_ticker: appSettings.newsPerTicker,
     general_count: 8,
   };
 }
@@ -663,7 +1109,14 @@ function buildScannerPayload() {
   return {
     tickers: [...watchlistTickers],
     include_setup: true,
-    include_patterns: true,
+    include_patterns: false,
+    pattern_lookback_days: 30,
+  };
+}
+
+function buildSectorAnalyticsPayload() {
+  return {
+    tickers: [...watchlistTickers],
     pattern_lookback_days: 30,
   };
 }
@@ -790,6 +1243,26 @@ async function withScannerBusyState(message, callback, request = null) {
   }
 }
 
+async function withAnalyticsBusyState(message, callback, request = null) {
+  if (!watchlistTickers.length) {
+    setAnalyticsStatus("Enter at least one ticker symbol.", "error");
+    return;
+  }
+  setAnalyticsStatus(message, "");
+  refreshAnalyticsButton.disabled = true;
+  try {
+    await callback();
+  } catch (error) {
+    if (isAbortError(error)) return;
+    setAnalyticsStatus(readableError(error), "error");
+  } finally {
+    if (!request || request.isCurrent()) {
+      refreshAnalyticsButton.disabled = false;
+      request?.complete();
+    }
+  }
+}
+
 async function loadNews() {
   const request = startRequest("news");
   await withNewsBusyState("Loading market and watchlist news...", async () => {
@@ -822,6 +1295,16 @@ async function loadScanner() {
     if (!request.isCurrent()) return;
     renderScanner(scanner);
     setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "", scanner.warnings?.length ? "error" : "");
+  }, request);
+}
+
+async function loadSectorAnalytics() {
+  const request = startRequest("analytics");
+  await withAnalyticsBusyState("Refreshing sector analytics...", async () => {
+    const analytics = await postJson("/api/sector-analytics", buildSectorAnalyticsPayload(), { signal: request.signal });
+    if (!request.isCurrent()) return;
+    renderSectorAnalytics(analytics);
+    setAnalyticsStatus(analytics.warnings?.length ? analytics.warnings.join(" ") : "", analytics.warnings?.length ? "error" : "");
   }, request);
 }
 
@@ -858,6 +1341,21 @@ async function autoloadSavedWatchlist() {
   loadMarketSnapshot();
   loadScanner();
   loadNews();
+  if (appSettings.defaultView === "analytics" || currentAnalytics) {
+    setAnalyticsStatus("Loading saved sector analytics...", "");
+    loadSectorAnalytics();
+  }
+}
+
+function startAutoRefreshTimer() {
+  clearInterval(autoRefreshTimer);
+  autoRefreshTimer = null;
+  if (!appSettings.autoRefresh) return;
+  autoRefreshTimer = window.setInterval(() => {
+    if (!watchlistTickers.length) return;
+    if (!currentReport && !currentScanner && !currentNews && !currentMarketSnapshot && !currentAnalytics) return;
+    autoloadSavedWatchlist();
+  }, AUTO_REFRESH_SECONDS * 1000);
 }
 
 function renderReport(report) {
@@ -885,7 +1383,10 @@ function renderCurrentReport() {
     return;
   }
   resultsEl.className = `results report-layout-${reportLayout.replace("_", "-")}`;
-  resultsEl.innerHTML = renderMetrics(visibleMetrics, reportLayout);
+  resultsEl.innerHTML = renderMetrics(visibleMetrics, reportLayout, {
+    levelFilter,
+    levelTypeWeights: activeLevelTypeWeights(),
+  });
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
   renderCharts();
 }
@@ -938,30 +1439,27 @@ function renderScannerEmptyState() {
   scannerGeneratedAtEl.textContent = "";
   scannerSetupEl.className = "scanner-empty";
   scannerSetupEl.textContent = "";
-  scannerPatternEl.className = "scanner-empty";
-  scannerPatternEl.textContent = "";
   setScannerStatus("", "");
+}
+
+function renderAnalyticsEmptyState() {
+  if (currentAnalytics) return;
+  analyticsGeneratedAtEl.textContent = "";
+  sectorCoverageEl.className = "analytics-grid empty";
+  sectorCoverageEl.textContent = "";
+  sectorRecommendationsEl.className = "recommendation-grid empty";
+  sectorRecommendationsEl.textContent = "";
+  sectorTrendsEl.className = "scanner-empty";
+  sectorTrendsEl.textContent = "";
+  analyticsPatternEl.className = "scanner-empty";
+  analyticsPatternEl.textContent = "";
+  setAnalyticsStatus("", "");
 }
 
 function renderScanner(scanner) {
   currentScanner = scanner;
   scannerGeneratedAtEl.textContent = `Scanner generated ${new Date(scanner.generated_at).toLocaleString()}`;
   renderScannerSetup(scanner.setup_rows || []);
-  renderScannerPatterns(scanner);
-}
-
-function switchScannerTab(tab) {
-  const nextTab = tab === "patterns" ? "patterns" : "setup";
-  scannerTabButtons.forEach((button) => {
-    const active = button.dataset.scannerTab === nextTab;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
-  });
-  document.querySelectorAll(".scanner-section").forEach((section) => {
-    const active = section.id === `scanner-${nextTab}`;
-    section.classList.toggle("active", active);
-    section.hidden = !active;
-  });
 }
 
 function renderScannerSetup(rows) {
@@ -1040,16 +1538,98 @@ function renderScannerDataNotes(notes) {
   `;
 }
 
-function renderScannerPatterns(scanner) {
-  const summary = scanner.pattern_summary || [];
-  if (!summary.length) {
-    scannerPatternEl.className = "scanner-empty";
-    scannerPatternEl.textContent = "No pattern analysis was returned.";
+function renderSectorAnalytics(analytics) {
+  currentAnalytics = analytics;
+  analyticsGeneratedAtEl.textContent = `Analytics refreshed ${new Date(analytics.generated_at).toLocaleString()}`;
+  renderSectorCoverage(analytics.sector_rows || []);
+  renderSectorRecommendations(analytics.recommendations || []);
+  renderSectorTrendTable(analytics.sector_rows || []);
+  renderPatternAnalysis(analytics, analyticsPatternEl);
+}
+
+function renderSectorCoverage(rows) {
+  if (!rows.length) {
+    sectorCoverageEl.className = "analytics-grid empty";
+    sectorCoverageEl.textContent = "No sector coverage was returned.";
     return;
   }
-  scannerPatternEl.className = "scanner-patterns";
+  sectorCoverageEl.className = "analytics-grid";
+  sectorCoverageEl.innerHTML = rows.map((row) => `
+    <article class="analytics-tile">
+      <div>
+        <h4>${escapeHtml(row.sector || "Other")}</h4>
+        <span>${escapeHtml(row.etf || "No ETF")}</span>
+      </div>
+      <strong>${formatPercent(row.weight_percent)}</strong>
+      <p>${row.ticker_count} ticker${row.ticker_count === 1 ? "" : "s"}: ${(row.tickers || []).map(escapeHtml).join(", ")}</p>
+    </article>
+  `).join("");
+}
+
+function renderSectorRecommendations(items) {
+  if (!items.length) {
+    sectorRecommendationsEl.className = "recommendation-grid empty";
+    sectorRecommendationsEl.textContent = "No sector recommendations were returned.";
+    return;
+  }
+  sectorRecommendationsEl.className = "recommendation-grid";
+  sectorRecommendationsEl.innerHTML = items.map((item) => `
+    <article class="recommendation-card ${escapeHtml(item.tone || "watch")}">
+      <span>${escapeHtml(item.tone || "watch")}</span>
+      <h4>${escapeHtml(item.title || "Sector note")}</h4>
+      <p>${escapeHtml(item.message || "")}</p>
+      ${(item.tickers || []).length ? `<div class="chips">${item.tickers.map((ticker) => `<span>${escapeHtml(ticker)}</span>`).join("")}</div>` : ""}
+    </article>
+  `).join("");
+}
+
+function renderSectorTrendTable(rows) {
+  if (!rows.length) {
+    sectorTrendsEl.className = "scanner-empty";
+    sectorTrendsEl.textContent = "No sector trends were returned.";
+    return;
+  }
+  sectorTrendsEl.className = "scanner-table-wrap";
+  sectorTrendsEl.innerHTML = `
+    <table class="scanner-table compact">
+      <thead>
+        <tr><th>Sector</th><th>ETF</th><th>Weight</th><th>Tickers</th><th>Avg Day</th><th>ETF Day</th><th>RS vs SPY</th><th>RS vs Sec</th><th>Setup</th><th>Strong</th><th>Pattern</th><th>Avg Dip</th><th>Recovery</th><th>Low Times</th><th>Read</th></tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr>
+            <td><strong>${escapeHtml(row.sector || "Other")}</strong></td>
+            <td>${formatScannerText(row.etf)}</td>
+            <td>${formatPercent(row.weight_percent)}</td>
+            <td>${(row.tickers || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
+            <td>${formatSignedPercent(row.average_day_change_percent)}</td>
+            <td>${formatSignedPercent(row.sector_etf_day_change_percent)}</td>
+            <td>${formatSignedPercent(row.average_rs_vs_spy_percent)}</td>
+            <td>${formatSignedPercent(row.average_rs_vs_sector_percent)}</td>
+            <td>${formatValue(row.average_setup_score)}</td>
+            <td>${row.strong_setup_count ?? 0}</td>
+            <td>${formatPercent(row.average_pattern_consistency_percent)}</td>
+            <td>${formatPercent(row.average_dip_percent)}</td>
+            <td>${formatSignedPercent(row.average_recovery_percent)}</td>
+            <td>${(row.common_low_times || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
+            <td>${renderRecommendationTone(row.recommendation_tone)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderPatternAnalysis(scanner, targetEl) {
+  const summary = scanner.pattern_summary || [];
+  if (!summary.length) {
+    targetEl.className = "scanner-empty";
+    targetEl.textContent = "No pattern analysis was returned.";
+    return;
+  }
+  targetEl.className = "scanner-patterns";
   const buckets = scanner.pattern_bucket_labels || scanner.pattern_buckets || [];
-  scannerPatternEl.innerHTML = `
+  targetEl.innerHTML = `
     <section class="scanner-subsection">
       <h3>Pattern Summary</h3>
       <div class="scanner-table-wrap">
@@ -1561,11 +2141,7 @@ function getEffectiveChartSettings(ticker) {
 }
 
 function loadStoredChartSettings() {
-  try {
-    return normalizeChartSettings(JSON.parse(localStorage.getItem(CHART_SETTINGS_STORAGE_KEY)));
-  } catch (_) {
-    return { ...DEFAULT_CHART_SETTINGS };
-  }
+  return normalizeChartSettings(appSettings.chartSettings);
 }
 
 function normalizeChartSettings(candidate = {}) {
@@ -1577,12 +2153,14 @@ function normalizeChartSettings(candidate = {}) {
 }
 
 function persistChartSettings() {
+  updateSettings({ chartSettings });
   localStorage.setItem(CHART_SETTINGS_STORAGE_KEY, JSON.stringify(chartSettings));
 }
 
 async function updateGlobalChartSetting(key, value) {
   chartSettings = normalizeChartSettings({ ...chartSettings, [key]: value });
   persistChartSettings();
+  renderChartSettingsControls();
   renderCharts();
   try {
     await loadChartHistory(chartSettings);
@@ -1876,6 +2454,12 @@ function renderMomentum(momentum) {
   return `<span class="scanner-pill ${tone}">${escapeHtml(momentum)}</span>`;
 }
 
+function renderRecommendationTone(tone) {
+  const normalized = ["focus", "watch", "wait", "note"].includes(tone) ? tone : "watch";
+  const pillTone = normalized === "focus" ? "strong" : normalized === "wait" ? "danger" : normalized === "note" ? "good" : "watch";
+  return `<span class="scanner-pill ${pillTone}">${escapeHtml(normalized)}</span>`;
+}
+
 function formatScannerText(value) {
   if (value === null || value === undefined || value === "") return "&mdash;";
   return escapeHtml(value);
@@ -1933,6 +2517,10 @@ function setNewsStatus(message, type) {
 
 function setScannerStatus(message, type) {
   setTimedStatus(scannerStatusEl, message, type);
+}
+
+function setAnalyticsStatus(message, type) {
+  setTimedStatus(analyticsStatusEl, message, type);
 }
 
 function setTimedStatus(element, message, type) {

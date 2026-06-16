@@ -20,6 +20,7 @@ MetricName = Literal[
     "technical_levels",
 ]
 NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
+RecommendationTone = Literal["focus", "watch", "wait", "note"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
 DisplayRowKind = Literal["price", "percent", "date", "text"]
@@ -203,6 +204,7 @@ class AppConfigResponse(BaseModel):
     chart_ranges: dict[ChartRange, ChartRangeConfig]
     report_layouts: list[ReportLayoutDefinition] = Field(default_factory=list)
     default_report_layout: ReportLayoutName = "grid"
+    level_type_weights: dict[str, int] = Field(default_factory=dict)
 
 
 class Ohlc(BaseModel):
@@ -437,6 +439,67 @@ class ScannerResponse(BaseModel):
     pattern_bucket_labels: list[str] = Field(default_factory=list)
     pattern_heatmap: list[PatternHeatmapRow] = Field(default_factory=list)
     pattern_details: list[PatternDayDetail] = Field(default_factory=list)
+    takeaways: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SectorAnalyticsRequest(BaseModel):
+    """Request payload for watchlist sector and pattern analytics."""
+
+    tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+    pattern_lookback_days: int = Field(default=30, ge=5, le=58)
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def split_ticker_input(cls, value: object) -> list[str]:
+        """Accept either a list or comma/space/newline separated ticker text."""
+        return GenerateRequest.split_ticker_input(value)
+
+
+class SectorAnalyticsRecommendation(BaseModel):
+    """Actionable but non-advisory sector analytics note."""
+
+    tone: RecommendationTone
+    sector: str | None = None
+    title: str
+    message: str
+    tickers: list[str] = Field(default_factory=list)
+
+
+class SectorAnalyticsRow(BaseModel):
+    """Aggregated watchlist analytics for one covered sector."""
+
+    sector: str
+    etf: str | None = None
+    ticker_count: int
+    weight_percent: float
+    tickers: list[str] = Field(default_factory=list)
+    average_day_change_percent: float | None = None
+    sector_etf_day_change_percent: float | None = None
+    average_rs_vs_spy_percent: float | None = None
+    average_rs_vs_sector_percent: float | None = None
+    average_setup_score: float | None = None
+    strong_setup_count: int = 0
+    average_pattern_consistency_percent: float | None = None
+    average_dip_percent: float | None = None
+    average_recovery_percent: float | None = None
+    common_low_times: list[str] = Field(default_factory=list)
+    recommendation_tone: RecommendationTone = "watch"
+    recommendation_text: str
+
+
+class SectorAnalyticsResponse(BaseModel):
+    """Sector analytics and intraday pattern analysis response."""
+
+    generated_at: datetime
+    watchlist: list[str]
+    sector_rows: list[SectorAnalyticsRow] = Field(default_factory=list)
+    pattern_summary: list[PatternSummaryRow] = Field(default_factory=list)
+    pattern_buckets: list[str] = Field(default_factory=list)
+    pattern_bucket_labels: list[str] = Field(default_factory=list)
+    pattern_heatmap: list[PatternHeatmapRow] = Field(default_factory=list)
+    pattern_details: list[PatternDayDetail] = Field(default_factory=list)
+    recommendations: list[SectorAnalyticsRecommendation] = Field(default_factory=list)
     takeaways: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
