@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
+import app.streamlit_app as streamlit_app_module
 from streamlit.testing.v1 import AppTest
 
 from app.models import (
@@ -651,6 +652,54 @@ def test_streamlit_scanner_no_longer_owns_pattern_tabs():
 
     assert "st.tabs" not in scanner_source
     assert "Intraday Pattern Analysis" not in scanner_source
+
+
+def test_render_scanner_outputs_setup_dataframe(monkeypatch):
+    dataframe_calls = []
+    info_calls = []
+
+    monkeypatch.setattr(
+        streamlit_app_module.st,
+        "dataframe",
+        lambda data, **kwargs: dataframe_calls.append((data, kwargs)),
+    )
+    monkeypatch.setattr(streamlit_app_module.st, "info", lambda message: info_calls.append(message))
+
+    streamlit_app_module.render_scanner(
+        ScannerResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            watchlist=["AAPL"],
+            setup_rows=[
+                ScannerSetupRow(ticker="AAPL", score=5),
+                ScannerSetupRow(ticker="MSFT", score=0),
+                ScannerSetupRow(ticker="TSLA", score=None),
+            ],
+        )
+    )
+
+    assert dataframe_calls
+    rendered_frame, dataframe_kwargs = dataframe_calls[0]
+    assert list(rendered_frame["Score"]) == ["5/8", "0/8", "-"]
+    assert dataframe_kwargs["hide_index"] is True
+    assert dataframe_kwargs["row_height"] == 42
+    assert dataframe_kwargs["column_config"]["Score"]
+    assert not info_calls
+
+
+def test_scanner_setup_frame_formats_zero_and_missing_scores():
+    frame = streamlit_app_module.scanner_setup_frame(
+        ScannerResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            watchlist=["AAPL", "MSFT", "TSLA"],
+            setup_rows=[
+                ScannerSetupRow(ticker="AAPL", score=8),
+                ScannerSetupRow(ticker="MSFT", score=0),
+                ScannerSetupRow(ticker="TSLA", score=None),
+            ],
+        )
+    )
+
+    assert frame["Score"].tolist() == ["8/8", "0/8", "-"]
 
 
 def test_scanner_global_pattern_absences_render_as_notes():

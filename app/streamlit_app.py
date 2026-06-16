@@ -152,7 +152,7 @@ def build_report(tickers: tuple[str, ...], metrics: tuple[MetricName, ...], refr
     """Fetch and calculate metrics, cached briefly to avoid repeated provider calls."""
     return GenerateResponse(
         generated_at=datetime.now(timezone.utc),
-        metrics=market_data_service().build_metrics(list(tickers), list(metrics)),
+        metrics=normalize_equity_metrics(market_data_service().build_metrics(list(tickers), list(metrics))),
     )
 
 
@@ -179,7 +179,7 @@ def progressive_report_responses(
     for batch in ticker_batches(tickers, batch_size=batch_size):
         batch_response = report_loader(batch, metrics, refresh_token)
         generated_at = batch_response.generated_at
-        accumulated.extend(batch_response.metrics)
+        accumulated.extend(normalize_equity_metrics(batch_response.metrics))
         responses.append(GenerateResponse(generated_at=generated_at, metrics=list(accumulated)))
     if not responses:
         responses.append(GenerateResponse(generated_at=generated_at, metrics=[]))
@@ -253,7 +253,7 @@ def build_market_snapshot(tickers: tuple[str, ...], refresh_token: int = 0) -> M
 @st.cache_data(ttl=120, show_spinner=False)
 def build_scanner(tickers: tuple[str, ...], refresh_token: int = 0) -> ScannerResponse:
     """Run setup scanner rows."""
-    return scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=False)
+    return normalize_scanner_response(scanner_service().build_scanner(list(tickers), include_setup=True, include_patterns=False))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -287,6 +287,28 @@ def fmt(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:,.2f}"
     return str(value)
+
+
+def normalize_equity_metrics(metrics: list[Any] | tuple[Any, ...]) -> list[EquityMetrics]:
+    """Return current-module EquityMetrics instances from cached or freshly built metrics."""
+    normalized: list[EquityMetrics] = []
+    for metric in metrics:
+        if isinstance(metric, EquityMetrics):
+            normalized.append(metric)
+        elif hasattr(metric, "model_dump"):
+            normalized.append(EquityMetrics.model_validate(metric.model_dump()))
+        else:
+            normalized.append(EquityMetrics.model_validate(metric))
+    return normalized
+
+
+def normalize_scanner_response(response: Any) -> ScannerResponse:
+    """Return a current-module ScannerResponse from cached or freshly built scanner data."""
+    if isinstance(response, ScannerResponse):
+        return response
+    if hasattr(response, "model_dump"):
+        return ScannerResponse.model_validate(response.model_dump())
+    return ScannerResponse.model_validate(response)
 
 
 def normalize_ticker_list(value: str | list[str]) -> list[str]:
@@ -3137,12 +3159,17 @@ def render_scanner(report: ScannerResponse) -> None:
     if not report.setup_rows:
         st.info("No setup scanner rows were returned.")
         return
-        st.dataframe(
-            styled_scanner_setup_frame(report),
-            use_container_width=True,
+
+    st.dataframe(
+        scanner_setup_frame(report),
+        use_container_width=True,
         hide_index=True,
         row_height=42,
         height=dataframe_height(len(report.setup_rows), row_height=42),
+        column_config={
+            "Score": st.column_config.TextColumn("Score", width="small"),
+            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+        },
     )
     row_warnings = [(row.ticker, warning) for row in report.setup_rows for warning in row.warnings]
     render_scanner_message_notes("scanner warning(s)", row_warnings)
@@ -4026,8 +4053,8 @@ def replace_report_metrics(
 ) -> GenerateResponse:
     """Return report with updated metrics in original watchlist order."""
     ticker_order = [ticker.upper().strip() for ticker in tickers if ticker.strip()]
-    metrics_by_ticker = {metric.ticker: metric for metric in report.metrics}
-    metrics_by_ticker.update({metric.ticker: metric for metric in updates})
+    metrics_by_ticker = {metric.ticker: metric for metric in normalize_equity_metrics(report.metrics)}
+    metrics_by_ticker.update({metric.ticker: metric for metric in normalize_equity_metrics(updates)})
     ordered_metrics = [
         metrics_by_ticker[ticker]
         for ticker in ticker_order
@@ -4166,12 +4193,16 @@ def load_levels_and_scanner_progressively(
         del refresh_token
         return GenerateResponse(
             generated_at=datetime.now(timezone.utc),
-            metrics=market_data.build_metrics(list(batch), list(selected_metrics), include_earnings=False),
+            metrics=normalize_equity_metrics(
+                market_data.build_metrics(list(batch), list(selected_metrics), include_earnings=False)
+            ),
         )
 
     def load_scanner_batch(batch: tuple[str, ...], refresh_token: int) -> ScannerResponse:
         del refresh_token
-        return scanner.build_scanner(list(batch), include_setup=True, include_patterns=False, include_earnings=False)
+        return normalize_scanner_response(
+            scanner.build_scanner(list(batch), include_setup=True, include_patterns=False, include_earnings=False)
+        )
 
     with refresh_slot.container():
         st.markdown(
@@ -4206,7 +4237,7 @@ def load_levels_and_scanner_progressively(
             rendered_events += 1
             if event.kind == "levels" and event.report is not None:
                 report_responses.append(event.report)
-                partial_metrics.extend(event.report.metrics)
+                partial_metrics.extend(normalize_equity_metrics(event.report.metrics))
                 final_report = GenerateResponse(
                     generated_at=event.report.generated_at,
                     metrics=list(partial_metrics),
@@ -4218,7 +4249,7 @@ def load_levels_and_scanner_progressively(
                     text=f"Loaded levels for {len(partial_metrics)} of {len(tickers)} ticker(s).",
                 )
             elif event.kind == "scanner" and event.scanner is not None:
-                scanner_responses.append(event.scanner)
+                scanner_responses.append(normalize_scanner_response(event.scanner))
                 final_scanner = ScannerService.merge_responses(tickers, scanner_responses)
                 st.session_state.scanner = final_scanner
                 render_scanner_panel_in_slot(scanner_slot, final_scanner)
@@ -4248,7 +4279,11 @@ def load_levels_and_scanner_progressively(
                 include_patterns=False,
                 include_earnings=True,
             )
-            final_scanner = ScannerService.replace_setup_rows(tickers, final_scanner, [scanner_update])
+            final_scanner = ScannerService.replace_setup_rows(
+                tickers,
+                normalize_scanner_response(final_scanner),
+                [normalize_scanner_response(scanner_update)],
+            )
             st.session_state.scanner = final_scanner
             render_scanner_panel_in_slot(scanner_slot, final_scanner)
 
