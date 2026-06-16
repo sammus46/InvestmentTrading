@@ -654,14 +654,19 @@ def test_streamlit_scanner_no_longer_owns_pattern_tabs():
     assert "Intraday Pattern Analysis" not in scanner_source
 
 
-def test_render_scanner_outputs_setup_dataframe(monkeypatch):
-    dataframe_calls = []
+def test_render_scanner_outputs_setup_html_table(monkeypatch):
+    markdown_calls = []
     info_calls = []
 
     monkeypatch.setattr(
         streamlit_app_module.st,
+        "markdown",
+        lambda body, **kwargs: markdown_calls.append((body, kwargs)),
+    )
+    monkeypatch.setattr(
+        streamlit_app_module.st,
         "dataframe",
-        lambda data, **kwargs: dataframe_calls.append((data, kwargs)),
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("scanner should render HTML, not dataframe")),
     )
     monkeypatch.setattr(streamlit_app_module.st, "info", lambda message: info_calls.append(message))
 
@@ -677,13 +682,116 @@ def test_render_scanner_outputs_setup_dataframe(monkeypatch):
         )
     )
 
-    assert dataframe_calls
-    rendered_frame, dataframe_kwargs = dataframe_calls[0]
-    assert list(rendered_frame["Score"]) == ["5/8", "0/8", "-"]
-    assert dataframe_kwargs["hide_index"] is True
-    assert dataframe_kwargs["row_height"] == 42
-    assert dataframe_kwargs["column_config"]["Score"]
+    assert markdown_calls
+    rendered_html, markdown_kwargs = markdown_calls[0]
+    assert "streamlit-scanner-table" in rendered_html
+    assert "5/8" in rendered_html
+    assert "0/8" in rendered_html
+    assert markdown_kwargs["unsafe_allow_html"] is True
     assert not info_calls
+
+
+def test_scanner_setup_table_html_formats_scores_and_tones():
+    html = streamlit_app_module.scanner_setup_table_html(
+        ScannerResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            watchlist=["AAPL", "MSFT", "TSLA", "NVDA"],
+            setup_rows=[
+                ScannerSetupRow(
+                    ticker="AAPL",
+                    price=100,
+                    score=8,
+                    signal="Reclaimed VWAP",
+                    vwap_extension_label="+0.4%  Healthy",
+                    vwap_extension_percent=0.4,
+                    rs_vs_spy_label="+2.5%  Strong ↑↑",
+                    rs_vs_spy_percent=2.5,
+                    support_confidence=85,
+                    resistance_confidence=65,
+                    risk_reward=3.2,
+                    setup_distance_percent=0.2,
+                    lows_held=3,
+                    range_compression="Tight",
+                    off_high_percent=0.4,
+                    momentum="Turning Up",
+                ),
+                ScannerSetupRow(
+                    ticker="MSFT",
+                    score=5,
+                    signal="Rejecting R1",
+                    vwap_extension_label="+1.1%  Extended",
+                    vwap_extension_percent=1.1,
+                    rs_vs_spy_label="+0.1%  Inline →",
+                    rs_vs_spy_percent=0.1,
+                    support_confidence=55,
+                    resistance_confidence=40,
+                    risk_reward=2.1,
+                    setup_distance_percent=0.7,
+                    lows_held=2,
+                    range_compression="Wide",
+                    off_high_percent=-4.2,
+                    momentum="Ticking Up",
+                ),
+                ScannerSetupRow(
+                    ticker="TSLA",
+                    score=0,
+                    vwap_extension_label="-1.2%  Below",
+                    vwap_extension_percent=-1.2,
+                    rs_vs_spy_label="-2.5%  Very Weak ↓↓",
+                    rs_vs_spy_percent=-2.5,
+                    risk_reward=0.4,
+                    lows_held=1,
+                    momentum="Still Falling",
+                ),
+                ScannerSetupRow(
+                    ticker="NVDA",
+                    score=None,
+                    vwap_extension_label="-0.4%  Near",
+                    vwap_extension_percent=-0.4,
+                    momentum="Flat",
+                ),
+            ],
+        )
+    )
+
+    assert "8/8" in html
+    assert "5/8" in html
+    assert "0/8" in html
+    assert "streamlit-scanner-score-bar" in html
+    for tone in ("tone-strong", "tone-good", "tone-watch", "tone-danger", "tone-neutral", "tone-info"):
+        assert tone in html
+
+
+def test_scanner_setup_table_html_escapes_values_and_renders_reasons():
+    html = streamlit_app_module.scanner_setup_table_html(
+        ScannerResponse(
+            generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+            watchlist=["<BAD>"],
+            setup_rows=[
+                ScannerSetupRow(
+                    ticker="<BAD>",
+                    score=7,
+                    signal="<script>alert('x')</script>",
+                    best_support="<support>",
+                    support_reason="held <twice>",
+                    best_resistance="<resistance>",
+                    resistance_reason="rejected <once>",
+                    warnings=["warning <x>"],
+                    data_notes=["note <y>"],
+                )
+            ],
+        )
+    )
+
+    assert "<BAD>" not in html
+    assert "&lt;BAD&gt;" in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;" in html
+    assert "streamlit-scanner-reason" in html
+    assert "held &lt;twice&gt;" in html
+    assert "rejected &lt;once&gt;" in html
+    assert "warning &lt;x&gt;" in html
+    assert "note &lt;y&gt;" in html
 
 
 def test_scanner_setup_frame_formats_zero_and_missing_scores():
