@@ -68,13 +68,25 @@ def test_static_score_analytics_mounts_below_charts():
 
 
 def test_static_report_search_filters_charts_and_score_analytics():
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
     js = Path("app/static/app.js").read_text(encoding="utf-8")
 
-    assert 'reportSearchEl?.addEventListener("input", () => {\n  renderCurrentReport();\n});' in js
+    assert 'id="report-search-status"' in html
+    assert 'const reportSearchStatusEl = document.querySelector("#report-search-status");' in js
+    assert 'reportSearchEl?.addEventListener("input", applyReportSearch);' in js
+    assert 'reportSearchEl?.addEventListener("search", applyReportSearch);' in js
+    assert 'reportSearchEl?.addEventListener("keydown", (event) => {' in js
+    assert 'if (event.key !== "Enter") return;' in js
+    assert "event.preventDefault();" in js
+    assert "applyReportSearch({ normalizeInput: true });" in js
+    assert "function applyReportSearch(options = {})" in js
+    assert "reportSearchEl.value = searchTickerTerms(reportSearchEl.value).join(\", \");" in js
     assert "function renderCurrentReport()" in js
+    assert "updateReportSearchStatus(visibleMetrics.length, currentReport.metrics.length);" in js
     assert "renderCharts();\n  renderScoreAnalytics();" in js
     assert "function visibleScoreTickers()" in js
     assert "return filteredReportMetrics().map((metric) => metric.ticker);" in js
+    assert "const metrics = filteredReportMetrics();" in js
 
 
 def test_static_score_level_basis_stays_synced_with_level_filter():
