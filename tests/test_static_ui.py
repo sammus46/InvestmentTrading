@@ -57,3 +57,29 @@ def test_static_theme_uses_light_surfaces_for_light_mode_actions():
     assert "--action-primary-text: #ccfbf1" in dark_css
     assert "--emphasis-bg: #0b2f2d" in dark_css
     assert "--major-market-bg: #080d12" in dark_css
+
+
+def test_static_score_analytics_mounts_below_charts():
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+
+    assert 'id="charts-section"' in html
+    assert 'id="score-analytics-section"' in html
+    assert html.index('id="charts-section"') < html.index('id="score-analytics-section"')
+
+
+def test_static_report_search_filters_charts_and_score_analytics():
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+
+    assert 'reportSearchEl?.addEventListener("input", () => {\n  renderCurrentReport();\n});' in js
+    assert "function renderCurrentReport()" in js
+    assert "renderCharts();\n  renderScoreAnalytics();" in js
+    assert "function visibleScoreTickers()" in js
+    assert "return filteredReportMetrics().map((metric) => metric.ticker);" in js
+
+
+def test_static_score_level_basis_stays_synced_with_level_filter():
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+
+    assert 'level_basis: levelFilter' in js
+    assert 'if (key === "levelBasis") {\n    setLevelFilter(value);' in js
+    assert 'renderScoreSelect("Basis", "levelBasis", levelFilter' in js

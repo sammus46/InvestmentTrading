@@ -27,6 +27,9 @@ ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"
 DisplayRowKind = Literal["price", "percent", "date", "text"]
 DisplayRowEmphasis = Literal["normal", "priority", "current"]
 ReportLayoutName = Literal["grid", "price_ladder", "compact", "compare"]
+ScoreHistoryRange = Literal["7D", "30D", "90D", "1Y", "All"]
+ScoreMetricName = Literal["setup", "level", "both"]
+LevelScoreBasisName = Literal["all", "scanner", "weight_20"]
 
 CHART_INTERVALS_BY_RANGE: dict[ChartRange, tuple[ChartInterval, ...]] = {
     "1D": ("1m", "2m", "5m", "15m", "30m", "1h"),
@@ -345,6 +348,74 @@ class GenerateResponse(BaseModel):
 
     generated_at: datetime
     metrics: list[EquityMetrics]
+
+
+class ScoreHistoryRequest(BaseModel):
+    """Request payload for persisted ticker score trend analytics."""
+
+    tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
+    range: ScoreHistoryRange = "30D"
+    score_metric: ScoreMetricName = "both"
+    level_basis: LevelScoreBasisName = "all"
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def split_ticker_input(cls, value: object) -> list[str]:
+        """Accept either a list or comma/space/newline separated ticker text."""
+        return GenerateRequest.split_ticker_input(value)
+
+
+class ScoreHistoryPoint(BaseModel):
+    """One stored daily score point for a ticker."""
+
+    date: Date
+    setup_score: int | None = None
+    level_score: int | None = None
+    level_score_normalized: float | None = None
+    level_count: int = 0
+
+
+class ScoreHistoryTicker(BaseModel):
+    """Score trend series and latest deltas for one ticker."""
+
+    ticker: str
+    points: list[ScoreHistoryPoint] = Field(default_factory=list)
+    latest_setup_score: int | None = None
+    latest_level_score: int | None = None
+    latest_level_score_normalized: float | None = None
+    latest_level_count: int = 0
+    setup_delta_1d: int | None = None
+    setup_delta_5d: int | None = None
+    level_delta_1d: int | None = None
+    level_delta_5d: int | None = None
+    level_normalized_delta_1d: float | None = None
+    level_normalized_delta_5d: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ScoreHistorySummary(BaseModel):
+    """Aggregate score trend summary for the requested tickers."""
+
+    ticker_count: int = 0
+    tracked_ticker_count: int = 0
+    average_setup_score: float | None = None
+    average_level_score: float | None = None
+    average_level_score_normalized: float | None = None
+    improving_count: int = 0
+    declining_count: int = 0
+    flat_or_new_count: int = 0
+
+
+class ScoreHistoryResponse(BaseModel):
+    """Persisted ticker score trend analytics response."""
+
+    generated_at: datetime
+    range: ScoreHistoryRange
+    score_metric: ScoreMetricName
+    level_basis: LevelScoreBasisName
+    summary: ScoreHistorySummary
+    tickers: list[ScoreHistoryTicker] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ScannerRequest(BaseModel):

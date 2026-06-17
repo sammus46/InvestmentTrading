@@ -26,6 +26,16 @@ const NEWS_CATEGORY_LABELS = {
 
 const CHART_TYPES = ["line", "candles"];
 const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
+const SCORE_ANALYTICS_RANGES = ["7D", "30D", "90D", "1Y", "All"];
+const SCORE_ANALYTICS_METRICS = ["setup", "level", "both"];
+const SCORE_ANALYTICS_MOVEMENTS = ["all", "improving", "declining", "flat"];
+const SCORE_ANALYTICS_SORTS = ["watchlist", "setup", "level", "gain", "drop"];
+const DEFAULT_SCORE_ANALYTICS_SETTINGS = {
+  range: "30D",
+  scoreMetric: "both",
+  movement: "all",
+  sort: "watchlist",
+};
 const LEVEL_WEIGHT_MIN = 0;
 const LEVEL_WEIGHT_MAX = 50;
 let LEVEL_TYPE_WEIGHT_DEFAULTS = {
@@ -70,6 +80,7 @@ const DEFAULT_SETTINGS = {
   autoRefresh: true,
   scannerView: "auto",
   newsPerTicker: NEWS_EXPANDED_HEADLINE_COUNT,
+  scoreAnalytics: DEFAULT_SCORE_ANALYTICS_SETTINGS,
 };
 const LEVEL_FILTERS = [
   { id: "all", label: "All Levels", shortLabel: "All" },
@@ -174,6 +185,7 @@ const scannerGeneratedAtEl = document.querySelector("#scanner-generated-at");
 const scannerSetupEl = document.querySelector("#scanner-setup-results");
 const saveStateEl = document.querySelector("#save-state");
 const chartsSectionEl = document.querySelector("#charts-section");
+const scoreAnalyticsSectionEl = document.querySelector("#score-analytics-section");
 const viewNavButtons = [...document.querySelectorAll("[data-view]")];
 const viewPanels = {
   levels: document.querySelector("#view-levels"),
@@ -224,6 +236,8 @@ let currentScanner = null;
 let currentAnalytics = null;
 let currentMarketSnapshot = null;
 let currentChartHistory = null;
+let currentScoreHistory = null;
+let scoreAnalyticsError = "";
 let appSettings = loadStoredSettings();
 let watchlistTickers = loadStoredWatchlist();
 let scannerSort = { key: "score", direction: "desc" };
@@ -232,6 +246,7 @@ let expandedNewsTickers = new Set();
 let chartSettings = loadStoredChartSettings();
 let reportLayout = loadStoredReportLayout();
 let levelFilter = appSettings.levelFilter;
+let scoreAnalyticsSettings = appSettings.scoreAnalytics;
 let watchlistRefreshTimer = null;
 let autoRefreshTimer = null;
 let newsEnrichmentPollTimer = null;
@@ -250,6 +265,7 @@ const requestState = {
   analytics: { controller: null, seq: 0 },
   snapshot: { controller: null, seq: 0 },
   chart: { controller: null, seq: 0 },
+  score: { controller: null, seq: 0 },
 };
 const tickerChartRequests = new Map();
 
@@ -474,6 +490,12 @@ chartsSectionEl.addEventListener("click", (event) => {
   }
 });
 
+scoreAnalyticsSectionEl?.addEventListener("change", (event) => {
+  const control = event.target.closest("[data-score-setting]");
+  if (!control) return;
+  updateScoreAnalyticsSetting(control.dataset.scoreSetting, control.value);
+});
+
 resultsEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-move]");
   if (!button || !currentReport) return;
@@ -517,6 +539,7 @@ async function initializeApp() {
   await loadAppConfig();
   appSettings = normalizeSettings(appSettings);
   chartSettings = appSettings.chartSettings;
+  scoreAnalyticsSettings = appSettings.scoreAnalytics;
   reportLayout = appSettings.reportLayout;
   levelFilter = appSettings.levelFilter;
   persistSettings();
@@ -726,6 +749,7 @@ function normalizeSettings(candidate = {}) {
     autoRefresh: typeof candidate.autoRefresh === "boolean" ? candidate.autoRefresh : DEFAULT_SETTINGS.autoRefresh,
     scannerView: normalizeScannerView(candidate.scannerView),
     newsPerTicker: normalizeNewsCount(candidate.newsPerTicker),
+    scoreAnalytics: normalizeScoreAnalyticsSettings(candidate.scoreAnalytics),
   };
 }
 
@@ -753,6 +777,20 @@ function normalizeNewsCount(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return DEFAULT_SETTINGS.newsPerTicker;
   return Math.max(1, Math.min(NEWS_MAX_HEADLINE_COUNT, Math.round(number)));
+}
+
+function normalizeScoreAnalyticsSettings(candidate = {}) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  return {
+    range: SCORE_ANALYTICS_RANGES.includes(source.range) ? source.range : DEFAULT_SCORE_ANALYTICS_SETTINGS.range,
+    scoreMetric: SCORE_ANALYTICS_METRICS.includes(source.scoreMetric)
+      ? source.scoreMetric
+      : DEFAULT_SCORE_ANALYTICS_SETTINGS.scoreMetric,
+    movement: SCORE_ANALYTICS_MOVEMENTS.includes(source.movement)
+      ? source.movement
+      : DEFAULT_SCORE_ANALYTICS_SETTINGS.movement,
+    sort: SCORE_ANALYTICS_SORTS.includes(source.sort) ? source.sort : DEFAULT_SCORE_ANALYTICS_SETTINGS.sort,
+  };
 }
 
 function normalizeWeightDefaults(candidate = {}) {
@@ -810,6 +848,9 @@ function setLevelFilter(value) {
   updateSettings({ levelFilter });
   renderLevelFilterControl();
   renderCurrentReport();
+  if (currentScoreHistory || currentReport || currentScanner) {
+    loadScoreHistory();
+  }
 }
 
 function renderSettingsControls() {
@@ -1055,6 +1096,8 @@ function clearLoadedData() {
   currentAnalytics = null;
   currentMarketSnapshot = null;
   currentChartHistory = null;
+  currentScoreHistory = null;
+  scoreAnalyticsError = "";
   chartDataCache.clear();
   Object.keys(chartOverrides).forEach((ticker) => delete chartOverrides[ticker]);
   disposeCharts();
@@ -1063,6 +1106,7 @@ function clearLoadedData() {
   resultsEl.className = "results empty";
   resultsEl.textContent = "";
   renderCharts();
+  renderScoreAnalytics();
   renderNewsEmptyState();
   renderMarketSnapshotEmptyState();
   renderScannerEmptyState();
@@ -1102,6 +1146,10 @@ function filterCurrentDataToWatchlist() {
     currentMarketSnapshot.watchlist = currentMarketSnapshot.watchlist.filter((row) => watchlistTickers.includes(row.symbol));
     renderWatchlistPerformance(currentMarketSnapshot.watchlist);
   }
+  if (currentScoreHistory?.tickers) {
+    currentScoreHistory.tickers = currentScoreHistory.tickers.filter((row) => watchlistTickers.includes(row.ticker));
+    renderScoreAnalytics();
+  }
 }
 
 function reorderCurrentDataToWatchlist() {
@@ -1124,6 +1172,10 @@ function reorderCurrentDataToWatchlist() {
   if (currentMarketSnapshot?.watchlist) {
     currentMarketSnapshot.watchlist.sort(byTickerOrder);
     renderWatchlistPerformance(currentMarketSnapshot.watchlist);
+  }
+  if (currentScoreHistory?.tickers) {
+    currentScoreHistory.tickers.sort(byTickerOrder);
+    renderScoreAnalytics();
   }
 }
 
@@ -1196,6 +1248,15 @@ function buildChartHistoryPayload(settings = chartSettings, tickers = orderedPay
     tickers,
     range: settings.range,
     interval: settings.interval,
+  };
+}
+
+function buildScoreHistoryPayload() {
+  return {
+    tickers: orderedPayloadTickers({ useCurrentReportOrder: true }),
+    range: scoreAnalyticsSettings.range,
+    score_metric: scoreAnalyticsSettings.scoreMetric,
+    level_basis: levelFilter,
   };
 }
 
@@ -1439,6 +1500,7 @@ async function fetchLevels(request) {
   if (!request.isCurrent()) return;
   renderReport(report);
   setStatus("", "");
+  loadScoreHistory();
   loadChartHistory().catch((error) => {
     if (!isAbortError(error)) setStatus(readableError(error), "error");
   });
@@ -1449,6 +1511,7 @@ async function fetchScanner(request) {
   if (!request.isCurrent()) return;
   renderScanner(scanner);
   setScannerStatus(scanner.warnings?.length ? scanner.warnings.join(" ") : "", scanner.warnings?.length ? "error" : "");
+  loadScoreHistory();
 }
 
 function setRunControlsDisabled(disabled) {
@@ -1458,6 +1521,47 @@ function setRunControlsDisabled(disabled) {
   const shouldDisable = runControlsDisableDepth > 0;
   generateButton.disabled = shouldDisable;
   pdfButton.disabled = shouldDisable;
+}
+
+async function loadScoreHistory() {
+  if (!watchlistTickers.length) {
+    currentScoreHistory = null;
+    scoreAnalyticsError = "";
+    renderScoreAnalytics();
+    return;
+  }
+  const request = startRequest("score");
+  try {
+    const scoreHistory = await postJson("/api/score-history", buildScoreHistoryPayload(), { signal: request.signal });
+    if (!request.isCurrent()) return;
+    currentScoreHistory = scoreHistory;
+    scoreAnalyticsError = "";
+    renderScoreAnalytics();
+  } catch (error) {
+    if (isAbortError(error)) return;
+    currentScoreHistory = null;
+    scoreAnalyticsError = readableError(error);
+    renderScoreAnalytics();
+  } finally {
+    request.complete();
+  }
+}
+
+function updateScoreAnalyticsSetting(key, value) {
+  if (key === "levelBasis") {
+    setLevelFilter(value);
+    return;
+  }
+  const next = normalizeScoreAnalyticsSettings({
+    ...scoreAnalyticsSettings,
+    [key]: value,
+  });
+  scoreAnalyticsSettings = next;
+  updateSettings({ scoreAnalytics: next });
+  renderScoreAnalytics();
+  if (["range", "scoreMetric"].includes(key)) {
+    loadScoreHistory();
+  }
 }
 
 async function loadSectorAnalytics() {
@@ -1534,6 +1638,7 @@ function renderCurrentReport() {
     resultsEl.className = "results empty";
     resultsEl.textContent = "";
     renderCharts();
+    renderScoreAnalytics();
     return;
   }
   const visibleMetrics = filteredReportMetrics();
@@ -1542,6 +1647,7 @@ function renderCurrentReport() {
     const terms = searchTickerTerms(reportSearchEl?.value || "");
     resultsEl.textContent = terms.length ? `No ticker matching "${terms.join(", ")}".` : "";
     renderCharts();
+    renderScoreAnalytics();
     return;
   }
   resultsEl.className = `results report-layout-${reportLayout.replace("_", "-")}`;
@@ -1551,6 +1657,7 @@ function renderCurrentReport() {
   });
   persistCardOrder(currentReport.metrics.map((metric) => metric.ticker));
   renderCharts();
+  renderScoreAnalytics();
 }
 
 function filteredReportMetrics() {
@@ -2619,6 +2726,306 @@ function formatChartOption(option) {
 
 function cssEscape(value) {
   return window.CSS?.escape ? window.CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
+}
+
+function renderScoreAnalytics() {
+  if (!scoreAnalyticsSectionEl) return;
+  const shouldShow = Boolean(currentReport?.metrics?.length || currentScanner?.setup_rows?.length || currentScoreHistory || scoreAnalyticsError);
+  if (!shouldShow) {
+    scoreAnalyticsSectionEl.hidden = true;
+    scoreAnalyticsSectionEl.className = "score-analytics-section empty";
+    scoreAnalyticsSectionEl.innerHTML = "";
+    return;
+  }
+
+  scoreAnalyticsSectionEl.hidden = false;
+  scoreAnalyticsSectionEl.className = "score-analytics-section";
+  const controls = renderScoreAnalyticsControls();
+  if (scoreAnalyticsError) {
+    scoreAnalyticsSectionEl.innerHTML = `
+      ${controls}
+      <div class="score-empty">${escapeHtml(scoreAnalyticsError)}</div>
+    `;
+    return;
+  }
+  if (!currentScoreHistory) {
+    scoreAnalyticsSectionEl.innerHTML = `
+      ${controls}
+      <div class="score-empty">Score history will appear after levels or scanner data refreshes.</div>
+    `;
+    return;
+  }
+
+  const rows = sortedScoreRows(filteredScoreRows(currentScoreHistory.tickers || []));
+  const warnings = [
+    ...(currentScoreHistory.warnings || []),
+    ...rows.flatMap((row) => row.warnings || []),
+  ];
+  const warningMarkup = warnings.length
+    ? `<details class="score-warning"><summary>${warnings.length} score history note${warnings.length === 1 ? "" : "s"}</summary><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></details>`
+    : "";
+
+  if (!rows.length) {
+    const terms = searchTickerTerms(reportSearchEl?.value || "");
+    scoreAnalyticsSectionEl.innerHTML = `
+      ${controls}
+      ${warningMarkup}
+      <div class="score-empty">${terms.length ? `No score history matching "${terms.join(", ")}".` : "No score history matches the selected filters."}</div>
+    `;
+    return;
+  }
+
+  scoreAnalyticsSectionEl.innerHTML = `
+    ${controls}
+    ${warningMarkup}
+    ${renderScoreSummary(rows)}
+    <div class="score-trend-grid">
+      ${rows.map(renderScoreTrendCard).join("")}
+    </div>
+  `;
+}
+
+function renderScoreAnalyticsControls() {
+  return `
+    <div class="score-analytics-header">
+      <div>
+        <h3>Score Analytics</h3>
+        <p>Daily setup and weighted level score trends for the visible tickers.</p>
+      </div>
+      <div class="score-toolbar" aria-label="Score analytics controls">
+        ${renderScoreSelect("Range", "range", scoreAnalyticsSettings.range, SCORE_ANALYTICS_RANGES, scoreOptionLabel)}
+        ${renderScoreSelect("Metric", "scoreMetric", scoreAnalyticsSettings.scoreMetric, SCORE_ANALYTICS_METRICS, scoreOptionLabel)}
+        ${renderScoreSelect("Basis", "levelBasis", levelFilter, LEVEL_FILTERS.map((filter) => filter.id), scoreOptionLabel)}
+        ${renderScoreSelect("Move", "movement", scoreAnalyticsSettings.movement, SCORE_ANALYTICS_MOVEMENTS, scoreOptionLabel)}
+        ${renderScoreSelect("Sort", "sort", scoreAnalyticsSettings.sort, SCORE_ANALYTICS_SORTS, scoreOptionLabel)}
+      </div>
+    </div>
+  `;
+}
+
+function renderScoreSelect(label, key, value, options, labelFor = (item) => item) {
+  return `
+    <label class="score-select">
+      <span>${escapeHtml(label)}</span>
+      <select data-score-setting="${escapeHtml(key)}">
+        ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(labelFor(option))}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function scoreOptionLabel(option) {
+  const labels = {
+    "7D": "7D",
+    "30D": "30D",
+    "90D": "90D",
+    "1Y": "1Y",
+    All: "All",
+    setup: "Setup",
+    level: "Level",
+    both: "Both",
+    all: "All",
+    scanner: "Scanner",
+    weight_20: "Weight 20+",
+    improving: "Improving",
+    declining: "Declining",
+    flat: "Flat/New",
+    watchlist: "Watchlist",
+    gain: "Biggest Gain",
+    drop: "Biggest Drop",
+  };
+  return labels[option] || option;
+}
+
+function filteredScoreRows(rows) {
+  const visibleTickers = visibleScoreTickers();
+  const visibleSet = visibleTickers === null ? null : new Set(visibleTickers);
+  const movementFilter = scoreAnalyticsSettings.movement;
+  return rows
+    .filter((row) => !visibleSet || visibleSet.has(row.ticker))
+    .filter((row) => movementFilter === "all" || scoreMovement(row) === movementFilter);
+}
+
+function visibleScoreTickers() {
+  if (currentReport?.metrics?.length) {
+    return filteredReportMetrics().map((metric) => metric.ticker);
+  }
+  const terms = searchTickerTerms(reportSearchEl?.value || "");
+  const tickers = (currentScoreHistory?.tickers || []).map((row) => row.ticker);
+  if (!terms.length) return null;
+  return tickers.filter((ticker) => terms.some((term) => String(ticker || "").toUpperCase().includes(term)));
+}
+
+function sortedScoreRows(rows) {
+  const order = orderedPayloadTickers({ useCurrentReportOrder: true });
+  const indexFor = (ticker) => {
+    const index = order.indexOf(ticker);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  const valueOrEmpty = (value) => value === null || value === undefined ? Number.NEGATIVE_INFINITY : Number(value);
+  return [...rows].sort((left, right) => {
+    if (scoreAnalyticsSettings.sort === "setup") {
+      return valueOrEmpty(right.latest_setup_score) - valueOrEmpty(left.latest_setup_score);
+    }
+    if (scoreAnalyticsSettings.sort === "level") {
+      return valueOrEmpty(right.latest_level_score_normalized) - valueOrEmpty(left.latest_level_score_normalized);
+    }
+    if (scoreAnalyticsSettings.sort === "gain") {
+      return valueOrEmpty(scoreMovementAmount(right)) - valueOrEmpty(scoreMovementAmount(left));
+    }
+    if (scoreAnalyticsSettings.sort === "drop") {
+      const leftValue = scoreMovementAmount(left);
+      const rightValue = scoreMovementAmount(right);
+      const leftSort = leftValue === null || leftValue === undefined ? Number.POSITIVE_INFINITY : Number(leftValue);
+      const rightSort = rightValue === null || rightValue === undefined ? Number.POSITIVE_INFINITY : Number(rightValue);
+      return leftSort - rightSort;
+    }
+    return indexFor(left.ticker) - indexFor(right.ticker);
+  });
+}
+
+function renderScoreSummary(rows) {
+  const setupValues = rows.map((row) => row.latest_setup_score).filter((value) => value !== null && value !== undefined);
+  const levelValues = rows.map((row) => row.latest_level_score_normalized).filter((value) => value !== null && value !== undefined);
+  const improving = rows.filter((row) => scoreMovement(row) === "improving").length;
+  const declining = rows.filter((row) => scoreMovement(row) === "declining").length;
+  const flat = rows.length - improving - declining;
+  return `
+    <div class="score-summary-strip">
+      ${renderScoreSummaryTile("Tracked", rows.filter((row) => row.points?.length).length, `${rows.length} visible`)}
+      ${renderScoreSummaryTile("Avg Setup", averageValue(setupValues), "0-8")}
+      ${renderScoreSummaryTile("Avg Level", averageValue(levelValues), "normalized")}
+      ${renderScoreSummaryTile("Improving", improving, "1D")}
+      ${renderScoreSummaryTile("Declining", declining, "1D")}
+      ${renderScoreSummaryTile("Flat/New", flat, "1D")}
+    </div>
+  `;
+}
+
+function renderScoreSummaryTile(label, value, meta) {
+  return `
+    <div class="score-summary-tile">
+      <span>${escapeHtml(label)}</span>
+      <strong>${formatScoreSummaryValue(value)}</strong>
+      <small>${escapeHtml(meta)}</small>
+    </div>
+  `;
+}
+
+function renderScoreTrendCard(row) {
+  const showSetup = scoreAnalyticsSettings.scoreMetric !== "level";
+  const showLevel = scoreAnalyticsSettings.scoreMetric !== "setup";
+  const movement = scoreMovement(row);
+  return `
+    <article class="score-trend-card movement-${movement}">
+      <header>
+        <div>
+          <h4>${escapeHtml(row.ticker)}</h4>
+          <span>${(row.points || []).length} point${(row.points || []).length === 1 ? "" : "s"}</span>
+        </div>
+        <span class="score-movement ${movement}">${escapeHtml(scoreOptionLabel(movement))}</span>
+      </header>
+      <div class="score-latest-grid">
+        ${showSetup ? renderScoreLatest("Setup", formatSetupScore(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d) : ""}
+        ${showLevel ? renderScoreLatest("Level", formatLevelScore(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count), row.level_normalized_delta_1d, row.level_normalized_delta_5d) : ""}
+      </div>
+      <div class="score-sparkline-grid">
+        ${showSetup ? renderScoreSparkline(row.points || [], "setup_score", "Setup score") : ""}
+        ${showLevel ? renderScoreSparkline(row.points || [], "level_score_normalized", "Level score") : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderScoreLatest(label, value, delta1, delta5) {
+  return `
+    <div class="score-latest">
+      <span>${escapeHtml(label)}</span>
+      <strong>${value}</strong>
+      <small>1D ${formatScoreDelta(delta1)} / 5D ${formatScoreDelta(delta5)}</small>
+    </div>
+  `;
+}
+
+function renderScoreSparkline(points, field, label) {
+  const series = (points || [])
+    .map((point, index) => ({ index, date: point.date, value: Number(point[field]) }))
+    .filter((point) => Number.isFinite(point.value));
+  if (series.length < 2) {
+    return `
+      <div class="score-sparkline-card">
+        <span>${escapeHtml(label)}</span>
+        <div class="score-sparkline-empty"></div>
+      </div>
+    `;
+  }
+  const width = 180;
+  const height = 48;
+  let minValue = Math.min(...series.map((point) => point.value));
+  let maxValue = Math.max(...series.map((point) => point.value));
+  if (minValue === maxValue) {
+    minValue -= 1;
+    maxValue += 1;
+  }
+  const pointsText = series.map((point, index) => {
+    const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
+    const y = height - ((point.value - minValue) / (maxValue - minValue)) * height;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+  return `
+    <div class="score-sparkline-card">
+      <span>${escapeHtml(label)}</span>
+      <svg class="score-sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)} trend">
+        <title>${escapeHtml(label)} trend from ${escapeHtml(series[0].date)} to ${escapeHtml(series[series.length - 1].date)}</title>
+        <polyline points="${pointsText}"></polyline>
+      </svg>
+    </div>
+  `;
+}
+
+function scoreMovement(row) {
+  const movement = scoreMovementAmount(row);
+  if (movement === null || movement === undefined || Math.abs(Number(movement)) < 0.01) return "flat";
+  return Number(movement) > 0 ? "improving" : "declining";
+}
+
+function scoreMovementAmount(row) {
+  if (scoreAnalyticsSettings.scoreMetric === "setup") return row.setup_delta_1d;
+  if (scoreAnalyticsSettings.scoreMetric === "level") return row.level_normalized_delta_1d;
+  const values = [row.setup_delta_1d, row.level_normalized_delta_1d]
+    .filter((value) => value !== null && value !== undefined)
+    .map(Number);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+}
+
+function averageValue(values) {
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + Number(value), 0) / values.length;
+}
+
+function formatScoreSummaryValue(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "&mdash;";
+  return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+function formatSetupScore(value) {
+  if (value === null || value === undefined) return "&mdash;";
+  return `${Number(value)}/8`;
+}
+
+function formatLevelScore(score, normalized, count) {
+  if (score === null || score === undefined) return "&mdash;";
+  const normalizedText = normalized === null || normalized === undefined ? "" : ` (${Number(normalized).toFixed(1)}%)`;
+  const countText = Number(count) > 0 ? ` / ${Number(count)} levels` : "";
+  return `${Number(score).toLocaleString()}${normalizedText}${countText}`;
+}
+
+function formatScoreDelta(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '<span class="score-delta neutral">&mdash;</span>';
+  const number = Number(value);
+  const tone = number > 0 ? "positive" : number < 0 ? "negative" : "neutral";
+  const formatted = `${number > 0 ? "+" : ""}${Number.isInteger(number) ? number : number.toFixed(1)}`;
+  return `<span class="score-delta ${tone}">${escapeHtml(formatted)}</span>`;
 }
 
 function moveMetric(ticker, direction) {
