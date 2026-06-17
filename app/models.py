@@ -372,6 +372,7 @@ class ScoreHistoryPoint(BaseModel):
     setup_score: int | None = None
     level_score: int | None = None
     level_score_normalized: float | None = None
+    heat_score: float | None = None
     level_count: int = 0
 
 
@@ -383,6 +384,7 @@ class ScoreHistoryTicker(BaseModel):
     latest_setup_score: int | None = None
     latest_level_score: int | None = None
     latest_level_score_normalized: float | None = None
+    latest_heat_score: float | None = None
     latest_level_count: int = 0
     setup_delta_1d: int | None = None
     setup_delta_5d: int | None = None
@@ -390,6 +392,8 @@ class ScoreHistoryTicker(BaseModel):
     level_delta_5d: int | None = None
     level_normalized_delta_1d: float | None = None
     level_normalized_delta_5d: float | None = None
+    heat_delta_1d: float | None = None
+    heat_delta_5d: float | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -401,6 +405,7 @@ class ScoreHistorySummary(BaseModel):
     average_setup_score: float | None = None
     average_level_score: float | None = None
     average_level_score_normalized: float | None = None
+    average_heat_score: float | None = None
     improving_count: int = 0
     declining_count: int = 0
     flat_or_new_count: int = 0

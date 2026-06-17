@@ -15,9 +15,11 @@ from app.models import (
     OpeningRange,
     PremarketRange,
     ScannerSetupRow,
+    ScoreHistoryPoint,
     ScoreHistoryRequest,
     ScoreHistoryResponse,
     ScoreHistorySummary,
+    ScoreHistoryTicker,
     SwingLevels,
     TechnicalLevels,
 )
@@ -73,6 +75,14 @@ def test_level_score_respects_basis_and_near_current_window():
     assert weight_score == {"score": 50, "normalized_score": 50.0, "level_count": 2}
 
 
+def test_heat_score_reweights_available_components():
+    assert ScoreHistoryService.heat_score(4, 50.0) == 50.0
+    assert ScoreHistoryService.heat_score(8, 50.0) == 80.0
+    assert ScoreHistoryService.heat_score(6, None) == 75.0
+    assert ScoreHistoryService.heat_score(None, 62.5) == 62.5
+    assert ScoreHistoryService.heat_score(None, None) is None
+
+
 def test_score_history_merges_same_day_records(tmp_path):
     service = ScoreHistoryService(
         tmp_path / "score_history.json",
@@ -88,6 +98,8 @@ def test_score_history_merges_same_day_records(tmp_path):
     assert len(response.tickers[0].points) == 1
     assert response.tickers[0].points[0].setup_score == 7
     assert response.tickers[0].points[0].level_score == 50
+    assert response.tickers[0].points[0].heat_score == 72.5
+    assert response.tickers[0].latest_heat_score == 72.5
     assert response.tickers[0].latest_level_count == 2
 
 
@@ -156,9 +168,12 @@ def test_score_history_response_summarizes_deltas(tmp_path):
 
     assert ticker.setup_delta_1d == 1
     assert ticker.level_delta_1d == 20
+    assert ticker.heat_delta_1d == 15.5
     assert ticker.setup_delta_5d is None
+    assert ticker.latest_heat_score == 73.0
     assert response.summary.average_setup_score == 6.0
     assert response.summary.average_level_score_normalized == 70.0
+    assert response.summary.average_heat_score == 73.0
     assert response.summary.improving_count == 1
 
 
@@ -170,7 +185,16 @@ def test_score_history_request_validation_and_route(monkeypatch):
                 range=score_range,
                 score_metric=score_metric,
                 level_basis=level_basis,
-                summary=ScoreHistorySummary(ticker_count=len(tickers)),
+                summary=ScoreHistorySummary(ticker_count=len(tickers), average_heat_score=80.0),
+                tickers=[
+                    ScoreHistoryTicker(
+                        ticker=tickers[0],
+                        points=[
+                            ScoreHistoryPoint(date=date(2026, 6, 17), setup_score=8, level_score_normalized=50.0, heat_score=80.0)
+                        ],
+                        latest_heat_score=80.0,
+                    )
+                ],
             )
 
     monkeypatch.setattr("app.main.score_history_service", FakeScoreHistory())
@@ -182,5 +206,8 @@ def test_score_history_request_validation_and_route(monkeypatch):
     assert response.score_metric == "setup"
     assert response.level_basis == "scanner"
     assert response.summary.ticker_count == 2
+    assert response.summary.average_heat_score == 80.0
+    assert response.tickers[0].points[0].heat_score == 80.0
+    assert response.tickers[0].latest_heat_score == 80.0
     with pytest.raises(ValidationError):
         ScoreHistoryRequest(tickers="AAPL", range="BAD")
