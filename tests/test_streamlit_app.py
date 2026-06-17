@@ -25,6 +25,10 @@ from app.models import (
     ScannerResponse,
     ScannerSetupRow,
     SectorAnalyticsResponse,
+    ScoreHistoryPoint,
+    ScoreHistoryResponse,
+    ScoreHistorySummary,
+    ScoreHistoryTicker,
     SwingLevels,
     TechnicalLevels,
     TickerChartHistory,
@@ -98,6 +102,10 @@ def streamlit_app_smoke_script(state_path: str) -> None:
         PremarketRange,
         ScannerResponse,
         ScannerSetupRow,
+        ScoreHistoryPoint,
+        ScoreHistoryResponse,
+        ScoreHistorySummary,
+        ScoreHistoryTicker,
         SwingLevels,
         TechnicalLevels,
     )
@@ -143,6 +151,40 @@ def streamlit_app_smoke_script(state_path: str) -> None:
             del report
             return b"%PDF-1.4\n%%EOF"
 
+    class FakeScoreHistory:
+        def record_level_scores(self, metrics):
+            del metrics
+            return []
+
+        def record_setup_scores(self, rows):
+            del rows
+            return []
+
+        def build_response(self, tickers, *, score_range="30D", score_metric="both", level_basis="all"):
+            return ScoreHistoryResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                range=score_range,
+                score_metric=score_metric,
+                level_basis=level_basis,
+                summary=ScoreHistorySummary(ticker_count=len(tickers), tracked_ticker_count=len(tickers)),
+                tickers=[
+                    ScoreHistoryTicker(
+                        ticker=ticker,
+                        points=[
+                            ScoreHistoryPoint(date=datetime(2026, 6, 14, tzinfo=timezone.utc).date(), setup_score=4, level_score=40, level_score_normalized=40.0, level_count=2),
+                            ScoreHistoryPoint(date=datetime(2026, 6, 15, tzinfo=timezone.utc).date(), setup_score=5, level_score=50, level_score_normalized=50.0, level_count=2),
+                        ],
+                        latest_setup_score=5,
+                        latest_level_score=50,
+                        latest_level_score_normalized=50.0,
+                        latest_level_count=2,
+                        setup_delta_1d=1,
+                        level_normalized_delta_1d=10.0,
+                    )
+                    for ticker in tickers
+                ],
+            )
+
     def fake_build_chart_history(tickers, chart_range, interval, refresh_token=0):
         del tickers, refresh_token
         return ChartHistoryResponse(
@@ -155,6 +197,7 @@ def streamlit_app_smoke_script(state_path: str) -> None:
     original_market_data_service = app.market_data_service
     original_scanner_service = app.scanner_service
     original_pdf_report_service = app.pdf_report_service
+    original_score_history_service = app.score_history_service
     original_build_chart_history = app.build_chart_history
     original_render_auto_refresh_fragment = app.render_auto_refresh_fragment
     original_render_streamlit_theme_bridge = app.render_streamlit_theme_bridge
@@ -162,6 +205,7 @@ def streamlit_app_smoke_script(state_path: str) -> None:
         app.market_data_service = lambda: FakeMarketData()
         app.scanner_service = lambda: FakeScanner()
         app.pdf_report_service = lambda: FakePdf()
+        app.score_history_service = lambda: FakeScoreHistory()
         app.build_chart_history = fake_build_chart_history
         app.render_auto_refresh_fragment = lambda enabled, view: None
         app.render_streamlit_theme_bridge = lambda: None
@@ -170,6 +214,7 @@ def streamlit_app_smoke_script(state_path: str) -> None:
         app.market_data_service = original_market_data_service
         app.scanner_service = original_scanner_service
         app.pdf_report_service = original_pdf_report_service
+        app.score_history_service = original_score_history_service
         app.build_chart_history = original_build_chart_history
         app.render_auto_refresh_fragment = original_render_auto_refresh_fragment
         app.render_streamlit_theme_bridge = original_render_streamlit_theme_bridge
@@ -508,6 +553,34 @@ def test_streamlit_levels_view_uses_one_levels_scanner_run_action():
     assert "Run levels + news" not in source
 
 
+def test_streamlit_score_analytics_mounts_below_charts():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    chart_slot = source.index("chart_slot = st.empty()")
+    score_slot = source.index("score_slot = st.empty()", chart_slot)
+    final_render = source.index("score_slot=score_slot", score_slot)
+
+    assert chart_slot < score_slot < final_render
+
+
+def test_streamlit_report_search_filters_charts_and_score_analytics():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    assert 'report_search = st.text_input(\n                    "Search ticker"' in source
+    assert "visible_metrics = filter_report_metrics(report.metrics, report_search)" in source
+    assert "visible_tickers=tuple(metric.ticker for metric in visible_metrics)" in source
+    assert "search_query=report_search" in source
+
+
+def test_streamlit_score_level_basis_stays_synced_with_level_filter_without_hiding_charts():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+
+    assert "st.session_state.score_level_basis = selected" in source
+    assert "on_change=sync_score_level_basis_to_level_filter" in source
+    assert "if complete and chart_slot is not None:" in source
+    assert "elif report_search:" in source
+
+
 def test_streamlit_entrypoint_bootstraps_repo_root_before_app_imports():
     source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
 
@@ -559,6 +632,20 @@ def test_streamlit_level_search_filters_report_metrics():
     assert filter_report_metrics(metrics, "") == metrics
     assert filter_report_metrics(metrics, "zz") == []
     assert filter_report_metrics(metrics, "<script>") == []
+
+
+def test_streamlit_score_rows_filter_and_sort_by_movement():
+    rows = [
+        ScoreHistoryTicker(ticker="AAPL", latest_setup_score=5, latest_level_score_normalized=50.0, setup_delta_1d=1),
+        ScoreHistoryTicker(ticker="MSFT", latest_setup_score=7, latest_level_score_normalized=60.0, setup_delta_1d=-2),
+        ScoreHistoryTicker(ticker="NVDA", latest_setup_score=4, latest_level_score_normalized=70.0),
+    ]
+
+    improving = streamlit_app_module.filter_score_rows(rows, "improving", "setup")
+    assert [row.ticker for row in improving] == ["AAPL"]
+
+    sorted_rows = streamlit_app_module.sort_score_rows(rows, "setup", "both", ("NVDA", "AAPL", "MSFT"))
+    assert [row.ticker for row in sorted_rows] == ["MSFT", "AAPL", "NVDA"]
 
 
 def test_streamlit_watchlist_news_search_filters_ticker_groups():
@@ -781,6 +868,7 @@ def test_streamlit_app_initial_load_renders_levels_and_scanner(tmp_path):
     assert not app.exception
     assert "Levels" in [header.value for header in app.header]
     assert "Report" not in [header.value for header in app.header]
+    assert any("Score Analytics" in markdown.value for markdown in app.markdown)
     assert any("AAPL" in markdown.value for markdown in app.markdown)
     assert not any("Loading levels and scanner" in markdown.value for markdown in app.markdown)
 
