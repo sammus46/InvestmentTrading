@@ -56,13 +56,13 @@
           <h3 id="watchlist-heading">Tickers</h3>
           <span id="save-state" class="save-state">Saved locally</span>
         </div>
-        <form id="watchlist-form" class="watchlist-form">
+        <div class="watchlist-form" role="group" aria-labelledby="watchlist-heading">
           <label for="tickers">Ticker symbol</label>
           <div class="watchlist-add-row">
             <input id="tickers" type="text" placeholder="AAPL, MSFT, NVDA" autocomplete="off" />
-            <button id="add-ticker" class="primary icon-button" type="submit" aria-label="Add ticker">+</button>
+            <button id="add-ticker" class="primary icon-button" type="button" aria-label="Add ticker">+</button>
           </div>
-        </form>
+        </div>
         <ul id="watchlist-list" class="watchlist-list" aria-label="Saved ticker watchlist"></ul>
       </div>
 
