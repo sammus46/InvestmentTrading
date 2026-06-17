@@ -35,6 +35,7 @@ from app.models import (
     EquityMetrics,
     GenerateRequest,
     GenerateResponse,
+    LevelScoreBasisName,
     MarketSnapshotRequest,
     MarketSnapshotResponse,
     MetricName,
@@ -44,6 +45,10 @@ from app.models import (
     ScannerRequest,
     ScannerResponse,
     SectorAnalyticsResponse,
+    ScoreHistoryRange,
+    ScoreHistoryResponse,
+    ScoreHistoryTicker,
+    ScoreMetricName,
     TickerChartHistory,
     normalize_ticker_symbol,
     split_ticker_candidates,
@@ -52,6 +57,7 @@ from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 from app.services.scanner import ScannerService
+from app.services.score_history import ScoreHistoryService
 from app.services.display import (
     DEFAULT_LEVEL_FILTER,
     DEFAULT_REPORT_LAYOUT,
@@ -78,6 +84,29 @@ NEWS_CATEGORY_LABELS = {
 CHART_TYPE_OPTIONS = ("Line", "Candles")
 CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
 CHART_RANGE_LABELS = {"1Y": "1YR"}
+SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("7D", "30D", "90D", "1Y", "All")
+SCORE_ANALYTICS_METRICS: tuple[ScoreMetricName, ...] = ("setup", "level", "both")
+SCORE_ANALYTICS_MOVEMENTS = ("all", "improving", "declining", "flat")
+SCORE_ANALYTICS_SORTS = ("watchlist", "setup", "level", "gain", "drop")
+SCORE_OPTION_LABELS = {
+    "7D": "7D",
+    "30D": "30D",
+    "90D": "90D",
+    "1Y": "1Y",
+    "All": "All",
+    "setup": "Setup",
+    "level": "Level",
+    "both": "Both",
+    "all": "All",
+    "scanner": "Scanner",
+    "weight_20": "Weight 20+",
+    "improving": "Improving",
+    "declining": "Declining",
+    "flat": "Flat/New",
+    "watchlist": "Watchlist",
+    "gain": "Biggest Gain",
+    "drop": "Biggest Drop",
+}
 AUTO_REFRESH_SECONDS = 60
 STREAMLIT_REPORT_BATCH_SIZE = 3
 REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
@@ -174,6 +203,12 @@ def news_service() -> NewsService:
 def scanner_service() -> ScannerService:
     """Return one scanner service instance per Streamlit worker process."""
     return ScannerService(market_data_service())
+
+
+@st.cache_resource
+def score_history_service() -> ScoreHistoryService:
+    """Return one score-history store per Streamlit worker process."""
+    return ScoreHistoryService()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -464,6 +499,35 @@ def normalize_chart_interval(chart_range: ChartRange, value: object) -> ChartInt
     return candidate if candidate in options else CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]  # type: ignore[return-value]
 
 
+def normalize_score_history_range(value: object) -> ScoreHistoryRange:
+    """Return a supported score-history range."""
+    candidate = str(value or "")
+    return candidate if candidate in SCORE_ANALYTICS_RANGES else "30D"  # type: ignore[return-value]
+
+
+def normalize_score_metric(value: object) -> ScoreMetricName:
+    """Return a supported score analytics metric selector."""
+    candidate = str(value or "")
+    return candidate if candidate in SCORE_ANALYTICS_METRICS else "both"  # type: ignore[return-value]
+
+
+def normalize_score_movement(value: object) -> str:
+    """Return a supported score movement filter."""
+    candidate = str(value or "")
+    return candidate if candidate in SCORE_ANALYTICS_MOVEMENTS else "all"
+
+
+def normalize_score_sort(value: object) -> str:
+    """Return a supported score analytics sort option."""
+    candidate = str(value or "")
+    return candidate if candidate in SCORE_ANALYTICS_SORTS else "watchlist"
+
+
+def score_option_label(value: object) -> str:
+    """Return a human label for score analytics controls."""
+    return SCORE_OPTION_LABELS.get(str(value), str(value))
+
+
 def normalize_level_weight(value: object) -> int | None:
     """Return a supported custom level weight."""
     try:
@@ -667,6 +731,36 @@ def bump_streamlit_refresh_token(
     if reason:
         st.session_state.refresh_banner_title = reason
     return int(st.session_state.streamlit_refresh_token)
+
+
+def remember_score_history_warnings(warnings: list[str]) -> None:
+    """Store non-fatal score-history warnings for the analytics pane."""
+    if not warnings:
+        return
+    existing = st.session_state.get("score_history_warnings", [])
+    if not isinstance(existing, list):
+        existing = []
+    st.session_state.score_history_warnings = list(dict.fromkeys([*existing, *warnings]))
+
+
+def record_streamlit_score_history(
+    report: GenerateResponse | None = None,
+    scanner: ScannerResponse | None = None,
+) -> list[str]:
+    """Persist score history from Streamlit refreshes without failing the UI."""
+    warnings: list[str] = []
+    if report is not None:
+        try:
+            warnings.extend(score_history_service().record_level_scores(report.metrics))
+        except Exception as exc:
+            warnings.append(f"Score history could not save level scores: {exc}")
+    if scanner is not None:
+        try:
+            warnings.extend(score_history_service().record_setup_scores(scanner.setup_rows))
+        except Exception as exc:
+            warnings.append(f"Score history could not save setup scores: {exc}")
+    remember_score_history_warnings(warnings)
+    return warnings
 
 
 def render_app_chrome() -> str:
@@ -2023,6 +2117,149 @@ def render_app_chrome() -> str:
             letter-spacing: 0.06em;
             margin: 0 0 0.65rem;
           }
+          .streamlit-score-analytics-header {
+            align-items: center;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            justify-content: space-between;
+            margin-bottom: 0.85rem;
+          }
+          .streamlit-score-analytics-header h2 {
+            color: #111827;
+            margin: 0;
+          }
+          .streamlit-score-summary-strip {
+            display: grid;
+            gap: 0.7rem;
+            grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+            margin: 0.7rem 0 0.9rem;
+          }
+          .streamlit-score-summary-tile,
+          .streamlit-score-card,
+          .streamlit-score-sparkline-card {
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+          }
+          .streamlit-score-summary-tile {
+            padding: 0.65rem 0.75rem;
+          }
+          .streamlit-score-summary-tile span,
+          .streamlit-score-summary-tile small,
+          .streamlit-score-card header span,
+          .streamlit-score-latest span,
+          .streamlit-score-latest small,
+          .streamlit-score-sparkline-card span {
+            color: #64748b !important;
+          }
+          .streamlit-score-summary-tile span,
+          .streamlit-score-latest span,
+          .streamlit-score-sparkline-card span {
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+          }
+          .streamlit-score-summary-tile strong {
+            color: #0f172a;
+            display: block;
+            font-size: 1.35rem;
+            line-height: 1.15;
+            margin: 0.12rem 0;
+          }
+          .streamlit-score-trend-grid {
+            display: grid;
+            gap: 0.75rem;
+            grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+          }
+          .streamlit-score-card {
+            border-left: 4px solid #94a3b8;
+            display: grid;
+            gap: 0.7rem;
+            min-width: 0;
+            padding: 0.8rem;
+          }
+          .streamlit-score-card.movement-improving { border-left-color: #059669; }
+          .streamlit-score-card.movement-declining { border-left-color: #dc2626; }
+          .streamlit-score-card header {
+            align-items: center;
+            display: flex;
+            gap: 0.6rem;
+            justify-content: space-between;
+          }
+          .streamlit-score-card h4 {
+            color: #0f172a;
+            letter-spacing: 0.06em;
+            margin: 0;
+          }
+          .streamlit-score-movement {
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 900;
+            padding: 0.25rem 0.5rem;
+            white-space: nowrap;
+          }
+          .streamlit-score-movement.improving {
+            background: #dcfce7;
+            color: #166534 !important;
+          }
+          .streamlit-score-movement.declining {
+            background: #fee2e2;
+            color: #991b1b !important;
+          }
+          .streamlit-score-movement.flat {
+            background: #e2e8f0;
+            color: #475569 !important;
+          }
+          .streamlit-score-latest-grid,
+          .streamlit-score-sparkline-grid {
+            display: grid;
+            gap: 0.55rem;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+          }
+          .streamlit-score-latest {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 0.55rem 0.65rem;
+          }
+          .streamlit-score-latest strong {
+            color: #0f172a;
+            display: block;
+            font-size: 0.98rem;
+            line-height: 1.3;
+            margin: 0.12rem 0;
+          }
+          .streamlit-score-delta.positive { color: #059669 !important; }
+          .streamlit-score-delta.negative { color: #dc2626 !important; }
+          .streamlit-score-delta.neutral { color: #64748b !important; }
+          .streamlit-score-sparkline-card {
+            padding: 0.5rem 0.55rem;
+          }
+          .streamlit-score-sparkline,
+          .streamlit-score-sparkline-empty {
+            display: block;
+            height: 46px;
+            margin-top: 0.35rem;
+            width: 100%;
+          }
+          .streamlit-score-sparkline {
+            overflow: visible;
+          }
+          .streamlit-score-sparkline polyline {
+            fill: none;
+            stroke: #0f766e;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-width: 3;
+          }
+          .streamlit-score-sparkline-empty {
+            background: repeating-linear-gradient(90deg, #e2e8f0 0 7px, transparent 7px 14px);
+            border-radius: 0.4rem;
+            opacity: 0.7;
+          }
           .streamlit-chart-controls {
             align-items: center;
             display: grid;
@@ -3017,6 +3254,358 @@ def render_chart_history(
                 render_single_chart(chart, override_type, override_range, override_interval)
                 for warning in chart.warnings:
                     st.caption(warning)
+
+
+def sync_score_level_basis_to_level_filter() -> None:
+    """Keep the score level-basis selector aligned with the report level filter."""
+    st.session_state.level_filter = normalize_level_filter(st.session_state.get("score_level_basis", DEFAULT_LEVEL_FILTER))
+    persist_session_settings()
+
+
+def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricName, LevelScoreBasisName, str, str]:
+    """Render Score Analytics controls and return normalized values."""
+    level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
+    st.session_state.score_range = normalize_score_history_range(st.session_state.get("score_range", "30D"))
+    st.session_state.score_metric = normalize_score_metric(st.session_state.get("score_metric", "both"))
+    st.session_state.score_level_basis = normalize_level_filter(st.session_state.get("score_level_basis", level_filter))
+    st.session_state.score_movement = normalize_score_movement(st.session_state.get("score_movement", "all"))
+    st.session_state.score_sort = normalize_score_sort(st.session_state.get("score_sort", "watchlist"))
+    if st.session_state.score_level_basis != level_filter:
+        st.session_state.score_level_basis = level_filter
+
+    range_col, metric_col, basis_col, movement_col, sort_col = st.columns(
+        [0.75, 0.8, 0.9, 0.95, 1.15],
+        vertical_alignment="center",
+    )
+    with range_col:
+        score_range = st.selectbox(
+            "Range",
+            SCORE_ANALYTICS_RANGES,
+            key="score_range",
+            format_func=score_option_label,
+        )
+    with metric_col:
+        score_metric = st.selectbox(
+            "Metric",
+            SCORE_ANALYTICS_METRICS,
+            key="score_metric",
+            format_func=score_option_label,
+        )
+    with basis_col:
+        level_basis = st.selectbox(
+            "Level basis",
+            LEVEL_FILTER_OPTIONS,
+            key="score_level_basis",
+            format_func=score_option_label,
+            on_change=sync_score_level_basis_to_level_filter,
+        )
+    with movement_col:
+        movement = st.selectbox(
+            "Movement",
+            SCORE_ANALYTICS_MOVEMENTS,
+            key="score_movement",
+            format_func=score_option_label,
+        )
+    with sort_col:
+        sort = st.selectbox(
+            "Sort",
+            SCORE_ANALYTICS_SORTS,
+            key="score_sort",
+            format_func=score_option_label,
+        )
+    return (
+        normalize_score_history_range(score_range),
+        normalize_score_metric(score_metric),
+        normalize_level_filter(level_basis),
+        normalize_score_movement(movement),
+        normalize_score_sort(sort),
+    )
+
+
+def render_score_analytics(
+    report: GenerateResponse,
+    *,
+    visible_tickers: tuple[str, ...],
+    search_query: str,
+) -> None:
+    """Render daily score history below Streamlit charts."""
+    with st.container(border=True):
+        st.markdown(
+            (
+                '<span class="streamlit-score-analytics-marker"></span>'
+                '<div class="streamlit-score-analytics-header">'
+                "<h2>Score Analytics</h2>"
+                '<span class="streamlit-status-chip">Daily trends</span>'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+        score_range, score_metric, level_basis, movement, sort = render_score_analytics_controls()
+        watchlist_order = tuple(metric.ticker for metric in report.metrics)
+        if not watchlist_order:
+            st.info("Score history will appear after levels or scanner data refreshes.")
+            return
+        if not visible_tickers:
+            label = normalize_level_search(search_query)
+            st.info(f"No score analytics ticker matches '{label}'." if label else "No visible tickers for score analytics.")
+            return
+
+        try:
+            response = score_history_service().build_response(
+                list(visible_tickers),
+                score_range=score_range,
+                score_metric=score_metric,
+                level_basis=level_basis,
+            )
+        except Exception as exc:
+            st.warning(f"Score history could not be loaded: {exc}")
+            return
+
+        rows = sort_score_rows(
+            filter_score_rows(response.tickers, movement, score_metric),
+            sort,
+            score_metric,
+            watchlist_order,
+        )
+        warnings = score_history_warnings(response)
+        if warnings:
+            with st.expander(f"{len(warnings)} score history note(s)", expanded=False):
+                for warning in warnings:
+                    st.caption(warning)
+        if not rows:
+            st.info("No score history matches the current filters.")
+            return
+
+        st.markdown(score_summary_html(rows, score_metric), unsafe_allow_html=True)
+        st.markdown(score_trend_cards_html(rows, score_metric), unsafe_allow_html=True)
+
+
+def score_history_warnings(response: ScoreHistoryResponse) -> list[str]:
+    """Return unique score-history warnings for the Streamlit pane."""
+    session_warnings = st.session_state.get("score_history_warnings", [])
+    if not isinstance(session_warnings, list):
+        session_warnings = []
+    warnings = [
+        *session_warnings,
+        *(response.warnings or []),
+        *[warning for row in response.tickers for warning in (row.warnings or [])],
+    ]
+    return list(dict.fromkeys(str(warning) for warning in warnings if warning))
+
+
+def filter_score_rows(
+    rows: list[ScoreHistoryTicker],
+    movement: str,
+    score_metric: ScoreMetricName,
+) -> list[ScoreHistoryTicker]:
+    """Filter score rows by the selected movement category."""
+    if movement == "all":
+        return list(rows)
+    return [row for row in rows if score_movement(row, score_metric) == movement]
+
+
+def sort_score_rows(
+    rows: list[ScoreHistoryTicker],
+    sort: str,
+    score_metric: ScoreMetricName,
+    watchlist_order: tuple[str, ...],
+) -> list[ScoreHistoryTicker]:
+    """Sort score rows by watchlist order or latest/movement scores."""
+    order = {ticker: index for index, ticker in enumerate(watchlist_order)}
+
+    def watchlist_index(row: ScoreHistoryTicker) -> int:
+        return order.get(row.ticker, len(order))
+
+    def value_or_empty(value: int | float | None) -> float:
+        return float(value) if value is not None else float("-inf")
+
+    if sort == "setup":
+        return sorted(rows, key=lambda row: (value_or_empty(row.latest_setup_score), -watchlist_index(row)), reverse=True)
+    if sort == "level":
+        return sorted(rows, key=lambda row: (value_or_empty(row.latest_level_score_normalized), -watchlist_index(row)), reverse=True)
+    if sort == "gain":
+        return sorted(rows, key=lambda row: (value_or_empty(score_movement_amount(row, score_metric)), -watchlist_index(row)), reverse=True)
+    if sort == "drop":
+        return sorted(rows, key=lambda row: score_movement_amount(row, score_metric) if score_movement_amount(row, score_metric) is not None else float("inf"))
+    return sorted(rows, key=watchlist_index)
+
+
+def score_summary_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetricName) -> str:
+    """Return summary tile markup for score analytics."""
+    setup_values = [row.latest_setup_score for row in rows if row.latest_setup_score is not None]
+    level_values = [row.latest_level_score_normalized for row in rows if row.latest_level_score_normalized is not None]
+    improving = sum(1 for row in rows if score_movement(row, score_metric) == "improving")
+    declining = sum(1 for row in rows if score_movement(row, score_metric) == "declining")
+    flat = len(rows) - improving - declining
+    tiles = [
+        score_summary_tile_html("Tracked", len([row for row in rows if row.points]), f"{len(rows)} visible"),
+        score_summary_tile_html("Avg Setup", score_average(setup_values), "0-8"),
+        score_summary_tile_html("Avg Level", score_average(level_values), "normalized"),
+        score_summary_tile_html("Improving", improving, "1D"),
+        score_summary_tile_html("Declining", declining, "1D"),
+        score_summary_tile_html("Flat/New", flat, "1D"),
+    ]
+    return f'<div class="streamlit-score-summary-strip">{"".join(tiles)}</div>'
+
+
+def score_summary_tile_html(label: str, value: int | float | None, meta: str) -> str:
+    """Return one score summary tile."""
+    return (
+        '<div class="streamlit-score-summary-tile">'
+        f"<span>{escape(label)}</span>"
+        f"<strong>{format_score_summary_value(value)}</strong>"
+        f"<small>{escape(meta)}</small>"
+        "</div>"
+    )
+
+
+def score_trend_cards_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetricName) -> str:
+    """Return per-ticker score trend card markup."""
+    cards = "".join(score_trend_card_html(row, score_metric) for row in rows)
+    return f'<div class="streamlit-score-trend-grid">{cards}</div>'
+
+
+def score_trend_card_html(row: ScoreHistoryTicker, score_metric: ScoreMetricName) -> str:
+    """Return one ticker score trend card."""
+    show_setup = score_metric != "level"
+    show_level = score_metric != "setup"
+    movement = score_movement(row, score_metric)
+    latest = []
+    sparklines = []
+    if show_setup:
+        latest.append(score_latest_html("Setup", format_setup_score(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d))
+        sparklines.append(score_sparkline_html(row, "setup_score", "Setup score"))
+    if show_level:
+        latest.append(
+            score_latest_html(
+                "Level",
+                format_level_score(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count),
+                row.level_normalized_delta_1d,
+                row.level_normalized_delta_5d,
+            )
+        )
+        sparklines.append(score_sparkline_html(row, "level_score_normalized", "Level score"))
+    return (
+        f'<article class="streamlit-score-card movement-{movement}">'
+        "<header>"
+        "<div>"
+        f"<h4>{escape(row.ticker)}</h4>"
+        f"<span>{len(row.points)} point{'' if len(row.points) == 1 else 's'}</span>"
+        "</div>"
+        f'<span class="streamlit-score-movement {movement}">{escape(score_option_label(movement))}</span>'
+        "</header>"
+        f'<div class="streamlit-score-latest-grid">{"".join(latest)}</div>'
+        f'<div class="streamlit-score-sparkline-grid">{"".join(sparklines)}</div>'
+        "</article>"
+    )
+
+
+def score_latest_html(label: str, value: str, delta_1d: int | float | None, delta_5d: int | float | None) -> str:
+    """Return latest score/delta markup."""
+    return (
+        '<div class="streamlit-score-latest">'
+        f"<span>{escape(label)}</span>"
+        f"<strong>{value}</strong>"
+        f"<small>1D {format_score_delta(delta_1d)} / 5D {format_score_delta(delta_5d)}</small>"
+        "</div>"
+    )
+
+
+def score_sparkline_html(row: ScoreHistoryTicker, field: str, label: str) -> str:
+    """Return a compact SVG sparkline for one score field."""
+    series = [
+        (point.date.isoformat(), float(value))
+        for point in row.points
+        for value in [getattr(point, field)]
+        if value is not None
+    ]
+    if len(series) < 2:
+        return (
+            '<div class="streamlit-score-sparkline-card">'
+            f"<span>{escape(label)}</span>"
+            '<div class="streamlit-score-sparkline-empty"></div>'
+            "</div>"
+        )
+    width = 180
+    height = 46
+    min_value = min(value for _, value in series)
+    max_value = max(value for _, value in series)
+    if min_value == max_value:
+        min_value -= 1
+        max_value += 1
+    coordinates = []
+    for index, (_, value) in enumerate(series):
+        x = (index / (len(series) - 1)) * width
+        y = height - ((value - min_value) / (max_value - min_value)) * height
+        coordinates.append(f"{x:.2f},{y:.2f}")
+    return (
+        '<div class="streamlit-score-sparkline-card">'
+        f"<span>{escape(label)}</span>"
+        f'<svg class="streamlit-score-sparkline" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="{escape(label)} trend">'
+        f"<title>{escape(label)} trend from {escape(series[0][0])} to {escape(series[-1][0])}</title>"
+        f'<polyline points="{" ".join(coordinates)}"></polyline>'
+        "</svg>"
+        "</div>"
+    )
+
+
+def score_movement(row: ScoreHistoryTicker, score_metric: ScoreMetricName) -> str:
+    """Return movement category for a score row."""
+    movement = score_movement_amount(row, score_metric)
+    if movement is None or abs(float(movement)) < 0.01:
+        return "flat"
+    return "improving" if float(movement) > 0 else "declining"
+
+
+def score_movement_amount(row: ScoreHistoryTicker, score_metric: ScoreMetricName) -> float | None:
+    """Return the 1-day movement amount for sorting/filtering."""
+    if score_metric == "setup":
+        return float(row.setup_delta_1d) if row.setup_delta_1d is not None else None
+    if score_metric == "level":
+        return float(row.level_normalized_delta_1d) if row.level_normalized_delta_1d is not None else None
+    values = [
+        float(value)
+        for value in (row.setup_delta_1d, row.level_normalized_delta_1d)
+        if value is not None
+    ]
+    return sum(values) if values else None
+
+
+def score_average(values: list[int | float]) -> float | None:
+    """Return average score value."""
+    return round(sum(float(value) for value in values) / len(values), 1) if values else None
+
+
+def format_score_summary_value(value: int | float | None) -> str:
+    """Format score summary values."""
+    if value is None:
+        return "-"
+    return f"{float(value):.1f}".removesuffix(".0")
+
+
+def format_setup_score(value: int | None) -> str:
+    """Format latest scanner setup score."""
+    return "-" if value is None else f"{int(value)}/8"
+
+
+def format_level_score(score: int | None, normalized: float | None, count: int) -> str:
+    """Format latest weighted level score."""
+    if score is None:
+        return "-"
+    normalized_text = "" if normalized is None else f" ({float(normalized):.1f}%)"
+    count_text = f" / {count} levels" if count > 0 else ""
+    return f"{int(score):,}{normalized_text}{count_text}"
+
+
+def format_score_delta(value: int | float | None) -> str:
+    """Return score-delta markup."""
+    if value is None:
+        return '<span class="streamlit-score-delta neutral">-</span>'
+    number = float(value)
+    tone = "positive" if number > 0 else "negative" if number < 0 else "neutral"
+    formatted = f"{number:+.1f}".removesuffix(".0")
+    return f'<span class="streamlit-score-delta {tone}">{escape(formatted)}</span>'
 
 
 def render_single_chart(
@@ -4918,6 +5507,7 @@ def load_streamlit_data(tickers: tuple[str, ...], metrics: tuple[MetricName, ...
     """Load all Streamlit datasets for the current watchlist."""
     st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
     st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
+    record_streamlit_score_history(st.session_state.report, st.session_state.scanner)
     st.session_state.sector_analytics = build_sector_analytics(tickers, refresh_token=refresh_token)
     st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
     st.session_state.news = build_news(
@@ -5019,9 +5609,11 @@ def load_streamlit_data_with_banner(
 
     def load_levels() -> None:
         st.session_state.report = build_report(tickers, metrics, refresh_token=dataset_refresh_token("report"))
+        record_streamlit_score_history(report=st.session_state.report)
 
     def load_scanner() -> None:
         st.session_state.scanner = build_scanner(tickers, refresh_token=dataset_refresh_token("scanner"))
+        record_streamlit_score_history(scanner=st.session_state.scanner)
 
     def load_analytics() -> None:
         st.session_state.sector_analytics = build_sector_analytics(
@@ -5151,6 +5743,7 @@ def render_level_filter_selector() -> str:
             ),
         )
     )
+    st.session_state.score_level_basis = selected
     persist_session_settings()
     return selected
 
@@ -5214,6 +5807,7 @@ def render_report_panel(
     complete: bool,
     total_tickers: int | None = None,
     chart_slot: Any | None = None,
+    score_slot: Any | None = None,
 ) -> None:
     """Render report cards, with optional final-only controls and charts."""
     with st.container(border=True):
@@ -5272,17 +5866,29 @@ def render_report_panel(
                 use_container_width=True,
                 )
 
-    if complete and visible_metrics and chart_slot is not None:
+    if complete and chart_slot is not None:
         chart_slot.empty()
         with chart_slot.container():
-            chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
-            render_chart_history(
+            if visible_metrics:
+                chart_type, chart_range, chart_interval = render_streamlit_chart_controls()
+                render_chart_history(
+                    report,
+                    chart_range,
+                    chart_interval,
+                    chart_type,
+                    refresh_token=dataset_refresh_token("chart"),
+                    visible_tickers=tuple(metric.ticker for metric in visible_metrics),
+                )
+            elif report_search:
+                st.caption("Charts hidden because the ticker search has no matches.")
+
+    if complete and score_slot is not None:
+        score_slot.empty()
+        with score_slot.container():
+            render_score_analytics(
                 report,
-                chart_range,
-                chart_interval,
-                chart_type,
-                refresh_token=dataset_refresh_token("chart"),
                 visible_tickers=tuple(metric.ticker for metric in visible_metrics),
+                search_query=report_search,
             )
 
 
@@ -5293,11 +5899,18 @@ def render_report_panel_in_slot(
     complete: bool,
     total_tickers: int | None = None,
     chart_slot: Any | None = None,
+    score_slot: Any | None = None,
 ) -> None:
     """Replace the report placeholder with the latest report render."""
     slot.empty()
     with slot.container():
-        render_report_panel(report, complete=complete, total_tickers=total_tickers, chart_slot=chart_slot)
+        render_report_panel(
+            report,
+            complete=complete,
+            total_tickers=total_tickers,
+            chart_slot=chart_slot,
+            score_slot=score_slot,
+        )
 
 
 def render_scanner_panel_in_slot(slot: Any, scanner: ScannerResponse) -> None:
@@ -5316,6 +5929,7 @@ def load_levels_and_scanner_progressively(
     scanner_slot: Any,
     refresh_slot: Any,
     chart_slot: Any | None = None,
+    score_slot: Any | None = None,
 ) -> tuple[GenerateResponse, ScannerResponse]:
     """Load levels/scanner batches and render each partial result as it arrives."""
     batches = ticker_batches(tickers)
@@ -5327,6 +5941,8 @@ def load_levels_and_scanner_progressively(
     st.session_state.chart_loaded = False
     if chart_slot is not None:
         chart_slot.empty()
+    if score_slot is not None:
+        score_slot.empty()
 
     market_data = market_data_service()
     scanner = scanner_service()
@@ -5445,6 +6061,7 @@ def load_levels_and_scanner_progressively(
 
     st.session_state.report = final_report
     st.session_state.scanner = final_scanner
+    record_streamlit_score_history(final_report, final_scanner)
     return final_report, final_scanner
 
 
@@ -5511,6 +6128,7 @@ def main() -> None:
         scanner_slot = st.empty()
         report_slot = st.empty()
         chart_slot = st.empty()
+        score_slot = st.empty()
     elif view == ANALYTICS_VIEW:
         with st.container():
             heading_col, action_col = st.columns([2.2, 1], vertical_alignment="center")
@@ -5523,6 +6141,7 @@ def main() -> None:
         refresh_news = False
         report_slot = None
         chart_slot = None
+        score_slot = None
         scanner_slot = None
     else:
         with st.container():
@@ -5536,6 +6155,7 @@ def main() -> None:
         refresh_analytics = False
         report_slot = None
         chart_slot = None
+        score_slot = None
         scanner_slot = None
 
     if generate:
@@ -5553,6 +6173,7 @@ def main() -> None:
             scanner_slot,
             refresh_banner_slot,
             chart_slot,
+            score_slot,
         )
         mark_streamlit_data_current(tuple(request.tickers), tuple(request.metrics), datasets=("report", "scanner"))
         st.session_state.levels_status = ""
@@ -5653,6 +6274,7 @@ def main() -> None:
                     scanner_slot,
                     refresh_banner_slot,
                     chart_slot,
+                    score_slot,
                 )
                 mark_streamlit_data_current(autoload_tickers, autoload_metrics_tuple, datasets=("report", "scanner"))
                 stale_datasets = tuple(dataset for dataset in stale_datasets if dataset not in {"report", "scanner"})
@@ -5692,7 +6314,7 @@ def main() -> None:
 
     report: GenerateResponse | None = st.session_state.report
     if report is not None and report_slot is not None:
-        render_report_panel_in_slot(report_slot, report, complete=True, chart_slot=chart_slot)
+        render_report_panel_in_slot(report_slot, report, complete=True, chart_slot=chart_slot, score_slot=score_slot)
 
     scanner: ScannerResponse | None = st.session_state.scanner
     if scanner is not None and scanner_slot is not None:
