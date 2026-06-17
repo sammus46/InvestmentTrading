@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from typing import Literal
 
 import app.streamlit_app as streamlit_app_module
 from streamlit.testing.v1 import AppTest
@@ -802,10 +803,21 @@ def test_streamlit_score_heat_helpers_support_legacy_rows_without_heat_fields():
 
 def test_streamlit_score_analytics_includes_chart_metric_control():
     source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
-    assert 'SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("1D", "7D", "30D", "90D", "1Y", "All")' in source
+    assert "SCORE_ANALYTICS_RANGE_CANDIDATES = (\"1D\", \"7D\", \"30D\", \"90D\", \"1Y\", \"All\")" in source
+    assert "supported_score_history_ranges()" in source
     assert 'SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")' in source
     assert '"Chart metric"' in source
     assert "score_line_chart_html(rows, chart_metric, response.axis)" in source
+
+
+def test_streamlit_score_ranges_degrade_for_stale_runtime_model():
+    old_range_type = Literal["7D", "30D", "90D", "1Y", "All"]
+
+    ranges = streamlit_app_module.supported_score_history_ranges(old_range_type)
+
+    assert ranges == ("7D", "30D", "90D", "1Y", "All")
+    assert streamlit_app_module.default_score_history_range(ranges) == "30D"
+    assert "1D" in streamlit_app_module.supported_score_history_ranges()
 
 
 def test_streamlit_watchlist_news_search_filters_ticker_groups():

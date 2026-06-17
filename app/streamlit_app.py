@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from queue import Queue
 from threading import Thread
-from typing import Any
+from typing import Any, get_args
 from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -86,7 +86,24 @@ NEWS_CATEGORY_LABELS = {
 CHART_TYPE_OPTIONS = ("Line", "Candles")
 CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
 CHART_RANGE_LABELS = {"1Y": "1YR"}
-SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("1D", "7D", "30D", "90D", "1Y", "All")
+SCORE_ANALYTICS_RANGE_CANDIDATES = ("1D", "7D", "30D", "90D", "1Y", "All")
+SCORE_ANALYTICS_DAILY_RANGES = ("7D", "30D", "90D", "1Y", "All")
+
+
+def supported_score_history_ranges(range_type: object = ScoreHistoryRange) -> tuple[str, ...]:
+    """Return score ranges supported by the currently loaded model module."""
+    model_ranges = set(get_args(range_type))
+    ranges = tuple(option for option in SCORE_ANALYTICS_RANGE_CANDIDATES if option in model_ranges)
+    return ranges or SCORE_ANALYTICS_DAILY_RANGES
+
+
+def default_score_history_range(ranges: tuple[str, ...]) -> str:
+    """Return the safest default range for the loaded ScoreHistoryRange model."""
+    return "1D" if "1D" in ranges else "30D"
+
+
+SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = supported_score_history_ranges()  # type: ignore[assignment]
+SCORE_ANALYTICS_DEFAULT_RANGE: ScoreHistoryRange = default_score_history_range(SCORE_ANALYTICS_RANGES)  # type: ignore[assignment]
 SCORE_ANALYTICS_METRICS: tuple[ScoreMetricName, ...] = ("setup", "level", "both")
 SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")
 SCORE_ANALYTICS_MOVEMENTS = ("all", "improving", "declining", "flat")
@@ -507,7 +524,7 @@ def normalize_chart_interval(chart_range: ChartRange, value: object) -> ChartInt
 def normalize_score_history_range(value: object) -> ScoreHistoryRange:
     """Return a supported score-history range."""
     candidate = str(value or "")
-    return candidate if candidate in SCORE_ANALYTICS_RANGES else "1D"  # type: ignore[return-value]
+    return candidate if candidate in SCORE_ANALYTICS_RANGES else SCORE_ANALYTICS_DEFAULT_RANGE
 
 
 def normalize_score_metric(value: object) -> ScoreMetricName:
@@ -3488,7 +3505,9 @@ def sync_score_level_basis_to_level_filter() -> None:
 def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricName, LevelScoreBasisName, str, str, str]:
     """Render Score Analytics controls and return normalized values."""
     level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
-    st.session_state.score_range = normalize_score_history_range(st.session_state.get("score_range", "1D"))
+    st.session_state.score_range = normalize_score_history_range(
+        st.session_state.get("score_range", SCORE_ANALYTICS_DEFAULT_RANGE)
+    )
     st.session_state.score_metric = normalize_score_metric(st.session_state.get("score_metric", "both"))
     st.session_state.score_chart_metric = normalize_score_chart_metric(st.session_state.get("score_chart_metric", "heat"))
     st.session_state.score_level_basis = normalize_level_filter(st.session_state.get("score_level_basis", level_filter))
@@ -3589,6 +3608,26 @@ def render_score_analytics(
                 score_metric=score_metric,
                 level_basis=level_basis,
             )
+        except ValidationError as exc:
+            if score_range != "1D":
+                st.warning(f"Score history could not be loaded: {exc}")
+                return
+            fallback_range = normalize_score_history_range("30D")
+            st.session_state.score_range = fallback_range
+            st.warning(
+                "1D score analytics is not available in this running app process yet, "
+                "so the panel is showing 30D. Reboot the Streamlit app to enable 1D after deploy."
+            )
+            try:
+                response = score_history_service().build_response(
+                    list(visible_tickers),
+                    score_range=fallback_range,
+                    score_metric=score_metric,
+                    level_basis=level_basis,
+                )
+            except Exception as fallback_exc:
+                st.warning(f"Score history could not be loaded: {fallback_exc}")
+                return
         except Exception as exc:
             st.warning(f"Score history could not be loaded: {exc}")
             return
