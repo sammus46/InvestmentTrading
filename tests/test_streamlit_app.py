@@ -948,12 +948,33 @@ def test_streamlit_scanner_auto_mobile_keeps_scrollable_table_visible():
     assert ".streamlit-scanner-table td.streamlit-scanner-cell-ticker" in source
 
 
+def test_streamlit_settings_drawer_css_scopes_to_innermost_panel():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    scoped_selector = (
+        'div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker)'
+        ':not(:has(div[data-testid="stVerticalBlock"] .streamlit-settings-panel-marker))'
+    )
+
+    assert f"{scoped_selector} {{" in source
+    assert f'{scoped_selector} [data-testid="stButton"] button' in source
+    assert 'div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker) {' not in source
+    assert (
+        'div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker) '
+        '[data-testid="stButton"] button'
+    ) not in source
+
+
 def test_streamlit_mobile_theme_css_covers_light_dark_and_system_modes():
     source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
     theme_start = source.index('body:has(.streamlit-theme-marker[data-app-theme="light"])')
     theme_css = source[theme_start:]
     mobile_start = theme_css.index("@media (max-width: 760px)")
     mobile_css = theme_css[mobile_start : theme_css.index("</style>", mobile_start)]
+    scoped_settings_selector = (
+        'body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]'
+        ':has(.streamlit-settings-panel-marker)'
+        ':not(:has(div[data-testid="stVerticalBlock"] .streamlit-settings-panel-marker))'
+    )
 
     assert 'body:has(.streamlit-theme-marker[data-app-theme="light"])' in theme_css
     assert 'body:has(.streamlit-theme-marker[data-app-theme="dark"])' in theme_css
@@ -969,6 +990,11 @@ def test_streamlit_mobile_theme_css_covers_light_dark_and_system_modes():
     assert "-webkit-text-fill-color: var(--action-primary-text) !important" in theme_css
     assert "background: var(--brand-deep) !important" not in theme_css
     assert "body:has(.streamlit-theme-marker) .metric-card-header *" in theme_css
+    assert f"{scoped_settings_selector}," in theme_css
+    assert (
+        'body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]'
+        ':has(.streamlit-settings-panel-marker),'
+    ) not in theme_css
     assert 'body:has(.streamlit-theme-marker) .stApp .block-container' in mobile_css
     assert 'button[aria-label="Open sidebar"]' in mobile_css
     assert "div[data-testid=\"stVerticalBlock\"]:has(.view-hero-marker)" in mobile_css
