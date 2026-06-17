@@ -180,6 +180,7 @@ const generateButton = document.querySelector("#generate");
 const pdfButton = document.querySelector("#download-pdf");
 const reportLayoutSelectEl = document.querySelector("#report-layout");
 const reportSearchEl = document.querySelector("#report-search");
+const reportSearchStatusEl = document.querySelector("#report-search-status");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const generatedAtEl = document.querySelector("#generated-at");
@@ -360,8 +361,12 @@ levelFilterSelectEl?.addEventListener("change", () => {
   setLevelFilter(levelFilterSelectEl.value);
 });
 
-reportSearchEl?.addEventListener("input", () => {
-  renderCurrentReport();
+reportSearchEl?.addEventListener("input", applyReportSearch);
+reportSearchEl?.addEventListener("search", applyReportSearch);
+reportSearchEl?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  applyReportSearch({ normalizeInput: true });
 });
 
 settingsDefaultViewEl?.addEventListener("change", () => {
@@ -1639,15 +1644,24 @@ function renderReport(report) {
   renderCurrentReport();
 }
 
+function applyReportSearch(options = {}) {
+  if (options.normalizeInput && reportSearchEl) {
+    reportSearchEl.value = searchTickerTerms(reportSearchEl.value).join(", ");
+  }
+  renderCurrentReport();
+}
+
 function renderCurrentReport() {
   if (!currentReport?.metrics?.length) {
     resultsEl.className = "results empty";
     resultsEl.textContent = "";
+    updateReportSearchStatus(0, 0);
     renderCharts();
     renderScoreAnalytics();
     return;
   }
   const visibleMetrics = filteredReportMetrics();
+  updateReportSearchStatus(visibleMetrics.length, currentReport.metrics.length);
   if (!visibleMetrics.length) {
     resultsEl.className = "results empty";
     const terms = searchTickerTerms(reportSearchEl?.value || "");
@@ -1671,6 +1685,18 @@ function filteredReportMetrics() {
   const terms = searchTickerTerms(reportSearchEl?.value || "");
   if (!terms.length) return metrics;
   return metrics.filter((metric) => terms.some((term) => String(metric.ticker || "").toUpperCase().includes(term)));
+}
+
+function updateReportSearchStatus(visibleCount, totalCount) {
+  if (!reportSearchStatusEl) return;
+  if (!totalCount) {
+    reportSearchStatusEl.textContent = "";
+    return;
+  }
+  const terms = searchTickerTerms(reportSearchEl?.value || "");
+  reportSearchStatusEl.textContent = terms.length
+    ? `${visibleCount} of ${totalCount}`
+    : `${totalCount} total`;
 }
 
 function renderNews(news, options = {}) {
