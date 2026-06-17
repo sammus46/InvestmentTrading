@@ -254,8 +254,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-line-chart { display: block; height: auto; max-height: 230px; width: 100%; }
 .score-line-grid line { stroke: #e2e8f0; stroke-width: 1; }
 .score-line-grid text { fill: #64748b; font-size: 11px; font-weight: 800; }
+.score-line-x-axis line { stroke: #cbd5e1; stroke-width: 1; }
+.score-line-x-axis text { fill: #64748b; font-size: 10px; font-weight: 800; }
 .score-line-series polyline { fill: none; stroke: var(--score-series-color); stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
 .score-line-series circle { fill: var(--score-series-color); stroke: #ffffff; stroke-width: 2; }
+.score-line-end-label { fill: var(--score-series-color); font-size: 10px; font-weight: 900; }
 .score-line-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; }
 .score-line-legend-item { align-items: center; color: #334155; display: inline-flex; font-size: 0.76rem; font-weight: 900; gap: 5px; }
 .score-line-legend-item i { background: var(--score-series-color); border-radius: 999px; display: inline-block; height: 8px; width: 8px; }
@@ -276,6 +279,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-trend-card.movement-flat { border-left-color: #94a3b8; }
 .score-trend-card header { align-items: center; display: flex; justify-content: space-between; gap: 10px; }
 .score-trend-card h4 { color: #0f172a; letter-spacing: 0.06em; margin: 0; }
+.score-card-movement-row { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .score-movement { border-radius: 999px; font-size: 0.72rem; font-weight: 900; padding: 5px 8px; text-transform: uppercase; white-space: nowrap; }
 .score-movement.improving { background: #dcfce7; color: #166534; }
 .score-movement.declining { background: #fee2e2; color: #991b1b; }
@@ -285,6 +289,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-latest,
 .score-sparkline-card { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px; display: grid; gap: 5px; min-width: 0; padding: 9px 10px; }
 .score-latest strong { color: #111827; font-size: 0.96rem; overflow-wrap: anywhere; }
+.score-sparkline-title { align-items: center; display: flex; gap: 8px; justify-content: space-between; min-width: 0; }
+.score-sparkline-title small,
+.score-sparkline-caption { color: #64748b; font-size: 0.68rem; font-weight: 900; }
 .score-thermometer { align-items: center; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px; display: grid; gap: 10px; grid-template-columns: minmax(72px, auto) 1fr auto; padding: 9px 10px; }
 .score-thermometer strong { color: #0f172a; display: block; font-size: 1rem; line-height: 1.1; }
 .score-thermometer small { color: var(--heat-color, #64748b); font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
@@ -293,6 +300,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-heat-strip-card { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px; display: grid; gap: 7px; min-width: 0; padding: 9px 10px; }
 .score-heat-strip { display: grid; gap: 3px; grid-template-columns: repeat(auto-fit, minmax(8px, 1fr)); min-height: 18px; }
 .score-heat-strip i { background: var(--heat-color, #cbd5e1); border-radius: 4px; min-height: 18px; }
+.score-heat-strip i.empty { background: transparent; border: 1px dashed #cbd5e1; }
+.score-heat-strip i.status-current { box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.22); }
+.score-heat-strip i.status-future { opacity: 0.5; }
+.score-heat-strip-axis { color: #64748b; display: flex; font-size: 0.68rem; font-weight: 800; justify-content: space-between; line-height: 1.2; }
 .score-heat-strip.empty { background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px); border-radius: 6px; opacity: 0.7; }
 .heat-cold { --heat-color: #2563eb; }
 .heat-cool { --heat-color: #0f766e; }
@@ -302,9 +313,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-delta.positive { color: #047857; font-weight: 900; }
 .score-delta.negative { color: #dc2626; font-weight: 900; }
 .score-delta.neutral { color: #64748b; font-weight: 900; }
-.score-sparkline { height: 48px; width: 100%; }
+.score-sparkline { height: 72px; width: 100%; }
 .score-sparkline polyline { fill: none; stroke: #0f766e; stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
-.score-sparkline-empty { background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px); border-radius: 6px; height: 48px; opacity: 0.7; }
+.score-sparkline circle { fill: #0f766e; stroke: #ffffff; stroke-width: 2; }
+.score-sparkline-grid-line { stroke: #dbe3ef; stroke-width: 1; }
+.score-sparkline-scale { fill: #64748b; font-size: 9px; font-weight: 900; }
+.score-sparkline-empty { background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px); border-radius: 6px; height: 72px; opacity: 0.7; }
 
 .scanner-panel { display: grid; gap: 14px; min-width: 0; overflow: hidden; }
 .scanner-tabs { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -859,13 +873,22 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-thermometer strong { color: #e5edf4; }
   .score-line-grid line { stroke: #334155; }
   .score-line-grid text { fill: #94a3b8; }
+  .score-line-x-axis line { stroke: #475569; }
+  .score-line-x-axis text,
+  .score-sparkline-title small,
+  .score-sparkline-caption,
+  .score-heat-strip-axis { color: #94a3b8; fill: #94a3b8; }
   .score-line-series circle { stroke: #111827; }
+  .score-heat-strip i.empty { border-color: #475569; }
   .score-line-empty,
   .score-heat-strip.empty,
   .score-thermometer-track {
     background: repeating-linear-gradient(90deg, #334155 0 4px, transparent 4px 9px);
   }
   .score-sparkline polyline { stroke: #2dd4bf; }
+  .score-sparkline circle { fill: #2dd4bf; stroke: #111827; }
+  .score-sparkline-grid-line { stroke: #334155; }
+  .score-sparkline-scale { fill: #94a3b8; }
   .score-sparkline-empty {
     background: repeating-linear-gradient(90deg, #334155 0 4px, transparent 4px 9px);
   }

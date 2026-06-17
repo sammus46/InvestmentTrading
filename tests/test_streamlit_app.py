@@ -26,6 +26,8 @@ from app.models import (
     ScannerResponse,
     ScannerSetupRow,
     SectorAnalyticsResponse,
+    ScoreHistoryAxis,
+    ScoreHistoryAxisBucket,
     ScoreHistoryPoint,
     ScoreHistoryResponse,
     ScoreHistorySummary,
@@ -712,6 +714,66 @@ def test_streamlit_score_heat_helpers_render_chart_thermometer_and_strip():
     assert "streamlit-heat-warm" in card_html
 
 
+def test_streamlit_score_helpers_render_intraday_axis_and_empty_buckets():
+    axis = ScoreHistoryAxis(
+        mode="intraday",
+        bucket_minutes=30,
+        session_start="09:30",
+        session_end="16:00",
+        buckets=[
+            ScoreHistoryAxisBucket(key="09:30", label="9:30 AM", status="past"),
+            ScoreHistoryAxisBucket(key="10:00", label="10:00 AM", status="current"),
+            ScoreHistoryAxisBucket(key="10:30", label="10:30 AM", status="future"),
+        ],
+    )
+    row = ScoreHistoryTicker(
+        ticker="AAPL",
+        points=[
+            ScoreHistoryPoint(
+                date=datetime(2026, 6, 17, tzinfo=timezone.utc).date(),
+                bucket="09:30",
+                bucket_label="9:30 AM",
+                bucket_status="past",
+                setup_score=4,
+                level_score=40,
+                level_score_normalized=40.0,
+                level_count=2,
+                heat_score=46.0,
+            ),
+            ScoreHistoryPoint(
+                date=datetime(2026, 6, 17, tzinfo=timezone.utc).date(),
+                bucket="10:00",
+                bucket_label="10:00 AM",
+                bucket_status="current",
+                setup_score=5,
+                level_score=50,
+                level_score_normalized=50.0,
+                level_count=2,
+                heat_score=57.5,
+            ),
+        ],
+        latest_setup_score=5,
+        latest_level_score=50,
+        latest_level_score_normalized=50.0,
+        latest_heat_score=57.5,
+        latest_level_count=2,
+        heat_delta_1d=11.5,
+    )
+
+    chart_html = streamlit_app_module.score_line_chart_html([row], "heat", axis)
+    card_html = streamlit_app_module.score_trend_card_html(row, "both", axis)
+
+    assert "9:30 AM - 4:00 PM ET · 30m buckets" in chart_html
+    assert "streamlit-score-line-x-axis" in chart_html
+    assert "streamlit-score-line-end-label" in chart_html
+    assert "Trading Day Derived Heat" in card_html
+    assert "status-future empty" in card_html
+    assert "Improving +11.5 heat, compared with prior bucket" in card_html
+    assert "Prev bucket" in card_html
+    assert "0-8" in card_html
+    assert "0-100%" in card_html
+
+
 def test_streamlit_score_heat_helpers_support_legacy_rows_without_heat_fields():
     legacy_row = SimpleNamespace(
         ticker="MSFT",
@@ -740,9 +802,10 @@ def test_streamlit_score_heat_helpers_support_legacy_rows_without_heat_fields():
 
 def test_streamlit_score_analytics_includes_chart_metric_control():
     source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    assert 'SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("1D", "7D", "30D", "90D", "1Y", "All")' in source
     assert 'SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")' in source
     assert '"Chart metric"' in source
-    assert "score_line_chart_html(rows, chart_metric)" in source
+    assert "score_line_chart_html(rows, chart_metric, response.axis)" in source
 
 
 def test_streamlit_watchlist_news_search_filters_ticker_groups():

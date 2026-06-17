@@ -306,15 +306,17 @@ curl -X POST http://127.0.0.1:8000/api/scanner \
 
 The scanner uses the same saved watchlist as the levels and news views. In the browser and Streamlit UIs, the `Run Levels + Scanner` button refreshes both the price-level report and scanner output together. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, relative strength, VWAP state, lows-held, range, and momentum cells use compact color/symbol coding for faster scanning. The browser and Streamlit UIs default to a horizontally scrollable ticker-row table on mobile, with the stacked cards view still available as an explicit setting.
 
-Fetch daily score history:
+Fetch score history:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/score-history \
   -H 'Content-Type: application/json' \
-  -d '{"tickers":"AAPL, MSFT, NVDA","range":"30D","score_metric":"both","level_basis":"weight_20"}'
+  -d '{"tickers":"AAPL, MSFT, NVDA","range":"1D","score_metric":"both","level_basis":"weight_20"}'
 ```
 
-Score history starts when levels or scanner data is refreshed after this feature is installed. `/api/scanner` records the existing 0-8 setup score, and `/api/levels` records weighted level scores for `all`, `scanner`, and `weight_20` bases using backend-owned canonical level weights. History is persisted at `data/score_history.json`, which is intentionally ignored by git.
+Score history starts when levels or scanner data is refreshed after this feature is installed. Supported ranges are `1D`, `7D`, `30D`, `90D`, `1Y`, and `All`. The `1D` range is a regular-session trading-day view using 30-minute Eastern-time buckets from 9:30 AM to 4:00 PM; future buckets are returned as axis metadata so the UIs can draw empty bars for parts of the session that have not happened yet. Longer ranges use one stored daily point per Eastern date.
+
+`/api/scanner` records the existing 0-8 setup score, and `/api/levels` records weighted level scores for `all`, `scanner`, and `weight_20` bases using backend-owned canonical level weights. The derived heat score is a 0-100 blend of setup and normalized level score. Movement labels compare the selected metric with the prior observed bucket for `1D`, or the prior daily point for longer ranges; `Both` uses heat movement. History is persisted at `data/score_history.json`, which is intentionally ignored by git.
 
 Download a PDF report:
 
