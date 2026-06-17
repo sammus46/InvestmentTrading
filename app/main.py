@@ -20,6 +20,8 @@ from app.models import (
     NewsResponse,
     ScannerRequest,
     ScannerResponse,
+    ScoreHistoryRequest,
+    ScoreHistoryResponse,
     SectorAnalyticsRequest,
     SectorAnalyticsResponse,
 )
@@ -28,6 +30,7 @@ from app.services.market_data import MarketDataService
 from app.services.news import NewsService
 from app.services.pdf_report import PdfReportService
 from app.services.scanner import ScannerService
+from app.services.score_history import ScoreHistoryService
 
 app = FastAPI(
     title="Investment Trading Levels API",
@@ -38,6 +41,7 @@ market_data = MarketDataService()
 news_service = NewsService()
 pdf_reports = PdfReportService()
 scanner_service = ScannerService(market_data)
+score_history_service = ScoreHistoryService()
 
 
 @app.get("/api/health")
@@ -55,10 +59,15 @@ def get_config() -> AppConfigResponse:
 @app.post("/api/levels", response_model=GenerateResponse)
 def generate_levels(request: GenerateRequest) -> GenerateResponse:
     """Generate metrics for each requested ticker."""
-    return GenerateResponse(
+    response = GenerateResponse(
         generated_at=datetime.now(timezone.utc),
         metrics=market_data.build_metrics(request.tickers, request.metrics),
     )
+    try:
+        score_history_service.record_level_scores(response.metrics)
+    except Exception:
+        pass
+    return response
 
 
 @app.post("/api/news", response_model=NewsResponse)
@@ -74,11 +83,27 @@ def generate_news(request: NewsRequest) -> NewsResponse:
 @app.post("/api/scanner", response_model=ScannerResponse)
 def generate_scanner(request: ScannerRequest) -> ScannerResponse:
     """Generate setup scanner and intraday pattern analysis."""
-    return scanner_service.build_scanner(
+    response = scanner_service.build_scanner(
         request.tickers,
         include_setup=request.include_setup,
         include_patterns=request.include_patterns,
         pattern_lookback_days=request.pattern_lookback_days,
+    )
+    try:
+        score_history_service.record_setup_scores(response.setup_rows)
+    except Exception:
+        pass
+    return response
+
+
+@app.post("/api/score-history", response_model=ScoreHistoryResponse)
+def generate_score_history(request: ScoreHistoryRequest) -> ScoreHistoryResponse:
+    """Return persisted daily score trends for requested tickers."""
+    return score_history_service.build_response(
+        request.tickers,
+        score_range=request.range,
+        score_metric=request.score_metric,
+        level_basis=request.level_basis,
     )
 
 

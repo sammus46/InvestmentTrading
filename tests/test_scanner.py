@@ -530,7 +530,13 @@ def test_scanner_endpoint_uses_shared_watchlist(monkeypatch):
                 setup_rows=[ScannerSetupRow(ticker=tickers[0], score=5)],
             )
 
+    class FakeScoreHistory:
+        def record_setup_scores(self, rows):
+            self.rows = rows
+            return []
+
     monkeypatch.setattr("app.main.scanner_service", FakeScanner())
+    monkeypatch.setattr("app.main.score_history_service", FakeScoreHistory())
     response = generate_scanner(ScannerRequest(tickers="aapl msft"))
 
     assert response.watchlist == ["AAPL", "MSFT"]

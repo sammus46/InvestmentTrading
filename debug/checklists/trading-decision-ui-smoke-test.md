@@ -10,6 +10,8 @@ Use this checklist when changing layout, filters, expand/collapse controls, news
 - [ ] Static and Streamlit report search behave the same for the same ticker tokens.
 - [ ] Search filtering does not change PDF output or saved watchlist order.
 - [ ] Charts follow the filtered report tickers and hide cleanly when there are no matches.
+- [ ] Score Analytics appears below all charts, follows the same report search ticker filter, and does not change PDF output or saved watchlist order.
+- [ ] Changing the `Levels` filter also changes the Score Analytics level basis while charts remain visible for the searched tickers.
 - [ ] Warning/details areas are collapsed or compact enough that they do not dominate the decision view.
 
 ## News View
