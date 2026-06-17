@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import app.streamlit_app as streamlit_app_module
 from streamlit.testing.v1 import AppTest
@@ -166,20 +167,40 @@ def streamlit_app_smoke_script(state_path: str) -> None:
                 range=score_range,
                 score_metric=score_metric,
                 level_basis=level_basis,
-                summary=ScoreHistorySummary(ticker_count=len(tickers), tracked_ticker_count=len(tickers)),
+                summary=ScoreHistorySummary(
+                    ticker_count=len(tickers),
+                    tracked_ticker_count=len(tickers),
+                    average_heat_score=60.0,
+                ),
                 tickers=[
                     ScoreHistoryTicker(
                         ticker=ticker,
                         points=[
-                            ScoreHistoryPoint(date=datetime(2026, 6, 14, tzinfo=timezone.utc).date(), setup_score=4, level_score=40, level_score_normalized=40.0, level_count=2),
-                            ScoreHistoryPoint(date=datetime(2026, 6, 15, tzinfo=timezone.utc).date(), setup_score=5, level_score=50, level_score_normalized=50.0, level_count=2),
+                            ScoreHistoryPoint(
+                                date=datetime(2026, 6, 14, tzinfo=timezone.utc).date(),
+                                setup_score=4,
+                                level_score=40,
+                                level_score_normalized=40.0,
+                                level_count=2,
+                                heat_score=46.0,
+                            ),
+                            ScoreHistoryPoint(
+                                date=datetime(2026, 6, 15, tzinfo=timezone.utc).date(),
+                                setup_score=5,
+                                level_score=50,
+                                level_score_normalized=50.0,
+                                level_count=2,
+                                heat_score=57.5,
+                            ),
                         ],
                         latest_setup_score=5,
                         latest_level_score=50,
                         latest_level_score_normalized=50.0,
+                        latest_heat_score=57.5,
                         latest_level_count=2,
                         setup_delta_1d=1,
                         level_normalized_delta_1d=10.0,
+                        heat_delta_1d=11.5,
                     )
                     for ticker in tickers
                 ],
@@ -648,6 +669,82 @@ def test_streamlit_score_rows_filter_and_sort_by_movement():
     assert [row.ticker for row in sorted_rows] == ["MSFT", "AAPL", "NVDA"]
 
 
+def test_streamlit_score_heat_helpers_render_chart_thermometer_and_strip():
+    row = ScoreHistoryTicker(
+        ticker="AAPL",
+        points=[
+            ScoreHistoryPoint(
+                date=datetime(2026, 6, 14, tzinfo=timezone.utc).date(),
+                setup_score=4,
+                level_score=40,
+                level_score_normalized=40.0,
+                level_count=2,
+                heat_score=46.0,
+            ),
+            ScoreHistoryPoint(
+                date=datetime(2026, 6, 15, tzinfo=timezone.utc).date(),
+                setup_score=6,
+                level_score=70,
+                level_score_normalized=70.0,
+                level_count=3,
+                heat_score=73.0,
+            ),
+        ],
+        latest_setup_score=6,
+        latest_level_score=70,
+        latest_level_score_normalized=70.0,
+        latest_heat_score=73.0,
+        latest_level_count=3,
+        heat_delta_1d=27.0,
+    )
+
+    assert streamlit_app_module.heat_score(6, 70.0) == 73.0
+    assert streamlit_app_module.score_movement(row, "both") == "improving"
+
+    chart_html = streamlit_app_module.score_line_chart_html([row], "heat")
+    card_html = streamlit_app_module.score_trend_card_html(row, "both")
+
+    assert "streamlit-score-line-panel" in chart_html
+    assert "Heat Trend" in chart_html
+    assert "AAPL 73" in chart_html
+    assert "streamlit-score-thermometer" in card_html
+    assert "streamlit-score-heat-strip" in card_html
+    assert "streamlit-heat-warm" in card_html
+
+
+def test_streamlit_score_heat_helpers_support_legacy_rows_without_heat_fields():
+    legacy_row = SimpleNamespace(
+        ticker="MSFT",
+        points=[
+            SimpleNamespace(
+                date=datetime(2026, 6, 15, tzinfo=timezone.utc).date(),
+                setup_score=5,
+                level_score=50,
+                level_score_normalized=50.0,
+                level_count=2,
+            )
+        ],
+        latest_setup_score=5,
+        latest_level_score=50,
+        latest_level_score_normalized=50.0,
+        latest_level_count=2,
+        setup_delta_1d=None,
+        setup_delta_5d=None,
+        level_normalized_delta_1d=None,
+        level_normalized_delta_5d=None,
+    )
+
+    assert streamlit_app_module.latest_heat_score(legacy_row) == 57.5
+    assert "streamlit-score-thermometer" in streamlit_app_module.score_trend_card_html(legacy_row, "both")
+
+
+def test_streamlit_score_analytics_includes_chart_metric_control():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    assert 'SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")' in source
+    assert '"Chart metric"' in source
+    assert "score_line_chart_html(rows, chart_metric)" in source
+
+
 def test_streamlit_watchlist_news_search_filters_ticker_groups():
     groups = [
         TickerNews(ticker="AAPL", articles=[NewsArticle(title="AAPL headline")]),
@@ -869,6 +966,9 @@ def test_streamlit_app_initial_load_renders_levels_and_scanner(tmp_path):
     assert "Levels" in [header.value for header in app.header]
     assert "Report" not in [header.value for header in app.header]
     assert any("Score Analytics" in markdown.value for markdown in app.markdown)
+    assert any("streamlit-score-line-panel" in markdown.value for markdown in app.markdown)
+    assert any("streamlit-score-thermometer" in markdown.value for markdown in app.markdown)
+    assert any("streamlit-score-heat-strip" in markdown.value for markdown in app.markdown)
     assert any("AAPL" in markdown.value for markdown in app.markdown)
     assert not any("Loading levels and scanner" in markdown.value for markdown in app.markdown)
 

@@ -247,9 +247,24 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-warning ul { margin: 7px 0 0; padding-left: 18px; }
 .score-summary-strip { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 .score-summary-tile { background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: grid; gap: 2px; padding: 10px 12px; }
+.score-line-panel { background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: grid; gap: 8px; min-width: 0; padding: 12px; }
+.score-line-header { align-items: center; display: flex; justify-content: space-between; gap: 12px; }
+.score-line-header h4 { color: #0f172a; letter-spacing: 0.04em; margin: 0; }
+.score-line-header span { color: #64748b; font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
+.score-line-chart { display: block; height: auto; max-height: 230px; width: 100%; }
+.score-line-grid line { stroke: #e2e8f0; stroke-width: 1; }
+.score-line-grid text { fill: #64748b; font-size: 11px; font-weight: 800; }
+.score-line-series polyline { fill: none; stroke: var(--score-series-color); stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
+.score-line-series circle { fill: var(--score-series-color); stroke: #ffffff; stroke-width: 2; }
+.score-line-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.score-line-legend-item { align-items: center; color: #334155; display: inline-flex; font-size: 0.76rem; font-weight: 900; gap: 5px; }
+.score-line-legend-item i { background: var(--score-series-color); border-radius: 999px; display: inline-block; height: 8px; width: 8px; }
+.score-line-empty { background: repeating-linear-gradient(90deg, #e2e8f0 0 7px, transparent 7px 14px); border-radius: 6px; height: 96px; opacity: 0.7; }
 .score-summary-tile span,
 .score-latest span,
-.score-sparkline-card span { color: #64748b; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
+.score-sparkline-card span,
+.score-heat-strip-card span,
+.score-thermometer span { color: #64748b; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
 .score-summary-tile strong { color: #0f766e; font-size: 1.3rem; line-height: 1.1; }
 .score-summary-tile small,
 .score-latest small,
@@ -270,6 +285,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .score-latest,
 .score-sparkline-card { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px; display: grid; gap: 5px; min-width: 0; padding: 9px 10px; }
 .score-latest strong { color: #111827; font-size: 0.96rem; overflow-wrap: anywhere; }
+.score-thermometer { align-items: center; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px; display: grid; gap: 10px; grid-template-columns: minmax(72px, auto) 1fr auto; padding: 9px 10px; }
+.score-thermometer strong { color: #0f172a; display: block; font-size: 1rem; line-height: 1.1; }
+.score-thermometer small { color: var(--heat-color, #64748b); font-size: 0.78rem; font-weight: 900; text-transform: uppercase; }
+.score-thermometer-track { background: #e2e8f0; border-radius: 999px; height: 12px; overflow: hidden; }
+.score-thermometer-track span { background: var(--heat-color, #94a3b8); border-radius: inherit; display: block; height: 100%; min-width: 4px; }
+.score-heat-strip-card { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 8px; display: grid; gap: 7px; min-width: 0; padding: 9px 10px; }
+.score-heat-strip { display: grid; gap: 3px; grid-template-columns: repeat(auto-fit, minmax(8px, 1fr)); min-height: 18px; }
+.score-heat-strip i { background: var(--heat-color, #cbd5e1); border-radius: 4px; min-height: 18px; }
+.score-heat-strip.empty { background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px); border-radius: 6px; opacity: 0.7; }
+.heat-cold { --heat-color: #2563eb; }
+.heat-cool { --heat-color: #0f766e; }
+.heat-warm { --heat-color: #ca8a04; }
+.heat-hot { --heat-color: #dc2626; }
+.heat-none { --heat-color: #94a3b8; }
 .score-delta.positive { color: #047857; font-weight: 900; }
 .score-delta.negative { color: #dc2626; font-weight: 900; }
 .score-delta.neutral { color: #64748b; font-weight: 900; }
@@ -508,6 +537,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-analytics-header { display: grid; }
   .score-toolbar { align-items: stretch; display: grid; justify-content: stretch; }
   .score-select { justify-content: space-between; width: 100%; }
+  .score-line-header { align-items: stretch; display: grid; }
+  .score-thermometer { grid-template-columns: 1fr; }
   .section-heading { align-items: center; display: flex; }
   .section-actions { align-items: stretch; display: grid; justify-items: end; }
   .news-search { width: min(100%, 240px); }
@@ -619,8 +650,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-select,
   .score-empty,
   .score-summary-tile,
+  .score-line-panel,
   .score-latest,
   .score-sparkline-card,
+  .score-thermometer,
+  .score-heat-strip-card,
   .scanner-tab,
   .scanner-data-notes,
   .scanner-card-toolbar label,
@@ -685,8 +719,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .pattern-detail .scanner-table-wrap,
   .broker-chart,
   .score-analytics-section,
+  .score-line-panel,
   .score-latest,
   .score-sparkline-card,
+  .score-thermometer,
+  .score-heat-strip-card,
   .streamlit-chart-frame {
     border-color: #263241;
   }
@@ -697,9 +734,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-select span,
   .score-summary-tile span,
   .score-summary-tile small,
+  .score-line-header span,
+  .score-line-legend-item,
   .score-latest span,
   .score-latest small,
   .score-sparkline-card span,
+  .score-heat-strip-card span,
+  .score-thermometer span,
   .score-trend-card header span,
   .news-search span,
   .report-search span,
@@ -813,6 +854,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-movement.improving { background: #064e3b; color: #d1fae5; }
   .score-movement.declining { background: #4c1d1d; color: #fecaca; }
   .score-movement.flat { background: #1f2937; color: #cbd5e1; }
+  .score-line-header h4,
+  .score-thermometer strong { color: #e5edf4; }
+  .score-line-grid line { stroke: #334155; }
+  .score-line-grid text { fill: #94a3b8; }
+  .score-line-series circle { stroke: #111827; }
+  .score-line-empty,
+  .score-heat-strip.empty,
+  .score-thermometer-track {
+    background: repeating-linear-gradient(90deg, #334155 0 4px, transparent 4px 9px);
+  }
   .score-sparkline polyline { stroke: #2dd4bf; }
   .score-sparkline-empty {
     background: repeating-linear-gradient(90deg, #334155 0 4px, transparent 4px 9px);
