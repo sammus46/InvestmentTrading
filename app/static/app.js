@@ -174,7 +174,7 @@ let REPORT_LAYOUTS = [
 let DEFAULT_REPORT_LAYOUT = "grid";
 
 const tickersInput = document.querySelector("#tickers");
-const watchlistFormEl = document.querySelector("#watchlist-form");
+const addTickerButton = document.querySelector("#add-ticker");
 const watchlistListEl = document.querySelector("#watchlist-list");
 const generateButton = document.querySelector("#generate");
 const pdfButton = document.querySelector("#download-pdf");
@@ -251,6 +251,7 @@ let chartSettings = loadStoredChartSettings();
 let reportLayout = loadStoredReportLayout();
 let levelFilter = appSettings.levelFilter;
 let scoreAnalyticsSettings = appSettings.scoreAnalytics;
+let lastAppliedReportSearchSignature = "";
 let watchlistRefreshTimer = null;
 let autoRefreshTimer = null;
 let newsEnrichmentPollTimer = null;
@@ -304,10 +305,8 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-watchlistFormEl.addEventListener("submit", (event) => {
-  event.preventDefault();
-  addTickersFromInput();
-});
+document.addEventListener("keydown", handleTextInputEnter, { capture: true });
+addTickerButton.addEventListener("click", addTickersFromInput);
 
 watchlistListEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-watchlist-action]");
@@ -363,11 +362,6 @@ levelFilterSelectEl?.addEventListener("change", () => {
 
 reportSearchEl?.addEventListener("input", applyReportSearch);
 reportSearchEl?.addEventListener("search", applyReportSearch);
-reportSearchEl?.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter") return;
-  event.preventDefault();
-  applyReportSearch({ normalizeInput: true });
-});
 
 settingsDefaultViewEl?.addEventListener("change", () => {
   updateSettings({ defaultView: settingsDefaultViewEl.value });
@@ -439,9 +433,8 @@ watchlistNewsEl.addEventListener("click", (event) => {
   renderWatchlistNews(currentNews.ticker_news || []);
 });
 
-watchlistNewsSearchEl?.addEventListener("input", () => {
-  renderWatchlistNews(currentNews?.ticker_news || []);
-});
+watchlistNewsSearchEl?.addEventListener("input", applyWatchlistNewsSearch);
+watchlistNewsSearchEl?.addEventListener("search", applyWatchlistNewsSearch);
 
 scannerSetupEl.addEventListener("click", (event) => {
   const sortButton = event.target.closest("[data-scanner-sort]");
@@ -700,6 +693,30 @@ function closeSettingsDrawer() {
 function closeAllDrawers() {
   closeControlsDrawer();
   closeSettingsDrawer();
+}
+
+function handleTextInputEnter(event) {
+  if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  const type = String(target.getAttribute("type") || "text").toLowerCase();
+  if (!["text", "search"].includes(type)) return;
+
+  if (target === tickersInput) {
+    event.preventDefault();
+    addTickersFromInput();
+    return;
+  }
+  if (target === reportSearchEl) {
+    event.preventDefault();
+    applyReportSearch({ normalizeInput: true });
+    return;
+  }
+  if (target === watchlistNewsSearchEl) {
+    event.preventDefault();
+    applyWatchlistNewsSearch({ normalizeInput: true });
+  }
 }
 
 function loadStoredSettings() {
@@ -1645,13 +1662,19 @@ function renderReport(report) {
 }
 
 function applyReportSearch(options = {}) {
-  if (options.normalizeInput && reportSearchEl) {
-    reportSearchEl.value = searchTickerTerms(reportSearchEl.value).join(", ");
+  if (options.normalizeInput) {
+    normalizeTickerSearchInput(reportSearchEl);
   }
-  renderCurrentReport();
+  const signature = reportSearchSignature();
+  if (signature === lastAppliedReportSearchSignature) {
+    updateReportSearchStatus(filteredReportMetrics().length, currentReport?.metrics?.length || 0);
+    return;
+  }
+  renderCurrentReport({ searchSignature: signature });
 }
 
-function renderCurrentReport() {
+function renderCurrentReport(options = {}) {
+  lastAppliedReportSearchSignature = options.searchSignature ?? reportSearchSignature();
   if (!currentReport?.metrics?.length) {
     resultsEl.className = "results empty";
     resultsEl.textContent = "";
@@ -1685,6 +1708,15 @@ function filteredReportMetrics() {
   const terms = searchTickerTerms(reportSearchEl?.value || "");
   if (!terms.length) return metrics;
   return metrics.filter((metric) => terms.some((term) => String(metric.ticker || "").toUpperCase().includes(term)));
+}
+
+function reportSearchSignature() {
+  return searchTickerTerms(reportSearchEl?.value || "").join("|");
+}
+
+function normalizeTickerSearchInput(input) {
+  if (!input) return;
+  input.value = searchTickerTerms(input.value).join(", ");
 }
 
 function updateReportSearchStatus(visibleCount, totalCount) {
@@ -2205,6 +2237,13 @@ function renderWatchlistNews(tickerNews) {
   }
   watchlistNewsEl.className = "ticker-news-grid";
   watchlistNewsEl.innerHTML = filteredNews.map(renderTickerNews).join("");
+}
+
+function applyWatchlistNewsSearch(options = {}) {
+  if (options.normalizeInput) {
+    normalizeTickerSearchInput(watchlistNewsSearchEl);
+  }
+  renderWatchlistNews(currentNews?.ticker_news || []);
 }
 
 function filterTickerNewsGroups(tickerNews, query) {

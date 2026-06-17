@@ -36,6 +36,26 @@ def test_static_levels_view_uses_one_levels_scanner_run_button():
     assert "withScannerBusyState" not in js
 
 
+def test_static_text_inputs_use_explicit_enter_handling():
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+
+    assert '<form id="watchlist-form"' not in html
+    assert '<div class="watchlist-form" role="group" aria-labelledby="watchlist-heading">' in html
+    assert 'id="add-ticker" class="primary icon-button" type="button"' in html
+    assert 'const addTickerButton = document.querySelector("#add-ticker");' in js
+    assert 'addTickerButton.addEventListener("click", addTickersFromInput);' in js
+    assert "watchlistFormEl" not in js
+    assert 'document.addEventListener("keydown", handleTextInputEnter, { capture: true });' in js
+    assert "function handleTextInputEnter(event)" in js
+    assert 'if (event.key !== "Enter"' in js
+    assert "target === tickersInput" in js
+    assert "target === reportSearchEl" in js
+    assert "target === watchlistNewsSearchEl" in js
+    assert "applyReportSearch({ normalizeInput: true });" in js
+    assert "applyWatchlistNewsSearch({ normalizeInput: true });" in js
+
+
 def test_static_theme_uses_light_surfaces_for_light_mode_actions():
     css = Path("app/static/styles.css").read_text(encoding="utf-8")
     dark_start = css.index("@media (prefers-color-scheme: dark)")
@@ -75,18 +95,20 @@ def test_static_report_search_filters_charts_and_score_analytics():
     assert 'const reportSearchStatusEl = document.querySelector("#report-search-status");' in js
     assert 'reportSearchEl?.addEventListener("input", applyReportSearch);' in js
     assert 'reportSearchEl?.addEventListener("search", applyReportSearch);' in js
-    assert 'reportSearchEl?.addEventListener("keydown", (event) => {' in js
-    assert 'if (event.key !== "Enter") return;' in js
-    assert "event.preventDefault();" in js
-    assert "applyReportSearch({ normalizeInput: true });" in js
     assert "function applyReportSearch(options = {})" in js
-    assert "reportSearchEl.value = searchTickerTerms(reportSearchEl.value).join(\", \");" in js
-    assert "function renderCurrentReport()" in js
+    assert "normalizeTickerSearchInput(reportSearchEl);" in js
+    assert "if (signature === lastAppliedReportSearchSignature)" in js
+    assert "renderCurrentReport({ searchSignature: signature });" in js
+    assert "function renderCurrentReport(options = {})" in js
+    assert "lastAppliedReportSearchSignature = options.searchSignature ?? reportSearchSignature();" in js
     assert "updateReportSearchStatus(visibleMetrics.length, currentReport.metrics.length);" in js
     assert "renderCharts();\n  renderScoreAnalytics();" in js
     assert "function visibleScoreTickers()" in js
     assert "return filteredReportMetrics().map((metric) => metric.ticker);" in js
     assert "const metrics = filteredReportMetrics();" in js
+    assert 'watchlistNewsSearchEl?.addEventListener("input", applyWatchlistNewsSearch);' in js
+    assert 'watchlistNewsSearchEl?.addEventListener("search", applyWatchlistNewsSearch);' in js
+    assert "function applyWatchlistNewsSearch(options = {})" in js
 
 
 def test_static_score_level_basis_stays_synced_with_level_filter():
