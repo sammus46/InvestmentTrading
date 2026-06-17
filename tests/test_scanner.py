@@ -107,6 +107,50 @@ def test_analyze_setup_vectorized_counts_match_level_touch_rules():
     assert setup["momentum"] == "Turning Up"
 
 
+def test_analyze_setup_matches_adam_scoring_components():
+    service = ScannerService()
+    today = datetime.now(EASTERN).date()
+    index = pd.DatetimeIndex(
+        [datetime.combine(today, time(9, 30), tzinfo=EASTERN) + timedelta(minutes=offset * 5) for offset in range(8)]
+    )
+    frame = pd.DataFrame(
+        {
+            "Open": [100.7, 100.9, 100.8, 100.6, 100.45, 100.02, 100.06, 100.12],
+            "High": [101.2, 101.0, 100.95, 100.75, 100.55, 100.14, 100.18, 100.24],
+            "Low": [99.5, 99.6, 99.4, 99.5, 100.35, 99.94, 99.96, 99.98],
+            "Close": [100.8, 100.4, 100.6, 100.5, 100.45, 100.05, 100.10, 100.20],
+            "Volume": [100, 120, 130, 140, 150, 160, 170, 180],
+        },
+        index=index,
+    )
+    data = {
+        "price": 100.2,
+        "today_vwap": 100.0,
+        "vwap": 98.0,
+        "prev_h": 103.0,
+        "prev_l": 97.0,
+        "pm_high": 102.0,
+        "pm_low": 96.0,
+        "monthly_h": 110.0,
+        "monthly_l": 90.0,
+    }
+
+    setup = service._analyze_setup(data, frame)
+
+    assert setup is not None
+    assert setup["nearest_name"] == "VWAP"
+    assert setup["nearest_val"] == 100.0
+    assert setup["nearest_pct"] == 0.2
+    assert setup["consec"] == 3
+    assert setup["hold_count"] == 3
+    assert setup["level_held"] is True
+    assert bool(setup["is_tight"]) is True
+    assert round(float(setup["off_high_pct"]), 2) == -0.99
+    assert bool(setup["good_pullback"]) is True
+    assert setup["momentum"] == "Turning Up"
+    assert setup["score"] == 8
+
+
 def test_intraday_ema_requires_today_regular_session_bars():
     service = MarketDataService()
     today = datetime.now(EASTERN).date()

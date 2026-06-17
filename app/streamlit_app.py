@@ -96,10 +96,10 @@ SCORE_OPTION_LABELS = {
     "90D": "90D",
     "1Y": "1Y",
     "All": "All",
-    "setup": "Setup",
-    "level": "Level",
+    "setup": "Adam Setup",
+    "level": "Derived Level",
     "both": "Both",
-    "heat": "Heat",
+    "heat": "Derived Heat",
     "all": "All",
     "scanner": "Scanner",
     "weight_20": "Weight 20+",
@@ -3501,7 +3501,7 @@ def render_score_analytics(
                 '<span class="streamlit-score-analytics-marker"></span>'
                 '<div class="streamlit-score-analytics-header">'
                 "<h2>Score Analytics</h2>"
-                '<span class="streamlit-status-chip">Daily trends</span>'
+                '<span class="streamlit-status-chip">Adam + derived trends</span>'
                 "</div>"
             ),
             unsafe_allow_html=True,
@@ -3607,9 +3607,9 @@ def score_summary_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetric
     flat = len(rows) - improving - declining
     tiles = [
         score_summary_tile_html("Tracked", len([row for row in rows if row.points]), f"{len(rows)} visible"),
-        score_summary_tile_html("Avg Heat", score_average(heat_values), "hot/cold"),
-        score_summary_tile_html("Avg Setup", score_average(setup_values), "0-8"),
-        score_summary_tile_html("Avg Level", score_average(level_values), "normalized"),
+        score_summary_tile_html("Avg Derived Heat", score_average(heat_values), "hot/cold"),
+        score_summary_tile_html("Avg Adam Setup", score_average(setup_values), "0-8"),
+        score_summary_tile_html("Avg Derived Level", score_average(level_values), "normalized"),
         score_summary_tile_html("Improving", improving, "1D"),
         score_summary_tile_html("Declining", declining, "1D"),
         score_summary_tile_html("Flat/New", flat, "1D"),
@@ -3731,18 +3731,18 @@ def score_trend_card_html(row: ScoreHistoryTicker, score_metric: ScoreMetricName
     latest = []
     sparklines = []
     if show_setup:
-        latest.append(score_latest_html("Setup", format_setup_score(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d))
-        sparklines.append(score_sparkline_html(row, "setup_score", "Setup score"))
+        latest.append(score_latest_html("Adam Setup", format_setup_score(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d))
+        sparklines.append(score_sparkline_html(row, "setup_score", "Adam setup score"))
     if show_level:
         latest.append(
             score_latest_html(
-                "Level",
+                "Derived Level",
                 format_level_score(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count),
                 row.level_normalized_delta_1d,
                 row.level_normalized_delta_5d,
             )
         )
-        sparklines.append(score_sparkline_html(row, "level_score_normalized", "Level score"))
+        sparklines.append(score_sparkline_html(row, "level_score_normalized", "Derived level score"))
     return (
         f'<article class="streamlit-score-card movement-{movement}">'
         "<header>"
@@ -3818,10 +3818,10 @@ def score_heat_thermometer_html(row: ScoreHistoryTicker) -> str:
     return (
         f'<div class="streamlit-score-thermometer streamlit-heat-{band_id}">'
         "<div>"
-        "<span>Heat</span>"
+        "<span>Derived Heat</span>"
         f"<strong>{format_heat_score(heat)}</strong>"
         "</div>"
-        f'<div class="streamlit-score-thermometer-track" aria-label="Heat score {escape(format_heat_score(heat))}">'
+        f'<div class="streamlit-score-thermometer-track" aria-label="Derived heat score {escape(format_heat_score(heat))}">'
         f'<span style="width:{width:.1f}%"></span>'
         "</div>"
         f"<small>{escape(band_label)}</small>"
@@ -3835,7 +3835,7 @@ def score_heat_strip_html(row: ScoreHistoryTicker) -> str:
     if not points:
         return (
             '<div class="streamlit-score-heat-strip-card">'
-            "<span>Daily Heat</span>"
+            "<span>Daily Derived Heat</span>"
             '<div class="streamlit-score-heat-strip empty"></div>'
             "</div>"
         )
@@ -3849,7 +3849,7 @@ def score_heat_strip_html(row: ScoreHistoryTicker) -> str:
         )
     return (
         '<div class="streamlit-score-heat-strip-card">'
-        "<span>Daily Heat</span>"
+        "<span>Daily Derived Heat</span>"
         f'<div class="streamlit-score-heat-strip">{"".join(cells)}</div>'
         "</div>"
     )

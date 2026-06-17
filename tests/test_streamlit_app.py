@@ -705,7 +705,7 @@ def test_streamlit_score_heat_helpers_render_chart_thermometer_and_strip():
     card_html = streamlit_app_module.score_trend_card_html(row, "both")
 
     assert "streamlit-score-line-panel" in chart_html
-    assert "Heat Trend" in chart_html
+    assert "Derived Heat Trend" in chart_html
     assert "AAPL 73" in chart_html
     assert "streamlit-score-thermometer" in card_html
     assert "streamlit-score-heat-strip" in card_html
