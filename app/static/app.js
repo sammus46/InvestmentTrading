@@ -28,11 +28,14 @@ const CHART_TYPES = ["line", "candles"];
 const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
 const SCORE_ANALYTICS_RANGES = ["7D", "30D", "90D", "1Y", "All"];
 const SCORE_ANALYTICS_METRICS = ["setup", "level", "both"];
+const SCORE_ANALYTICS_CHART_METRICS = ["heat", "setup", "level"];
 const SCORE_ANALYTICS_MOVEMENTS = ["all", "improving", "declining", "flat"];
 const SCORE_ANALYTICS_SORTS = ["watchlist", "setup", "level", "gain", "drop"];
+const SCORE_SERIES_COLORS = ["#0f766e", "#2563eb", "#dc2626", "#ca8a04", "#7c3aed", "#0891b2", "#be185d", "#4d7c0f"];
 const DEFAULT_SCORE_ANALYTICS_SETTINGS = {
   range: "30D",
   scoreMetric: "both",
+  chartMetric: "heat",
   movement: "all",
   sort: "watchlist",
 };
@@ -786,6 +789,9 @@ function normalizeScoreAnalyticsSettings(candidate = {}) {
     scoreMetric: SCORE_ANALYTICS_METRICS.includes(source.scoreMetric)
       ? source.scoreMetric
       : DEFAULT_SCORE_ANALYTICS_SETTINGS.scoreMetric,
+    chartMetric: SCORE_ANALYTICS_CHART_METRICS.includes(source.chartMetric)
+      ? source.chartMetric
+      : DEFAULT_SCORE_ANALYTICS_SETTINGS.chartMetric,
     movement: SCORE_ANALYTICS_MOVEMENTS.includes(source.movement)
       ? source.movement
       : DEFAULT_SCORE_ANALYTICS_SETTINGS.movement,
@@ -2779,6 +2785,7 @@ function renderScoreAnalytics() {
     ${controls}
     ${warningMarkup}
     ${renderScoreSummary(rows)}
+    ${renderScoreLineChart(rows)}
     <div class="score-trend-grid">
       ${rows.map(renderScoreTrendCard).join("")}
     </div>
@@ -2795,6 +2802,7 @@ function renderScoreAnalyticsControls() {
       <div class="score-toolbar" aria-label="Score analytics controls">
         ${renderScoreSelect("Range", "range", scoreAnalyticsSettings.range, SCORE_ANALYTICS_RANGES, scoreOptionLabel)}
         ${renderScoreSelect("Metric", "scoreMetric", scoreAnalyticsSettings.scoreMetric, SCORE_ANALYTICS_METRICS, scoreOptionLabel)}
+        ${renderScoreSelect("Chart", "chartMetric", scoreAnalyticsSettings.chartMetric, SCORE_ANALYTICS_CHART_METRICS, scoreOptionLabel)}
         ${renderScoreSelect("Basis", "levelBasis", levelFilter, LEVEL_FILTERS.map((filter) => filter.id), scoreOptionLabel)}
         ${renderScoreSelect("Move", "movement", scoreAnalyticsSettings.movement, SCORE_ANALYTICS_MOVEMENTS, scoreOptionLabel)}
         ${renderScoreSelect("Sort", "sort", scoreAnalyticsSettings.sort, SCORE_ANALYTICS_SORTS, scoreOptionLabel)}
@@ -2824,6 +2832,7 @@ function scoreOptionLabel(option) {
     setup: "Setup",
     level: "Level",
     both: "Both",
+    heat: "Heat",
     all: "All",
     scanner: "Scanner",
     weight_20: "Weight 20+",
@@ -2887,12 +2896,14 @@ function sortedScoreRows(rows) {
 function renderScoreSummary(rows) {
   const setupValues = rows.map((row) => row.latest_setup_score).filter((value) => value !== null && value !== undefined);
   const levelValues = rows.map((row) => row.latest_level_score_normalized).filter((value) => value !== null && value !== undefined);
+  const heatValues = rows.map((row) => latestHeatScore(row)).filter((value) => value !== null && value !== undefined);
   const improving = rows.filter((row) => scoreMovement(row) === "improving").length;
   const declining = rows.filter((row) => scoreMovement(row) === "declining").length;
   const flat = rows.length - improving - declining;
   return `
     <div class="score-summary-strip">
       ${renderScoreSummaryTile("Tracked", rows.filter((row) => row.points?.length).length, `${rows.length} visible`)}
+      ${renderScoreSummaryTile("Avg Heat", averageValue(heatValues), "hot/cold")}
       ${renderScoreSummaryTile("Avg Setup", averageValue(setupValues), "0-8")}
       ${renderScoreSummaryTile("Avg Level", averageValue(levelValues), "normalized")}
       ${renderScoreSummaryTile("Improving", improving, "1D")}
@@ -2909,6 +2920,98 @@ function renderScoreSummaryTile(label, value, meta) {
       <strong>${formatScoreSummaryValue(value)}</strong>
       <small>${escapeHtml(meta)}</small>
     </div>
+  `;
+}
+
+function renderScoreLineChart(rows) {
+  const metric = scoreAnalyticsSettings.chartMetric || "heat";
+  const metricLabel = scoreOptionLabel(metric);
+  const series = rows
+    .map((row, rowIndex) => {
+      const points = (row.points || [])
+        .map((point) => ({
+          date: point.date,
+          value: scorePointMetricValue(point, metric),
+        }))
+        .filter((point) => point.date && Number.isFinite(point.value));
+      return {
+        ticker: row.ticker,
+        color: SCORE_SERIES_COLORS[rowIndex % SCORE_SERIES_COLORS.length],
+        points,
+      };
+    })
+    .filter((row) => row.points.length);
+  const dates = [...new Set(series.flatMap((row) => row.points.map((point) => point.date)))].sort();
+  if (!series.length || !dates.length) {
+    return `
+      <section class="score-line-panel">
+        <div class="score-line-header">
+          <h4>${escapeHtml(metricLabel)} Trend</h4>
+          <span>No ${escapeHtml(metricLabel.toLowerCase())} chart data</span>
+        </div>
+        <div class="score-line-empty"></div>
+      </section>
+    `;
+  }
+
+  const width = 760;
+  const height = 190;
+  const left = 42;
+  const right = 12;
+  const top = 14;
+  const bottom = 30;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const xForDate = (date) => {
+    const index = dates.indexOf(date);
+    return dates.length === 1 ? left + plotWidth / 2 : left + (index / (dates.length - 1)) * plotWidth;
+  };
+  const yForValue = (value) => top + ((100 - clampPercent(value)) / 100) * plotHeight;
+  const gridLines = [0, 25, 50, 75, 100].map((value) => {
+    const y = yForValue(value);
+    return `
+      <g class="score-line-grid">
+        <line x1="${left}" y1="${y.toFixed(2)}" x2="${width - right}" y2="${y.toFixed(2)}"></line>
+        <text x="8" y="${(y + 4).toFixed(2)}">${value}</text>
+      </g>
+    `;
+  }).join("");
+  const seriesMarkup = series.map((row) => {
+    const coordinates = row.points.map((point) => `${xForDate(point.date).toFixed(2)},${yForValue(point.value).toFixed(2)}`);
+    const markerMarkup = row.points.length === 1
+      ? `<circle cx="${xForDate(row.points[0].date).toFixed(2)}" cy="${yForValue(row.points[0].value).toFixed(2)}" r="4"></circle>`
+      : "";
+    return `
+      <g class="score-line-series" style="--score-series-color:${escapeHtml(row.color)}">
+        <polyline points="${coordinates.join(" ")}"></polyline>
+        ${markerMarkup}
+      </g>
+    `;
+  }).join("");
+  const legend = series.map((row) => {
+    const latest = row.points[row.points.length - 1];
+    return `
+      <span class="score-line-legend-item" style="--score-series-color:${escapeHtml(row.color)}">
+        <i></i>${escapeHtml(row.ticker)} ${formatScoreSummaryValue(latest?.value)}
+      </span>
+    `;
+  }).join("");
+  const firstDate = dates[0];
+  const lastDate = dates[dates.length - 1];
+
+  return `
+    <section class="score-line-panel">
+      <div class="score-line-header">
+        <h4>${escapeHtml(metricLabel)} Trend</h4>
+        <span>${escapeHtml(firstDate)}${firstDate === lastDate ? "" : ` - ${escapeHtml(lastDate)}`}</span>
+      </div>
+      <svg class="score-line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(metricLabel)} trend for visible tickers">
+        <title>${escapeHtml(metricLabel)} trend for visible tickers</title>
+        ${gridLines}
+        ${seriesMarkup}
+      </svg>
+      <div class="score-line-legend">${legend}</div>
+    </section>
   `;
 }
 
@@ -2929,6 +3032,8 @@ function renderScoreTrendCard(row) {
         ${showSetup ? renderScoreLatest("Setup", formatSetupScore(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d) : ""}
         ${showLevel ? renderScoreLatest("Level", formatLevelScore(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count), row.level_normalized_delta_1d, row.level_normalized_delta_5d) : ""}
       </div>
+      ${renderScoreHeatThermometer(row)}
+      ${renderScoreHeatStrip(row)}
       <div class="score-sparkline-grid">
         ${showSetup ? renderScoreSparkline(row.points || [], "setup_score", "Setup score") : ""}
         ${showLevel ? renderScoreSparkline(row.points || [], "level_score_normalized", "Level score") : ""}
@@ -2983,6 +3088,115 @@ function renderScoreSparkline(points, field, label) {
   `;
 }
 
+function renderScoreHeatThermometer(row) {
+  const heat = latestHeatScore(row);
+  const band = heatBand(heat);
+  const width = heat === null ? 0 : clampPercent(heat);
+  return `
+    <div class="score-thermometer heat-${band.id}">
+      <div>
+        <span>Heat</span>
+        <strong>${formatHeatScore(heat)}</strong>
+      </div>
+      <div class="score-thermometer-track" aria-label="Heat score ${escapeHtml(formatHeatScore(heat))}">
+        <span style="width:${width.toFixed(1)}%"></span>
+      </div>
+      <small>${escapeHtml(band.label)}</small>
+    </div>
+  `;
+}
+
+function renderScoreHeatStrip(row) {
+  const points = (row.points || []).filter((point) => point.date);
+  if (!points.length) {
+    return `
+      <div class="score-heat-strip-card">
+        <span>Daily Heat</span>
+        <div class="score-heat-strip empty"></div>
+      </div>
+    `;
+  }
+  return `
+    <div class="score-heat-strip-card">
+      <span>Daily Heat</span>
+      <div class="score-heat-strip">
+        ${points.map((point) => {
+          const heat = scorePointHeat(point);
+          const band = heatBand(heat);
+          const title = `${point.date}: ${formatHeatScore(heat)} ${band.label}`;
+          return `<i class="heat-${band.id}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></i>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function scorePointMetricValue(point, metric) {
+  if (metric === "setup") return setupScoreNormalized(point.setup_score);
+  if (metric === "level") return numericOrNull(point.level_score_normalized);
+  return scorePointHeat(point);
+}
+
+function scorePointHeat(point) {
+  const storedHeat = numericOrNull(point.heat_score);
+  if (storedHeat !== null) return storedHeat;
+  return heatScore(point.setup_score, point.level_score_normalized);
+}
+
+function latestHeatScore(row) {
+  const storedHeat = numericOrNull(row.latest_heat_score);
+  if (storedHeat !== null) return storedHeat;
+  const points = row.points || [];
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const heat = scorePointHeat(points[index]);
+    if (heat !== null) return heat;
+  }
+  return heatScore(row.latest_setup_score, row.latest_level_score_normalized);
+}
+
+function heatScore(setupScore, levelScoreNormalized) {
+  const setup = setupScoreNormalized(setupScore);
+  const level = numericOrNull(levelScoreNormalized);
+  const components = [];
+  if (setup !== null) components.push({ value: setup, weight: 0.6 });
+  if (level !== null) components.push({ value: clampPercent(level), weight: 0.4 });
+  if (!components.length) return null;
+  const weight = components.reduce((sum, item) => sum + item.weight, 0);
+  const value = components.reduce((sum, item) => sum + item.value * item.weight, 0) / weight;
+  return Math.round(value * 10) / 10;
+}
+
+function setupScoreNormalized(value) {
+  const number = numericOrNull(value);
+  if (number === null) return null;
+  return Math.round((Math.max(0, Math.min(8, number)) / 8) * 1000) / 10;
+}
+
+function numericOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Number(value)));
+}
+
+function heatBand(value) {
+  const number = numericOrNull(value);
+  if (number === null) return { id: "none", label: "No heat" };
+  if (number < 40) return { id: "cold", label: "Cold" };
+  if (number < 60) return { id: "cool", label: "Cool" };
+  if (number < 75) return { id: "warm", label: "Warm" };
+  return { id: "hot", label: "Hot" };
+}
+
+function formatHeatScore(value) {
+  const number = numericOrNull(value);
+  if (number === null) return "&mdash;";
+  return `${number.toFixed(1).replace(/\.0$/, "")}`;
+}
+
 function scoreMovement(row) {
   const movement = scoreMovementAmount(row);
   if (movement === null || movement === undefined || Math.abs(Number(movement)) < 0.01) return "flat";
@@ -2992,10 +3206,12 @@ function scoreMovement(row) {
 function scoreMovementAmount(row) {
   if (scoreAnalyticsSettings.scoreMetric === "setup") return row.setup_delta_1d;
   if (scoreAnalyticsSettings.scoreMetric === "level") return row.level_normalized_delta_1d;
-  const values = [row.setup_delta_1d, row.level_normalized_delta_1d]
-    .filter((value) => value !== null && value !== undefined)
-    .map(Number);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+  const heatDelta = numericOrNull(row.heat_delta_1d);
+  if (heatDelta !== null) return heatDelta;
+  const heatValues = (row.points || [])
+    .map(scorePointHeat)
+    .filter((value) => value !== null);
+  return heatValues.length > 1 ? heatValues[heatValues.length - 1] - heatValues[heatValues.length - 2] : null;
 }
 
 function averageValue(values) {

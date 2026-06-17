@@ -46,6 +46,7 @@ from app.models import (
     ScannerResponse,
     SectorAnalyticsResponse,
     ScoreHistoryRange,
+    ScoreHistoryPoint,
     ScoreHistoryResponse,
     ScoreHistoryTicker,
     ScoreMetricName,
@@ -86,6 +87,7 @@ CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.key
 CHART_RANGE_LABELS = {"1Y": "1YR"}
 SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("7D", "30D", "90D", "1Y", "All")
 SCORE_ANALYTICS_METRICS: tuple[ScoreMetricName, ...] = ("setup", "level", "both")
+SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")
 SCORE_ANALYTICS_MOVEMENTS = ("all", "improving", "declining", "flat")
 SCORE_ANALYTICS_SORTS = ("watchlist", "setup", "level", "gain", "drop")
 SCORE_OPTION_LABELS = {
@@ -97,6 +99,7 @@ SCORE_OPTION_LABELS = {
     "setup": "Setup",
     "level": "Level",
     "both": "Both",
+    "heat": "Heat",
     "all": "All",
     "scanner": "Scanner",
     "weight_20": "Weight 20+",
@@ -509,6 +512,12 @@ def normalize_score_metric(value: object) -> ScoreMetricName:
     """Return a supported score analytics metric selector."""
     candidate = str(value or "")
     return candidate if candidate in SCORE_ANALYTICS_METRICS else "both"  # type: ignore[return-value]
+
+
+def normalize_score_chart_metric(value: object) -> str:
+    """Return a supported score chart metric selector."""
+    candidate = str(value or "")
+    return candidate if candidate in SCORE_ANALYTICS_CHART_METRICS else "heat"
 
 
 def normalize_score_movement(value: object) -> str:
@@ -2145,17 +2154,101 @@ def render_app_chrome() -> str:
           .streamlit-score-summary-tile {
             padding: 0.65rem 0.75rem;
           }
+          .streamlit-score-line-panel {
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.55rem;
+            margin: 0.7rem 0 0.9rem;
+            min-width: 0;
+            padding: 0.75rem;
+          }
+          .streamlit-score-line-header {
+            align-items: center;
+            display: flex;
+            gap: 0.75rem;
+            justify-content: space-between;
+          }
+          .streamlit-score-line-header h4 {
+            color: #0f172a;
+            letter-spacing: 0.04em;
+            margin: 0;
+          }
+          .streamlit-score-line-header span {
+            color: #64748b !important;
+            font-size: 0.78rem;
+            font-weight: 900;
+            text-transform: uppercase;
+          }
+          .streamlit-score-line-chart {
+            display: block;
+            height: auto;
+            max-height: 230px;
+            width: 100%;
+          }
+          .streamlit-score-line-grid line {
+            stroke: #e2e8f0;
+            stroke-width: 1;
+          }
+          .streamlit-score-line-grid text {
+            fill: #64748b;
+            font-size: 11px;
+            font-weight: 800;
+          }
+          .streamlit-score-line-series polyline {
+            fill: none;
+            stroke: var(--score-series-color);
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-width: 3;
+          }
+          .streamlit-score-line-series circle {
+            fill: var(--score-series-color);
+            stroke: #ffffff;
+            stroke-width: 2;
+          }
+          .streamlit-score-line-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem 0.65rem;
+          }
+          .streamlit-score-line-legend-item {
+            align-items: center;
+            color: #334155 !important;
+            display: inline-flex;
+            font-size: 0.76rem;
+            font-weight: 900;
+            gap: 0.3rem;
+          }
+          .streamlit-score-line-legend-item i {
+            background: var(--score-series-color);
+            border-radius: 999px;
+            display: inline-block;
+            height: 0.5rem;
+            width: 0.5rem;
+          }
+          .streamlit-score-line-empty {
+            background: repeating-linear-gradient(90deg, #e2e8f0 0 7px, transparent 7px 14px);
+            border-radius: 0.4rem;
+            height: 96px;
+            opacity: 0.7;
+          }
           .streamlit-score-summary-tile span,
           .streamlit-score-summary-tile small,
           .streamlit-score-card header span,
           .streamlit-score-latest span,
           .streamlit-score-latest small,
-          .streamlit-score-sparkline-card span {
+          .streamlit-score-sparkline-card span,
+          .streamlit-score-heat-strip-card span,
+          .streamlit-score-thermometer span {
             color: #64748b !important;
           }
           .streamlit-score-summary-tile span,
           .streamlit-score-latest span,
-          .streamlit-score-sparkline-card span {
+          .streamlit-score-sparkline-card span,
+          .streamlit-score-heat-strip-card span,
+          .streamlit-score-thermometer span {
             display: block;
             font-size: 0.68rem;
             font-weight: 900;
@@ -2232,6 +2325,70 @@ def render_app_chrome() -> str:
             line-height: 1.3;
             margin: 0.12rem 0;
           }
+          .streamlit-score-thermometer {
+            align-items: center;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.6rem;
+            grid-template-columns: minmax(72px, auto) 1fr auto;
+            padding: 0.55rem 0.65rem;
+          }
+          .streamlit-score-thermometer strong {
+            color: #0f172a;
+            display: block;
+            font-size: 1rem;
+            line-height: 1.1;
+          }
+          .streamlit-score-thermometer small {
+            color: var(--heat-color, #64748b) !important;
+            font-size: 0.78rem;
+            font-weight: 900;
+            text-transform: uppercase;
+          }
+          .streamlit-score-thermometer-track {
+            background: #e2e8f0;
+            border-radius: 999px;
+            height: 0.75rem;
+            overflow: hidden;
+          }
+          .streamlit-score-thermometer-track span {
+            background: var(--heat-color, #94a3b8);
+            border-radius: inherit;
+            display: block;
+            height: 100%;
+            min-width: 4px;
+          }
+          .streamlit-score-heat-strip-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            display: grid;
+            gap: 0.45rem;
+            padding: 0.55rem 0.65rem;
+          }
+          .streamlit-score-heat-strip {
+            display: grid;
+            gap: 3px;
+            grid-template-columns: repeat(auto-fit, minmax(8px, 1fr));
+            min-height: 1.1rem;
+          }
+          .streamlit-score-heat-strip i {
+            background: var(--heat-color, #cbd5e1);
+            border-radius: 0.25rem;
+            min-height: 1.1rem;
+          }
+          .streamlit-score-heat-strip.empty {
+            background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px);
+            border-radius: 0.4rem;
+            opacity: 0.7;
+          }
+          .streamlit-heat-cold { --heat-color: #2563eb; }
+          .streamlit-heat-cool { --heat-color: #0f766e; }
+          .streamlit-heat-warm { --heat-color: #ca8a04; }
+          .streamlit-heat-hot { --heat-color: #dc2626; }
+          .streamlit-heat-none { --heat-color: #94a3b8; }
           .streamlit-score-delta.positive { color: #059669 !important; }
           .streamlit-score-delta.negative { color: #dc2626 !important; }
           .streamlit-score-delta.neutral { color: #64748b !important; }
@@ -3262,19 +3419,20 @@ def sync_score_level_basis_to_level_filter() -> None:
     persist_session_settings()
 
 
-def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricName, LevelScoreBasisName, str, str]:
+def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricName, LevelScoreBasisName, str, str, str]:
     """Render Score Analytics controls and return normalized values."""
     level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
     st.session_state.score_range = normalize_score_history_range(st.session_state.get("score_range", "30D"))
     st.session_state.score_metric = normalize_score_metric(st.session_state.get("score_metric", "both"))
+    st.session_state.score_chart_metric = normalize_score_chart_metric(st.session_state.get("score_chart_metric", "heat"))
     st.session_state.score_level_basis = normalize_level_filter(st.session_state.get("score_level_basis", level_filter))
     st.session_state.score_movement = normalize_score_movement(st.session_state.get("score_movement", "all"))
     st.session_state.score_sort = normalize_score_sort(st.session_state.get("score_sort", "watchlist"))
     if st.session_state.score_level_basis != level_filter:
         st.session_state.score_level_basis = level_filter
 
-    range_col, metric_col, basis_col, movement_col, sort_col = st.columns(
-        [0.75, 0.8, 0.9, 0.95, 1.15],
+    range_col, metric_col, chart_col, basis_col, movement_col, sort_col = st.columns(
+        [0.7, 0.78, 0.78, 0.88, 0.92, 1.08],
         vertical_alignment="center",
     )
     with range_col:
@@ -3289,6 +3447,13 @@ def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricNam
             "Metric",
             SCORE_ANALYTICS_METRICS,
             key="score_metric",
+            format_func=score_option_label,
+        )
+    with chart_col:
+        chart_metric = st.selectbox(
+            "Chart metric",
+            SCORE_ANALYTICS_CHART_METRICS,
+            key="score_chart_metric",
             format_func=score_option_label,
         )
     with basis_col:
@@ -3319,6 +3484,7 @@ def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricNam
         normalize_level_filter(level_basis),
         normalize_score_movement(movement),
         normalize_score_sort(sort),
+        normalize_score_chart_metric(chart_metric),
     )
 
 
@@ -3340,7 +3506,7 @@ def render_score_analytics(
             ),
             unsafe_allow_html=True,
         )
-        score_range, score_metric, level_basis, movement, sort = render_score_analytics_controls()
+        score_range, score_metric, level_basis, movement, sort, chart_metric = render_score_analytics_controls()
         watchlist_order = tuple(metric.ticker for metric in report.metrics)
         if not watchlist_order:
             st.info("Score history will appear after levels or scanner data refreshes.")
@@ -3377,6 +3543,7 @@ def render_score_analytics(
             return
 
         st.markdown(score_summary_html(rows, score_metric), unsafe_allow_html=True)
+        st.markdown(score_line_chart_html(rows, chart_metric), unsafe_allow_html=True)
         st.markdown(score_trend_cards_html(rows, score_metric), unsafe_allow_html=True)
 
 
@@ -3434,11 +3601,13 @@ def score_summary_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetric
     """Return summary tile markup for score analytics."""
     setup_values = [row.latest_setup_score for row in rows if row.latest_setup_score is not None]
     level_values = [row.latest_level_score_normalized for row in rows if row.latest_level_score_normalized is not None]
+    heat_values = [latest_heat_score(row) for row in rows if latest_heat_score(row) is not None]
     improving = sum(1 for row in rows if score_movement(row, score_metric) == "improving")
     declining = sum(1 for row in rows if score_movement(row, score_metric) == "declining")
     flat = len(rows) - improving - declining
     tiles = [
         score_summary_tile_html("Tracked", len([row for row in rows if row.points]), f"{len(rows)} visible"),
+        score_summary_tile_html("Avg Heat", score_average(heat_values), "hot/cold"),
         score_summary_tile_html("Avg Setup", score_average(setup_values), "0-8"),
         score_summary_tile_html("Avg Level", score_average(level_values), "normalized"),
         score_summary_tile_html("Improving", improving, "1D"),
@@ -3456,6 +3625,95 @@ def score_summary_tile_html(label: str, value: int | float | None, meta: str) ->
         f"<strong>{format_score_summary_value(value)}</strong>"
         f"<small>{escape(meta)}</small>"
         "</div>"
+    )
+
+
+def score_line_chart_html(rows: list[ScoreHistoryTicker], chart_metric: str) -> str:
+    """Return all-visible ticker line chart markup for the selected 0-100 score metric."""
+    metric = normalize_score_chart_metric(chart_metric)
+    metric_label = score_option_label(metric)
+    colors = ("#0f766e", "#2563eb", "#dc2626", "#ca8a04", "#7c3aed", "#0891b2", "#be185d", "#4d7c0f")
+    series = []
+    for index, row in enumerate(rows):
+        points = [
+            {"date": point.date.isoformat(), "value": value}
+            for point in row.points
+            for value in [score_point_metric_value(point, metric)]
+            if value is not None
+        ]
+        if points:
+            series.append({"ticker": row.ticker, "color": colors[index % len(colors)], "points": points})
+    dates = sorted({point["date"] for row in series for point in row["points"]})
+    if not series or not dates:
+        return (
+            '<section class="streamlit-score-line-panel">'
+            '<div class="streamlit-score-line-header">'
+            f"<h4>{escape(metric_label)} Trend</h4>"
+            f"<span>No {escape(metric_label.lower())} chart data</span>"
+            "</div>"
+            '<div class="streamlit-score-line-empty"></div>'
+            "</section>"
+        )
+
+    width = 760
+    height = 190
+    left = 42
+    right = 12
+    top = 14
+    bottom = 30
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+
+    def x_for_date(value: str) -> float:
+        index = dates.index(value)
+        return left + plot_width / 2 if len(dates) == 1 else left + (index / (len(dates) - 1)) * plot_width
+
+    def y_for_value(value: float) -> float:
+        return top + ((100 - clamp_percent(value)) / 100) * plot_height
+
+    grid = "".join(
+        (
+            '<g class="streamlit-score-line-grid">'
+            f'<line x1="{left}" y1="{y_for_value(value):.2f}" x2="{width - right}" y2="{y_for_value(value):.2f}"></line>'
+            f'<text x="8" y="{y_for_value(value) + 4:.2f}">{value}</text>'
+            "</g>"
+        )
+        for value in (0, 25, 50, 75, 100)
+    )
+    series_markup = []
+    legend = []
+    for row in series:
+        coordinates = " ".join(
+            f'{x_for_date(str(point["date"])):.2f},{y_for_value(float(point["value"])):.2f}'
+            for point in row["points"]
+        )
+        marker = ""
+        if len(row["points"]) == 1:
+            point = row["points"][0]
+            marker = f'<circle cx="{x_for_date(str(point["date"])):.2f}" cy="{y_for_value(float(point["value"])):.2f}" r="4"></circle>'
+        series_markup.append(
+            f'<g class="streamlit-score-line-series" style="--score-series-color:{escape(str(row["color"]))}">'
+            f'<polyline points="{coordinates}"></polyline>{marker}</g>'
+        )
+        latest = row["points"][-1]
+        legend.append(
+            f'<span class="streamlit-score-line-legend-item" style="--score-series-color:{escape(str(row["color"]))}">'
+            f'<i></i>{escape(str(row["ticker"]))} {format_score_summary_value(float(latest["value"]))}</span>'
+        )
+    first_date = dates[0]
+    last_date = dates[-1]
+    date_range = first_date if first_date == last_date else f"{first_date} - {last_date}"
+    return (
+        '<section class="streamlit-score-line-panel">'
+        '<div class="streamlit-score-line-header">'
+        f"<h4>{escape(metric_label)} Trend</h4>"
+        f"<span>{escape(date_range)}</span>"
+        "</div>"
+        f'<svg class="streamlit-score-line-chart" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(metric_label)} trend for visible tickers">'
+        f"<title>{escape(metric_label)} trend for visible tickers</title>"
+        f"{grid}{''.join(series_markup)}</svg>"
+        f'<div class="streamlit-score-line-legend">{"".join(legend)}</div>'
+        "</section>"
     )
 
 
@@ -3495,6 +3753,8 @@ def score_trend_card_html(row: ScoreHistoryTicker, score_metric: ScoreMetricName
         f'<span class="streamlit-score-movement {movement}">{escape(score_option_label(movement))}</span>'
         "</header>"
         f'<div class="streamlit-score-latest-grid">{"".join(latest)}</div>'
+        f"{score_heat_thermometer_html(row)}"
+        f"{score_heat_strip_html(row)}"
         f'<div class="streamlit-score-sparkline-grid">{"".join(sparklines)}</div>'
         "</article>"
     )
@@ -3550,6 +3810,141 @@ def score_sparkline_html(row: ScoreHistoryTicker, field: str, label: str) -> str
     )
 
 
+def score_heat_thermometer_html(row: ScoreHistoryTicker) -> str:
+    """Return latest hot/cold score thermometer markup."""
+    heat = latest_heat_score(row)
+    band_id, band_label = heat_band(heat)
+    width = clamp_percent(heat or 0)
+    return (
+        f'<div class="streamlit-score-thermometer streamlit-heat-{band_id}">'
+        "<div>"
+        "<span>Heat</span>"
+        f"<strong>{format_heat_score(heat)}</strong>"
+        "</div>"
+        f'<div class="streamlit-score-thermometer-track" aria-label="Heat score {escape(format_heat_score(heat))}">'
+        f'<span style="width:{width:.1f}%"></span>'
+        "</div>"
+        f"<small>{escape(band_label)}</small>"
+        "</div>"
+    )
+
+
+def score_heat_strip_html(row: ScoreHistoryTicker) -> str:
+    """Return daily hot/cold heat strip markup."""
+    points = [point for point in row.points if point.date]
+    if not points:
+        return (
+            '<div class="streamlit-score-heat-strip-card">'
+            "<span>Daily Heat</span>"
+            '<div class="streamlit-score-heat-strip empty"></div>'
+            "</div>"
+        )
+    cells = []
+    for point in points:
+        heat = score_point_heat(point)
+        band_id, band_label = heat_band(heat)
+        title = f"{point.date.isoformat()}: {format_heat_score(heat)} {band_label}"
+        cells.append(
+            f'<i class="streamlit-heat-{band_id}" title="{escape(title)}" aria-label="{escape(title)}"></i>'
+        )
+    return (
+        '<div class="streamlit-score-heat-strip-card">'
+        "<span>Daily Heat</span>"
+        f'<div class="streamlit-score-heat-strip">{"".join(cells)}</div>'
+        "</div>"
+    )
+
+
+def score_point_metric_value(point: ScoreHistoryPoint, metric: str) -> float | None:
+    """Return a point value for the selected 0-100 chart metric."""
+    if metric == "setup":
+        return setup_score_normalized(point.setup_score)
+    if metric == "level":
+        return numeric_or_none(point.level_score_normalized)
+    return score_point_heat(point)
+
+
+def score_point_heat(point: ScoreHistoryPoint) -> float | None:
+    """Return stored or derived point heat score."""
+    stored_heat = numeric_or_none(getattr(point, "heat_score", None))
+    if stored_heat is not None:
+        return stored_heat
+    return heat_score(point.setup_score, point.level_score_normalized)
+
+
+def latest_heat_score(row: ScoreHistoryTicker) -> float | None:
+    """Return latest stored or derived ticker heat score."""
+    stored_heat = numeric_or_none(getattr(row, "latest_heat_score", None))
+    if stored_heat is not None:
+        return stored_heat
+    for point in reversed(row.points):
+        heat = score_point_heat(point)
+        if heat is not None:
+            return heat
+    return heat_score(row.latest_setup_score, row.latest_level_score_normalized)
+
+
+def heat_score(setup_score: int | None, level_score_normalized: float | None) -> float | None:
+    """Return a 0-100 hot/cold score with 60/40 setup/level weighting."""
+    components: list[tuple[float, float]] = []
+    setup = setup_score_normalized(setup_score)
+    level = numeric_or_none(level_score_normalized)
+    if setup is not None:
+        components.append((setup, 0.6))
+    if level is not None:
+        components.append((clamp_percent(level), 0.4))
+    if not components:
+        return None
+    total_weight = sum(weight for _, weight in components)
+    return round(sum(value * weight for value, weight in components) / total_weight, 1)
+
+
+def setup_score_normalized(value: int | None) -> float | None:
+    """Normalize scanner setup score to 0-100."""
+    number = numeric_or_none(value)
+    return round((max(0.0, min(8.0, number)) / 8) * 100, 1) if number is not None else None
+
+
+def numeric_or_none(value: object) -> float | None:
+    """Return a finite float or None."""
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
+def clamp_percent(value: float | None) -> float:
+    """Clamp a percent value to 0-100."""
+    if value is None:
+        return 0.0
+    return max(0.0, min(100.0, float(value)))
+
+
+def heat_band(value: float | None) -> tuple[str, str]:
+    """Return hot/cold band id and label."""
+    number = numeric_or_none(value)
+    if number is None:
+        return ("none", "No heat")
+    if number < 40:
+        return ("cold", "Cold")
+    if number < 60:
+        return ("cool", "Cool")
+    if number < 75:
+        return ("warm", "Warm")
+    return ("hot", "Hot")
+
+
+def format_heat_score(value: float | None) -> str:
+    """Format a heat score."""
+    number = numeric_or_none(value)
+    if number is None:
+        return "-"
+    return f"{number:.1f}".removesuffix(".0")
+
+
 def score_movement(row: ScoreHistoryTicker, score_metric: ScoreMetricName) -> str:
     """Return movement category for a score row."""
     movement = score_movement_amount(row, score_metric)
@@ -3564,12 +3959,11 @@ def score_movement_amount(row: ScoreHistoryTicker, score_metric: ScoreMetricName
         return float(row.setup_delta_1d) if row.setup_delta_1d is not None else None
     if score_metric == "level":
         return float(row.level_normalized_delta_1d) if row.level_normalized_delta_1d is not None else None
-    values = [
-        float(value)
-        for value in (row.setup_delta_1d, row.level_normalized_delta_1d)
-        if value is not None
-    ]
-    return sum(values) if values else None
+    heat_delta_1d = getattr(row, "heat_delta_1d", None)
+    if heat_delta_1d is not None:
+        return float(heat_delta_1d)
+    heat_values = [value for value in [score_point_heat(point) for point in row.points] if value is not None]
+    return heat_values[-1] - heat_values[-2] if len(heat_values) > 1 else None
 
 
 def score_average(values: list[int | float]) -> float | None:

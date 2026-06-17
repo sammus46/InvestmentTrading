@@ -29,6 +29,8 @@ STORE_VERSION = 1
 RETENTION_DAYS = 400
 NEAR_LEVEL_MAX_DISTANCE_PERCENT = 8.0
 LEVEL_WEIGHT_MAX = 50
+SETUP_HEAT_WEIGHT = 0.6
+LEVEL_HEAT_WEIGHT = 0.4
 
 
 class ScoreHistoryService:
@@ -209,6 +211,7 @@ class ScoreHistoryService:
             latest_setup_score=self._latest(points, "setup_score"),
             latest_level_score=self._latest(points, "level_score"),
             latest_level_score_normalized=self._latest(points, "level_score_normalized"),
+            latest_heat_score=self._latest(points, "heat_score"),
             latest_level_count=int(self._latest(points, "level_count") or 0),
             setup_delta_1d=self._delta(points, "setup_score", 1),
             setup_delta_5d=self._delta(points, "setup_score", 5),
@@ -216,6 +219,8 @@ class ScoreHistoryService:
             level_delta_5d=self._delta(points, "level_score", 5),
             level_normalized_delta_1d=self._delta(points, "level_score_normalized", 1),
             level_normalized_delta_5d=self._delta(points, "level_score_normalized", 5),
+            heat_delta_1d=self._delta(points, "heat_score", 1),
+            heat_delta_5d=self._delta(points, "heat_score", 5),
             warnings=warnings,
         )
 
@@ -228,11 +233,15 @@ class ScoreHistoryService:
         record = raw_record if isinstance(raw_record, dict) else {}
         levels = record.get("levels") if isinstance(record.get("levels"), dict) else {}
         level_record = levels.get(level_basis) if isinstance(levels.get(level_basis), dict) else {}
+        setup_score = ScoreHistoryService._int_or_none(record.get("setup_score"))
+        level_score = ScoreHistoryService._int_or_none(level_record.get("score"))
+        level_score_normalized = ScoreHistoryService._float_or_none(level_record.get("normalized_score"))
         return ScoreHistoryPoint(
             date=point_date,
-            setup_score=ScoreHistoryService._int_or_none(record.get("setup_score")),
-            level_score=ScoreHistoryService._int_or_none(level_record.get("score")),
-            level_score_normalized=ScoreHistoryService._float_or_none(level_record.get("normalized_score")),
+            setup_score=setup_score,
+            level_score=level_score,
+            level_score_normalized=level_score_normalized,
+            heat_score=ScoreHistoryService.heat_score(setup_score, level_score_normalized),
             level_count=ScoreHistoryService._int_or_none(level_record.get("level_count")) or 0,
         )
 
@@ -266,6 +275,7 @@ class ScoreHistoryService:
         level_normalized_values = [
             row.latest_level_score_normalized for row in rows if row.latest_level_score_normalized is not None
         ]
+        heat_values = [row.latest_heat_score for row in rows if row.latest_heat_score is not None]
         improving = declining = flat_or_new = 0
         for row in rows:
             movement = cls._movement_delta(row, score_metric)
@@ -281,6 +291,7 @@ class ScoreHistoryService:
             average_setup_score=cls._avg(setup_values),
             average_level_score=cls._avg(level_values),
             average_level_score_normalized=cls._avg(level_normalized_values),
+            average_heat_score=cls._avg(heat_values),
             improving_count=improving,
             declining_count=declining,
             flat_or_new_count=flat_or_new,
@@ -292,12 +303,34 @@ class ScoreHistoryService:
             return float(row.setup_delta_1d) if row.setup_delta_1d is not None else None
         if score_metric == "level":
             return float(row.level_normalized_delta_1d) if row.level_normalized_delta_1d is not None else None
-        deltas = [
-            float(value)
-            for value in (row.setup_delta_1d, row.level_normalized_delta_1d)
-            if value is not None
-        ]
-        return sum(deltas) if deltas else None
+        return float(row.heat_delta_1d) if row.heat_delta_1d is not None else None
+
+    @classmethod
+    def heat_score(cls, setup_score: int | None, level_score_normalized: float | None) -> float | None:
+        """Return a 0-100 hot/cold score from setup and normalized level scores."""
+        components: list[tuple[float, float]] = []
+        setup_normalized = cls._setup_score_normalized(setup_score)
+        level_normalized = cls._bounded_percent(level_score_normalized)
+        if setup_normalized is not None:
+            components.append((setup_normalized, SETUP_HEAT_WEIGHT))
+        if level_normalized is not None:
+            components.append((level_normalized, LEVEL_HEAT_WEIGHT))
+        if not components:
+            return None
+        total_weight = sum(weight for _, weight in components)
+        return round(sum(value * weight for value, weight in components) / total_weight, 1)
+
+    @staticmethod
+    def _setup_score_normalized(setup_score: int | None) -> float | None:
+        if setup_score is None:
+            return None
+        return round((max(0, min(8, setup_score)) / 8) * 100, 1)
+
+    @staticmethod
+    def _bounded_percent(value: float | None) -> float | None:
+        if value is None:
+            return None
+        return max(0.0, min(100.0, float(value)))
 
     @staticmethod
     def _avg(values: list[int | float | None]) -> float | None:

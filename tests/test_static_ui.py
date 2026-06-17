@@ -83,3 +83,18 @@ def test_static_score_level_basis_stays_synced_with_level_filter():
     assert 'level_basis: levelFilter' in js
     assert 'if (key === "levelBasis") {\n    setLevelFilter(value);' in js
     assert 'renderScoreSelect("Basis", "levelBasis", levelFilter' in js
+
+
+def test_static_score_analytics_renders_heat_views():
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+    css = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert 'const SCORE_ANALYTICS_CHART_METRICS = ["heat", "setup", "level"];' in js
+    assert 'renderScoreSelect("Chart", "chartMetric"' in js
+    assert "function renderScoreLineChart(rows)" in js
+    assert "function renderScoreHeatThermometer(row)" in js
+    assert "function renderScoreHeatStrip(row)" in js
+    assert "function heatScore(setupScore, levelScoreNormalized)" in js
+    assert ".score-line-panel" in css
+    assert ".score-thermometer" in css
+    assert ".score-heat-strip" in css
