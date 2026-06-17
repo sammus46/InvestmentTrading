@@ -1753,7 +1753,7 @@ def render_app_chrome() -> str:
           .streamlit-settings-panel-marker {
             display: none !important;
           }
-          div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker) {
+          div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker):not(:has(div[data-testid="stVerticalBlock"] .streamlit-settings-panel-marker)) {
             background: #ffffff;
             border-left: 1px solid #d5ddd9;
             box-shadow: -18px 0 48px rgba(17, 24, 39, 0.18);
@@ -1768,7 +1768,7 @@ def render_app_chrome() -> str:
             width: 24rem;
             z-index: 100002;
           }
-          div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker) [data-testid="stButton"] button {
+          div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker):not(:has(div[data-testid="stVerticalBlock"] .streamlit-settings-panel-marker)) [data-testid="stButton"] button {
             min-height: 2.25rem;
             padding: 0.35rem 0.65rem;
           }
@@ -2554,7 +2554,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .streamlit-section-panel,
             body:has(.streamlit-theme-marker) .streamlit-report-panel,
             body:has(.streamlit-theme-marker) .streamlit-scanner-panel,
-            body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker),
+            body:has(.streamlit-theme-marker) div[data-testid="stVerticalBlock"]:has(.streamlit-settings-panel-marker):not(:has(div[data-testid="stVerticalBlock"] .streamlit-settings-panel-marker)),
             body:has(.streamlit-theme-marker) .compare-wrap,
             body:has(.streamlit-theme-marker) .streamlit-chart-card,
             body:has(.streamlit-theme-marker) .streamlit-ticker-news-card,
@@ -2924,12 +2924,12 @@ def set_active_view(view: str) -> None:
 
 
 def toggle_streamlit_settings_panel() -> None:
-    """Toggle the left-side Streamlit settings panel."""
+    """Toggle the right-side Streamlit settings panel."""
     st.session_state.settings_panel_open = not bool(st.session_state.get("settings_panel_open", False))
 
 
 def close_streamlit_settings_panel() -> None:
-    """Close the left-side Streamlit settings panel."""
+    """Close the right-side Streamlit settings panel."""
     st.session_state.settings_panel_open = False
 
 
