@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -18,6 +18,8 @@ from app.models import (
     ScoreHistoryResponse,
     ScoreHistorySummary,
     ScoreHistoryTicker,
+    ScoreHistoryAxis,
+    ScoreHistoryAxisBucket,
     ScoreMetricName,
     ScannerSetupRow,
 )
@@ -31,6 +33,9 @@ NEAR_LEVEL_MAX_DISTANCE_PERCENT = 8.0
 LEVEL_WEIGHT_MAX = 50
 SETUP_HEAT_WEIGHT = 0.6
 LEVEL_HEAT_WEIGHT = 0.4
+INTRADAY_BUCKET_MINUTES = 30
+SESSION_START = time(9, 30)
+SESSION_END = time(16, 0)
 
 
 class ScoreHistoryService:
@@ -56,12 +61,19 @@ class ScoreHistoryService:
             return []
         store, warnings = self._load_store()
         run_date = self._today()
+        bucket = self._active_intraday_bucket(run_date)
         for row in rows:
             if not row.ticker or row.score is None:
                 continue
             record = self._record_for(store, row.ticker, run_date)
-            record["setup_score"] = int(row.score)
-            record["updated_at"] = self._now_iso()
+            updated_at = self._now_iso()
+            setup_score = int(row.score)
+            record["setup_score"] = setup_score
+            record["updated_at"] = updated_at
+            if bucket is not None:
+                bucket_record = self._intraday_record_for(record, bucket["key"])
+                bucket_record["setup_score"] = setup_score
+                bucket_record["updated_at"] = updated_at
         self._prune_store(store)
         warnings.extend(self._save_store(store))
         self._remember_warnings(warnings)
@@ -73,18 +85,28 @@ class ScoreHistoryService:
             return []
         store, warnings = self._load_store()
         run_date = self._today()
+        bucket = self._active_intraday_bucket(run_date)
         for metric in metrics:
             record = self._record_for(store, metric.ticker, run_date)
             levels = dict(record.get("levels") or {})
+            bucket_record = self._intraday_record_for(record, bucket["key"]) if bucket is not None else None
+            bucket_levels = dict(bucket_record.get("levels") or {}) if bucket_record is not None else {}
             for basis in ("all", "scanner", "weight_20"):
                 score = self.level_score(metric, basis)
-                levels[basis] = {
+                level_payload = {
                     "score": score["score"],
                     "normalized_score": score["normalized_score"],
                     "level_count": score["level_count"],
                 }
+                levels[basis] = level_payload
+                if bucket_record is not None:
+                    bucket_levels[basis] = level_payload
             record["levels"] = levels
-            record["updated_at"] = self._now_iso()
+            updated_at = self._now_iso()
+            record["updated_at"] = updated_at
+            if bucket_record is not None:
+                bucket_record["levels"] = bucket_levels
+                bucket_record["updated_at"] = updated_at
         self._prune_store(store)
         warnings.extend(self._save_store(store))
         self._remember_warnings(warnings)
@@ -102,15 +124,17 @@ class ScoreHistoryService:
         store, warnings = self._load_store()
         warnings.extend(self._pop_runtime_warnings())
         cutoff = self._cutoff_date(score_range)
+        axis = self._axis_metadata(score_range)
         ticker_rows: list[ScoreHistoryTicker] = []
         for ticker in tickers:
-            ticker_rows.append(self._ticker_response(ticker, store, cutoff, level_basis))
+            ticker_rows.append(self._ticker_response(ticker, store, cutoff, level_basis, score_range, axis))
         summary = self._summary(ticker_rows, score_metric)
         return ScoreHistoryResponse(
             generated_at=self._now(),
             range=score_range,
             score_metric=score_metric,
             level_basis=level_basis,
+            axis=axis,
             summary=summary,
             tickers=ticker_rows,
             warnings=warnings,
@@ -187,7 +211,12 @@ class ScoreHistoryService:
         store: dict[str, Any],
         cutoff: date | None,
         level_basis: LevelScoreBasisName,
+        score_range: ScoreHistoryRange,
+        axis: ScoreHistoryAxis,
     ) -> ScoreHistoryTicker:
+        if score_range == "1D":
+            return self._intraday_ticker_response(ticker, store, level_basis, axis)
+
         raw_records = (store.get("records") or {}).get(ticker, {})
         points: list[ScoreHistoryPoint] = []
         warnings: list[str] = []
@@ -204,6 +233,55 @@ class ScoreHistoryService:
 
         if not points:
             warnings.append(f"No score history was found for {ticker}.")
+
+        return ScoreHistoryTicker(
+            ticker=ticker,
+            points=points,
+            latest_setup_score=self._latest(points, "setup_score"),
+            latest_level_score=self._latest(points, "level_score"),
+            latest_level_score_normalized=self._latest(points, "level_score_normalized"),
+            latest_heat_score=self._latest(points, "heat_score"),
+            latest_level_count=int(self._latest(points, "level_count") or 0),
+            setup_delta_1d=self._delta(points, "setup_score", 1),
+            setup_delta_5d=self._delta(points, "setup_score", 5),
+            level_delta_1d=self._delta(points, "level_score", 1),
+            level_delta_5d=self._delta(points, "level_score", 5),
+            level_normalized_delta_1d=self._delta(points, "level_score_normalized", 1),
+            level_normalized_delta_5d=self._delta(points, "level_score_normalized", 5),
+            heat_delta_1d=self._delta(points, "heat_score", 1),
+            heat_delta_5d=self._delta(points, "heat_score", 5),
+            warnings=warnings,
+        )
+
+    def _intraday_ticker_response(
+        self,
+        ticker: str,
+        store: dict[str, Any],
+        level_basis: LevelScoreBasisName,
+        axis: ScoreHistoryAxis,
+    ) -> ScoreHistoryTicker:
+        run_date = self._today()
+        raw_record = ((store.get("records") or {}).get(ticker, {}) or {}).get(run_date.isoformat(), {})
+        record = raw_record if isinstance(raw_record, dict) else {}
+        raw_intraday = record.get("intraday") if isinstance(record.get("intraday"), dict) else {}
+        points: list[ScoreHistoryPoint] = []
+        warnings: list[str] = []
+        bucket_lookup = {bucket.key: bucket for bucket in axis.buckets}
+        for bucket_key, raw_bucket in sorted(raw_intraday.items()):
+            if bucket_key not in bucket_lookup:
+                continue
+            point = self._point_from_record(run_date, raw_bucket, level_basis)
+            if point.setup_score is None and point.level_score is None:
+                continue
+            bucket = bucket_lookup[bucket_key]
+            point.bucket = bucket.key
+            point.bucket_label = bucket.label
+            point.bucket_status = bucket.status
+            point.timestamp = self._bucket_start(run_date, bucket.key)
+            points.append(point)
+
+        if not points:
+            warnings.append(f"No intraday score history was found for {ticker}.")
 
         return ScoreHistoryTicker(
             ticker=ticker,
@@ -337,10 +415,86 @@ class ScoreHistoryService:
         numbers = [float(value) for value in values if value is not None]
         return round(sum(numbers) / len(numbers), 2) if numbers else None
 
+    def _axis_metadata(self, score_range: ScoreHistoryRange) -> ScoreHistoryAxis:
+        if score_range != "1D":
+            return ScoreHistoryAxis(mode="daily")
+        run_date = self._today()
+        return ScoreHistoryAxis(
+            mode="intraday",
+            timezone="America/New_York",
+            bucket_minutes=INTRADAY_BUCKET_MINUTES,
+            session_start=SESSION_START.strftime("%H:%M"),
+            session_end=SESSION_END.strftime("%H:%M"),
+            buckets=self._intraday_axis_buckets(run_date),
+        )
+
+    def _intraday_axis_buckets(self, run_date: date) -> list[ScoreHistoryAxisBucket]:
+        now_et = self._now().astimezone(EASTERN)
+        session_start = datetime.combine(run_date, SESSION_START, tzinfo=EASTERN)
+        session_end = datetime.combine(run_date, SESSION_END, tzinfo=EASTERN)
+        total_minutes = int((session_end - session_start).total_seconds() // 60)
+        buckets: list[ScoreHistoryAxisBucket] = []
+        for offset in range(0, total_minutes, INTRADAY_BUCKET_MINUTES):
+            bucket_start = session_start + timedelta(minutes=offset)
+            bucket_end = bucket_start + timedelta(minutes=INTRADAY_BUCKET_MINUTES)
+            if now_et < bucket_start:
+                status = "future"
+            elif now_et >= bucket_end:
+                status = "past"
+            else:
+                status = "current"
+            buckets.append(
+                ScoreHistoryAxisBucket(
+                    key=bucket_start.strftime("%H:%M"),
+                    label=self._bucket_label(bucket_start),
+                    status=status,
+                )
+            )
+        return buckets
+
+    def _active_intraday_bucket(self, run_date: date) -> dict[str, str] | None:
+        now_et = self._now().astimezone(EASTERN)
+        if now_et.date() != run_date:
+            return None
+        session_start = datetime.combine(run_date, SESSION_START, tzinfo=EASTERN)
+        session_end = datetime.combine(run_date, SESSION_END, tzinfo=EASTERN)
+        if now_et < session_start or now_et >= session_end:
+            return None
+        minutes_since_open = int((now_et - session_start).total_seconds() // 60)
+        bucket_offset = (minutes_since_open // INTRADAY_BUCKET_MINUTES) * INTRADAY_BUCKET_MINUTES
+        bucket_start = session_start + timedelta(minutes=bucket_offset)
+        return {"key": bucket_start.strftime("%H:%M"), "label": self._bucket_label(bucket_start)}
+
+    @staticmethod
+    def _bucket_start(run_date: date, bucket_key: str) -> datetime | None:
+        try:
+            hour, minute = [int(part) for part in bucket_key.split(":", maxsplit=1)]
+        except ValueError:
+            return None
+        return datetime.combine(run_date, time(hour, minute), tzinfo=EASTERN)
+
+    @staticmethod
+    def _bucket_label(bucket_start: datetime) -> str:
+        hour = bucket_start.hour % 12 or 12
+        suffix = "AM" if bucket_start.hour < 12 else "PM"
+        return f"{hour}:{bucket_start.minute:02d} {suffix}"
+
     def _record_for(self, store: dict[str, Any], ticker: str, run_date: date) -> dict[str, Any]:
         records = store.setdefault("records", {})
         ticker_records = records.setdefault(ticker, {})
         return ticker_records.setdefault(run_date.isoformat(), {})
+
+    @staticmethod
+    def _intraday_record_for(record: dict[str, Any], bucket_key: str) -> dict[str, Any]:
+        intraday = record.setdefault("intraday", {})
+        if not isinstance(intraday, dict):
+            intraday = {}
+            record["intraday"] = intraday
+        bucket_record = intraday.setdefault(bucket_key, {})
+        if not isinstance(bucket_record, dict):
+            bucket_record = {}
+            intraday[bucket_key] = bucket_record
+        return bucket_record
 
     def _remember_warnings(self, warnings: list[str]) -> None:
         if not warnings:
@@ -399,7 +553,7 @@ class ScoreHistoryService:
                 del records[ticker]
 
     def _cutoff_date(self, score_range: ScoreHistoryRange) -> date | None:
-        days_by_range = {"7D": 7, "30D": 30, "90D": 90, "1Y": 365}
+        days_by_range = {"1D": 1, "7D": 7, "30D": 30, "90D": 90, "1Y": 365}
         days = days_by_range.get(score_range)
         if days is None:
             return None

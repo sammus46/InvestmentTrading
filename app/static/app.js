@@ -26,14 +26,14 @@ const NEWS_CATEGORY_LABELS = {
 
 const CHART_TYPES = ["line", "candles"];
 const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
-const SCORE_ANALYTICS_RANGES = ["7D", "30D", "90D", "1Y", "All"];
+const SCORE_ANALYTICS_RANGES = ["1D", "7D", "30D", "90D", "1Y", "All"];
 const SCORE_ANALYTICS_METRICS = ["setup", "level", "both"];
 const SCORE_ANALYTICS_CHART_METRICS = ["heat", "setup", "level"];
 const SCORE_ANALYTICS_MOVEMENTS = ["all", "improving", "declining", "flat"];
 const SCORE_ANALYTICS_SORTS = ["watchlist", "setup", "level", "gain", "drop"];
 const SCORE_SERIES_COLORS = ["#0f766e", "#2563eb", "#dc2626", "#ca8a04", "#7c3aed", "#0891b2", "#be185d", "#4d7c0f"];
 const DEFAULT_SCORE_ANALYTICS_SETTINGS = {
-  range: "30D",
+  range: "1D",
   scoreMetric: "both",
   chartMetric: "heat",
   movement: "all",
@@ -2889,6 +2889,7 @@ function renderScoreSelect(label, key, value, options, labelFor = (item) => item
 
 function scoreOptionLabel(option) {
   const labels = {
+    "1D": "1D",
     "7D": "7D",
     "30D": "30D",
     "90D": "90D",
@@ -2965,15 +2966,16 @@ function renderScoreSummary(rows) {
   const improving = rows.filter((row) => scoreMovement(row) === "improving").length;
   const declining = rows.filter((row) => scoreMovement(row) === "declining").length;
   const flat = rows.length - improving - declining;
+  const movementWindow = scoreMovementWindowLabel();
   return `
     <div class="score-summary-strip">
       ${renderScoreSummaryTile("Tracked", rows.filter((row) => row.points?.length).length, `${rows.length} visible`)}
       ${renderScoreSummaryTile("Avg Derived Heat", averageValue(heatValues), "hot/cold")}
       ${renderScoreSummaryTile("Avg Adam Setup", averageValue(setupValues), "0-8")}
       ${renderScoreSummaryTile("Avg Derived Level", averageValue(levelValues), "normalized")}
-      ${renderScoreSummaryTile("Improving", improving, "1D")}
-      ${renderScoreSummaryTile("Declining", declining, "1D")}
-      ${renderScoreSummaryTile("Flat/New", flat, "1D")}
+      ${renderScoreSummaryTile("Improving", improving, movementWindow)}
+      ${renderScoreSummaryTile("Declining", declining, movementWindow)}
+      ${renderScoreSummaryTile("Flat/New", flat, movementWindow)}
     </div>
   `;
 }
@@ -2991,23 +2993,28 @@ function renderScoreSummaryTile(label, value, meta) {
 function renderScoreLineChart(rows) {
   const metric = scoreAnalyticsSettings.chartMetric || "heat";
   const metricLabel = scoreOptionLabel(metric);
+  const axisItems = scoreAxisItems(rows, metric);
   const series = rows
     .map((row, rowIndex) => {
-      const points = (row.points || [])
-        .map((point) => ({
-          date: point.date,
-          value: scorePointMetricValue(point, metric),
-        }))
-        .filter((point) => point.date && Number.isFinite(point.value));
+      const pointByAxisKey = new Map(scoreDisplayPoints(row).map((point) => [point.axisKey, point]));
+      const points = axisItems.map((item, index) => {
+        const point = pointByAxisKey.get(item.key);
+        const value = point ? scorePointMetricValue(point, metric) : null;
+        return {
+          index,
+          key: item.key,
+          label: item.label,
+          value: value === null ? null : Number(value),
+        };
+      });
       return {
         ticker: row.ticker,
         color: SCORE_SERIES_COLORS[rowIndex % SCORE_SERIES_COLORS.length],
         points,
       };
     })
-    .filter((row) => row.points.length);
-  const dates = [...new Set(series.flatMap((row) => row.points.map((point) => point.date)))].sort();
-  if (!series.length || !dates.length) {
+    .filter((row) => row.points.some((point) => point.value !== null && Number.isFinite(point.value)));
+  if (!series.length || !axisItems.length) {
     return `
       <section class="score-line-panel">
         <div class="score-line-header">
@@ -3019,17 +3026,16 @@ function renderScoreLineChart(rows) {
     `;
   }
 
-  const width = 760;
-  const height = 190;
+  const width = 840;
+  const height = 220;
   const left = 42;
-  const right = 12;
+  const right = 64;
   const top = 14;
-  const bottom = 30;
+  const bottom = 48;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const xForDate = (date) => {
-    const index = dates.indexOf(date);
-    return dates.length === 1 ? left + plotWidth / 2 : left + (index / (dates.length - 1)) * plotWidth;
+  const xForIndex = (index) => {
+    return axisItems.length === 1 ? left + plotWidth / 2 : left + (index / (axisItems.length - 1)) * plotWidth;
   };
   const yForValue = (value) => top + ((100 - clampPercent(value)) / 100) * plotHeight;
   const gridLines = [0, 25, 50, 75, 100].map((value) => {
@@ -3041,43 +3047,171 @@ function renderScoreLineChart(rows) {
       </g>
     `;
   }).join("");
+  const xAxis = `
+    <g class="score-line-x-axis">
+      <line x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"></line>
+      ${scoreAxisTickIndexes(axisItems).map((index) => {
+        const x = xForIndex(index);
+        return `
+          <g>
+            <line x1="${x.toFixed(2)}" y1="${height - bottom}" x2="${x.toFixed(2)}" y2="${height - bottom + 5}"></line>
+            <text x="${x.toFixed(2)}" y="${height - 16}" text-anchor="middle">${escapeHtml(axisItems[index].label)}</text>
+          </g>
+        `;
+      }).join("")}
+    </g>
+  `;
   const seriesMarkup = series.map((row) => {
-    const coordinates = row.points.map((point) => `${xForDate(point.date).toFixed(2)},${yForValue(point.value).toFixed(2)}`);
-    const markerMarkup = row.points.length === 1
-      ? `<circle cx="${xForDate(row.points[0].date).toFixed(2)}" cy="${yForValue(row.points[0].value).toFixed(2)}" r="4"></circle>`
+    const finitePoints = row.points.filter((point) => point.value !== null && Number.isFinite(point.value));
+    const pieces = [];
+    let segment = [];
+    row.points.forEach((point) => {
+      if (point.value !== null && Number.isFinite(point.value)) {
+        segment.push(point);
+        return;
+      }
+      if (segment.length) {
+        pieces.push(scorePolylineSegmentMarkup(segment, xForIndex, yForValue));
+        segment = [];
+      }
+    });
+    if (segment.length) pieces.push(scorePolylineSegmentMarkup(segment, xForIndex, yForValue));
+    const latest = finitePoints[finitePoints.length - 1];
+    const endLabel = latest && series.length <= SCORE_SERIES_COLORS.length
+      ? `<text class="score-line-end-label" x="${Math.min(width - 38, xForIndex(latest.index) + 7).toFixed(2)}" y="${(yForValue(latest.value) + 4).toFixed(2)}">${escapeHtml(row.ticker)}</text>`
       : "";
     return `
       <g class="score-line-series" style="--score-series-color:${escapeHtml(row.color)}">
-        <polyline points="${coordinates.join(" ")}"></polyline>
-        ${markerMarkup}
+        ${pieces.join("")}
+        ${endLabel}
       </g>
     `;
   }).join("");
   const legend = series.map((row) => {
-    const latest = row.points[row.points.length - 1];
+    const latest = row.points.filter((point) => point.value !== null && Number.isFinite(point.value)).pop();
     return `
       <span class="score-line-legend-item" style="--score-series-color:${escapeHtml(row.color)}">
         <i></i>${escapeHtml(row.ticker)} ${formatScoreSummaryValue(latest?.value)}
       </span>
     `;
   }).join("");
-  const firstDate = dates[0];
-  const lastDate = dates[dates.length - 1];
+  const chartMeta = scoreChartAxisMeta(axisItems);
 
   return `
     <section class="score-line-panel">
       <div class="score-line-header">
         <h4>${escapeHtml(metricLabel)} Trend</h4>
-        <span>${escapeHtml(firstDate)}${firstDate === lastDate ? "" : ` - ${escapeHtml(lastDate)}`}</span>
+        <span>${escapeHtml(chartMeta)}</span>
       </div>
       <svg class="score-line-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(metricLabel)} trend for visible tickers">
         <title>${escapeHtml(metricLabel)} trend for visible tickers</title>
         ${gridLines}
+        ${xAxis}
         ${seriesMarkup}
       </svg>
       <div class="score-line-legend">${legend}</div>
     </section>
   `;
+}
+
+function isIntradayScoreRange() {
+  return currentScoreHistory?.axis?.mode === "intraday"
+    || currentScoreHistory?.range === "1D"
+    || scoreAnalyticsSettings.range === "1D";
+}
+
+function scoreAxisBuckets() {
+  return currentScoreHistory?.axis?.buckets || [];
+}
+
+function scoreAxisItems(rows, metric) {
+  if (isIntradayScoreRange() && scoreAxisBuckets().length) {
+    return scoreAxisBuckets().map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      status: bucket.status,
+    }));
+  }
+  const dates = [...new Set(rows.flatMap((row) => (row.points || [])
+    .filter((point) => point.date && scorePointMetricValue(point, metric) !== null)
+    .map((point) => point.date)))].sort();
+  return dates.map((date) => ({ key: date, label: date, status: "past" }));
+}
+
+function scoreDisplayPoints(row) {
+  if (!isIntradayScoreRange() || !scoreAxisBuckets().length) {
+    return (row.points || [])
+      .filter((point) => point.date)
+      .map((point) => ({
+        ...point,
+        axisKey: point.date,
+        axisLabel: point.date,
+        isPlaceholder: false,
+      }));
+  }
+  const pointByBucket = new Map();
+  (row.points || []).forEach((point) => {
+    if (point.bucket) pointByBucket.set(point.bucket, point);
+  });
+  return scoreAxisBuckets().map((bucket) => {
+    const point = pointByBucket.get(bucket.key);
+    return {
+      ...(point || {}),
+      date: point?.date || "",
+      bucket: bucket.key,
+      bucket_label: bucket.label,
+      bucket_status: bucket.status,
+      axisKey: bucket.key,
+      axisLabel: bucket.label,
+      isPlaceholder: !point,
+    };
+  });
+}
+
+function scorePolylineSegmentMarkup(segment, xForIndex, yForValue) {
+  if (segment.length === 1) {
+    const point = segment[0];
+    return `<circle cx="${xForIndex(point.index).toFixed(2)}" cy="${yForValue(point.value).toFixed(2)}" r="4"></circle>`;
+  }
+  const coordinates = segment.map((point) => `${xForIndex(point.index).toFixed(2)},${yForValue(point.value).toFixed(2)}`);
+  return `<polyline points="${coordinates.join(" ")}"></polyline>`;
+}
+
+function scoreAxisTickIndexes(axisItems) {
+  const count = axisItems.length;
+  if (count <= 1) return [0].filter((index) => index < count);
+  if (isIntradayScoreRange()) {
+    return axisItems.map((_, index) => index).filter((index) => index % 2 === 0 || index === count - 1);
+  }
+  if (count <= 6) return axisItems.map((_, index) => index);
+  return [...new Set([0, Math.floor((count - 1) / 2), count - 1])];
+}
+
+function scoreChartAxisMeta(axisItems) {
+  if (isIntradayScoreRange()) {
+    const axis = currentScoreHistory?.axis || {};
+    const start = formatScoreSessionTime(axis.session_start || "09:30");
+    const end = formatScoreSessionTime(axis.session_end || "16:00");
+    const bucket = axis.bucket_minutes || 30;
+    return `${start} - ${end} ${scoreTimezoneLabel(axis.timezone)} · ${bucket}m buckets`;
+  }
+  const first = axisItems[0]?.label || "";
+  const last = axisItems[axisItems.length - 1]?.label || "";
+  return first === last ? first : `${first} - ${last}`;
+}
+
+function formatScoreSessionTime(value) {
+  const [hourText, minuteText] = String(value || "").split(":");
+  const hourNumber = Number(hourText);
+  const minuteNumber = Number(minuteText);
+  if (!Number.isFinite(hourNumber) || !Number.isFinite(minuteNumber)) return value;
+  const hour = hourNumber % 12 || 12;
+  const suffix = hourNumber < 12 ? "AM" : "PM";
+  return `${hour}:${String(minuteNumber).padStart(2, "0")} ${suffix}`;
+}
+
+function scoreTimezoneLabel(value) {
+  return value === "America/New_York" ? "ET" : value || "";
 }
 
 function renderScoreTrendCard(row) {
@@ -3089,19 +3223,21 @@ function renderScoreTrendCard(row) {
       <header>
         <div>
           <h4>${escapeHtml(row.ticker)}</h4>
-          <span>${(row.points || []).length} point${(row.points || []).length === 1 ? "" : "s"}</span>
+          <span>${escapeHtml(scoreTrendPointLabel(row))}</span>
         </div>
-        <span class="score-movement ${movement}">${escapeHtml(scoreOptionLabel(movement))}</span>
       </header>
       <div class="score-latest-grid">
         ${showSetup ? renderScoreLatest("Adam Setup", formatSetupScore(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d) : ""}
         ${showLevel ? renderScoreLatest("Derived Level", formatLevelScore(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count), row.level_normalized_delta_1d, row.level_normalized_delta_5d) : ""}
       </div>
+      <div class="score-card-movement-row">
+        ${renderScoreMovementBadge(row)}
+      </div>
       ${renderScoreHeatThermometer(row)}
       ${renderScoreHeatStrip(row)}
       <div class="score-sparkline-grid">
-        ${showSetup ? renderScoreSparkline(row.points || [], "setup_score", "Adam setup score") : ""}
-        ${showLevel ? renderScoreSparkline(row.points || [], "level_score_normalized", "Derived level score") : ""}
+        ${showSetup ? renderScoreSparkline(row, "setup_score", "Adam setup score") : ""}
+        ${showLevel ? renderScoreSparkline(row, "level_score_normalized", "Derived level score") : ""}
       </div>
     </article>
   `;
@@ -3112,43 +3248,72 @@ function renderScoreLatest(label, value, delta1, delta5) {
     <div class="score-latest">
       <span>${escapeHtml(label)}</span>
       <strong>${value}</strong>
-      <small>1D ${formatScoreDelta(delta1)} / 5D ${formatScoreDelta(delta5)}</small>
+      <small>${scoreDeltaWindowText(delta1, delta5)}</small>
     </div>
   `;
 }
 
-function renderScoreSparkline(points, field, label) {
-  const series = (points || [])
-    .map((point, index) => ({ index, date: point.date, value: Number(point[field]) }))
-    .filter((point) => Number.isFinite(point.value));
-  if (series.length < 2) {
+function renderScoreSparkline(row, field, label) {
+  const isSetup = field === "setup_score";
+  const maxValue = isSetup ? 8 : 100;
+  const scaleLabel = isSetup ? "0-8" : "0-100%";
+  const displayPoints = scoreDisplayPoints(row);
+  const series = displayPoints.map((point, index) => ({
+    index,
+    axisLabel: point.axisLabel || point.bucket_label || point.date || "",
+    value: numericOrNull(point[field]),
+  }));
+  const finitePoints = series.filter((point) => point.value !== null && Number.isFinite(point.value));
+  if (!finitePoints.length) {
     return `
       <div class="score-sparkline-card">
-        <span>${escapeHtml(label)}</span>
+        <div class="score-sparkline-title">
+          <span>${escapeHtml(label)}</span>
+          <small>${escapeHtml(scaleLabel)}</small>
+        </div>
         <div class="score-sparkline-empty"></div>
       </div>
     `;
   }
-  const width = 180;
-  const height = 48;
-  let minValue = Math.min(...series.map((point) => point.value));
-  let maxValue = Math.max(...series.map((point) => point.value));
-  if (minValue === maxValue) {
-    minValue -= 1;
-    maxValue += 1;
-  }
-  const pointsText = series.map((point, index) => {
-    const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
-    const y = height - ((point.value - minValue) / (maxValue - minValue)) * height;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
+  const width = 220;
+  const height = 72;
+  const left = 24;
+  const right = 6;
+  const top = 8;
+  const bottom = 18;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const xForIndex = (index) => series.length === 1 ? left + plotWidth / 2 : left + (index / (series.length - 1)) * plotWidth;
+  const yForValue = (value) => top + ((maxValue - clampBetween(value, 0, maxValue)) / maxValue) * plotHeight;
+  const pieces = [];
+  let segment = [];
+  series.forEach((point) => {
+    if (point.value !== null && Number.isFinite(point.value)) {
+      segment.push(point);
+      return;
+    }
+    if (segment.length) {
+      pieces.push(scorePolylineSegmentMarkup(segment, xForIndex, yForValue));
+      segment = [];
+    }
+  });
+  if (segment.length) pieces.push(scorePolylineSegmentMarkup(segment, xForIndex, yForValue));
+  const caption = scoreSparklineCaption(finitePoints);
   return `
     <div class="score-sparkline-card">
-      <span>${escapeHtml(label)}</span>
+      <div class="score-sparkline-title">
+        <span>${escapeHtml(label)}</span>
+        <small>${escapeHtml(scaleLabel)}</small>
+      </div>
       <svg class="score-sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)} trend">
-        <title>${escapeHtml(label)} trend from ${escapeHtml(series[0].date)} to ${escapeHtml(series[series.length - 1].date)}</title>
-        <polyline points="${pointsText}"></polyline>
+        <title>${escapeHtml(label)} trend from ${escapeHtml(finitePoints[0].axisLabel)} to ${escapeHtml(finitePoints[finitePoints.length - 1].axisLabel)}</title>
+        <line class="score-sparkline-grid-line" x1="${left}" y1="${top}" x2="${width - right}" y2="${top}"></line>
+        <line class="score-sparkline-grid-line" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"></line>
+        <text class="score-sparkline-scale" x="2" y="${top + 4}">${maxValue}</text>
+        <text class="score-sparkline-scale" x="2" y="${height - bottom + 4}">0</text>
+        ${pieces.join("")}
       </svg>
+      <small class="score-sparkline-caption">${escapeHtml(caption)}</small>
     </div>
   `;
 }
@@ -3172,28 +3337,83 @@ function renderScoreHeatThermometer(row) {
 }
 
 function renderScoreHeatStrip(row) {
-  const points = (row.points || []).filter((point) => point.date);
+  const points = scoreDisplayPoints(row);
+  const label = isIntradayScoreRange() ? "Trading Day Derived Heat" : "Daily Derived Heat History";
   if (!points.length) {
     return `
       <div class="score-heat-strip-card">
-        <span>Daily Derived Heat</span>
+        <span>${escapeHtml(label)}</span>
         <div class="score-heat-strip empty"></div>
       </div>
     `;
   }
+  const firstLabel = points[0]?.axisLabel || "";
+  const lastLabel = points[points.length - 1]?.axisLabel || "";
   return `
     <div class="score-heat-strip-card">
-      <span>Daily Derived Heat</span>
+      <span>${escapeHtml(label)}</span>
       <div class="score-heat-strip">
         ${points.map((point) => {
           const heat = scorePointHeat(point);
           const band = heatBand(heat);
-          const title = `${point.date}: ${formatHeatScore(heat)} ${band.label}`;
-          return `<i class="heat-${band.id}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></i>`;
+          const status = point.bucket_status || "past";
+          const axisLabel = point.axisLabel || point.bucket_label || point.date;
+          const hasHeat = heat !== null;
+          const emptyReason = status === "future" ? "Not happened yet" : "No score snapshot";
+          const title = hasHeat ? `${axisLabel}: ${formatHeatScore(heat)} ${band.label}` : `${axisLabel}: ${emptyReason}`;
+          return `<i class="heat-${band.id} status-${status} ${hasHeat ? "filled" : "empty"}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></i>`;
         }).join("")}
       </div>
+      <div class="score-heat-strip-axis"><span>${escapeHtml(firstLabel)}</span><span>${escapeHtml(lastLabel)}</span></div>
     </div>
   `;
+}
+
+function scoreTrendPointLabel(row) {
+  const count = (row.points || []).length;
+  if (isIntradayScoreRange()) {
+    return `${count} observed bucket${count === 1 ? "" : "s"}`;
+  }
+  return `${count} point${count === 1 ? "" : "s"}`;
+}
+
+function renderScoreMovementBadge(row) {
+  const movement = scoreMovement(row);
+  const amount = scoreMovementAmount(row);
+  const metric = scoreMovementMetricLabel();
+  const delta = amount === null || amount === undefined ? "" : ` ${formatScoreDeltaText(amount)}`;
+  const title = `${scoreOptionLabel(movement)}${delta} ${metric}, compared with ${scoreMovementWindowLabel().toLowerCase()}`;
+  return `<span class="score-movement ${movement}" title="${escapeHtml(title)}">${escapeHtml(title)}</span>`;
+}
+
+function scoreMovementMetricLabel() {
+  if (scoreAnalyticsSettings.scoreMetric === "setup") return "setup";
+  if (scoreAnalyticsSettings.scoreMetric === "level") return "level";
+  return "heat";
+}
+
+function scoreMovementWindowLabel() {
+  return isIntradayScoreRange() ? "Prior bucket" : "Prior day";
+}
+
+function scoreDeltaWindowText(delta1, delta5) {
+  if (isIntradayScoreRange()) {
+    return `Prev bucket ${formatScoreDelta(delta1)} / 5 buckets ${formatScoreDelta(delta5)}`;
+  }
+  return `1D ${formatScoreDelta(delta1)} / 5D ${formatScoreDelta(delta5)}`;
+}
+
+function formatScoreDeltaText(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
+  const number = Number(value);
+  return `${number > 0 ? "+" : ""}${Number.isInteger(number) ? number : number.toFixed(1)}`;
+}
+
+function scoreSparklineCaption(points) {
+  if (!points.length) return "";
+  const first = points[0].axisLabel || "";
+  const last = points[points.length - 1].axisLabel || "";
+  return first === last ? first : `${first} - ${last}`;
 }
 
 function scorePointMetricValue(point, metric) {
@@ -3245,6 +3465,10 @@ function numericOrNull(value) {
 
 function clampPercent(value) {
   return Math.max(0, Math.min(100, Number(value)));
+}
+
+function clampBetween(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value)));
 }
 
 function heatBand(value) {

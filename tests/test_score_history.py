@@ -110,6 +110,60 @@ def test_score_history_merges_same_day_records(tmp_path):
     assert response.tickers[0].latest_level_count == 2
 
 
+def test_score_history_one_day_returns_intraday_axis_and_bucket_points(tmp_path):
+    service = ScoreHistoryService(
+        tmp_path / "score_history.json",
+        today=lambda: date(2026, 6, 17),
+        now=lambda: datetime(2026, 6, 17, 15, 45, tzinfo=timezone.utc),
+    )
+
+    service.record_setup_scores([ScannerSetupRow(ticker="AAPL", score=5)])
+    service.record_level_scores([metric_with_levels()])
+    response = service.build_response(["AAPL"], score_range="1D", score_metric="both", level_basis="weight_20")
+    ticker = response.tickers[0]
+
+    assert response.axis is not None
+    assert response.axis.mode == "intraday"
+    assert response.axis.bucket_minutes == 30
+    assert response.axis.session_start == "09:30"
+    assert response.axis.session_end == "16:00"
+    assert len(response.axis.buckets) == 13
+    assert response.axis.buckets[0].label == "9:30 AM"
+    assert response.axis.buckets[0].status == "past"
+    assert response.axis.buckets[4].key == "11:30"
+    assert response.axis.buckets[4].status == "current"
+    assert response.axis.buckets[-1].status == "future"
+    assert len(ticker.points) == 1
+    assert ticker.points[0].bucket == "11:30"
+    assert ticker.points[0].bucket_label == "11:30 AM"
+    assert ticker.points[0].bucket_status == "current"
+    assert ticker.points[0].setup_score == 5
+    assert ticker.points[0].level_score == 50
+    assert ticker.points[0].heat_score == 57.5
+
+
+def test_score_history_one_day_merges_same_bucket_and_deltas_prior_bucket(tmp_path):
+    current_now = {"value": datetime(2026, 6, 17, 14, 5, tzinfo=timezone.utc)}
+    service = ScoreHistoryService(
+        tmp_path / "score_history.json",
+        today=lambda: date(2026, 6, 17),
+        now=lambda: current_now["value"],
+    )
+
+    service.record_setup_scores([ScannerSetupRow(ticker="AAPL", score=4)])
+    current_now["value"] = datetime(2026, 6, 17, 14, 20, tzinfo=timezone.utc)
+    service.record_setup_scores([ScannerSetupRow(ticker="AAPL", score=6)])
+    current_now["value"] = datetime(2026, 6, 17, 14, 35, tzinfo=timezone.utc)
+    service.record_setup_scores([ScannerSetupRow(ticker="AAPL", score=5)])
+    response = service.build_response(["AAPL"], score_range="1D", score_metric="setup", level_basis="all")
+    ticker = response.tickers[0]
+
+    assert [point.bucket for point in ticker.points] == ["10:00", "10:30"]
+    assert [point.setup_score for point in ticker.points] == [6, 5]
+    assert ticker.setup_delta_1d == -1
+    assert response.summary.declining_count == 1
+
+
 def test_score_history_prunes_old_records_on_write(tmp_path):
     path = tmp_path / "score_history.json"
     path.write_text(
@@ -205,11 +259,11 @@ def test_score_history_request_validation_and_route(monkeypatch):
             )
 
     monkeypatch.setattr("app.main.score_history_service", FakeScoreHistory())
-    request = ScoreHistoryRequest(tickers="aapl msft", range="7D", score_metric="setup", level_basis="scanner")
+    request = ScoreHistoryRequest(tickers="aapl msft", range="1D", score_metric="setup", level_basis="scanner")
     response = generate_score_history(request)
 
     assert request.tickers == ["AAPL", "MSFT"]
-    assert response.range == "7D"
+    assert response.range == "1D"
     assert response.score_metric == "setup"
     assert response.level_basis == "scanner"
     assert response.summary.ticker_count == 2

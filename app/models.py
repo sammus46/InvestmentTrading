@@ -27,9 +27,11 @@ ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"
 DisplayRowKind = Literal["price", "percent", "date", "text"]
 DisplayRowEmphasis = Literal["normal", "priority", "current"]
 ReportLayoutName = Literal["grid", "price_ladder", "compact", "compare"]
-ScoreHistoryRange = Literal["7D", "30D", "90D", "1Y", "All"]
+ScoreHistoryRange = Literal["1D", "7D", "30D", "90D", "1Y", "All"]
 ScoreMetricName = Literal["setup", "level", "both"]
 LevelScoreBasisName = Literal["all", "scanner", "weight_20"]
+ScoreHistoryAxisMode = Literal["daily", "intraday"]
+ScoreHistoryBucketStatus = Literal["past", "current", "future"]
 
 CHART_INTERVALS_BY_RANGE: dict[ChartRange, tuple[ChartInterval, ...]] = {
     "1D": ("1m", "2m", "5m", "15m", "30m", "1h"),
@@ -369,11 +371,34 @@ class ScoreHistoryPoint(BaseModel):
     """One stored daily score point for a ticker."""
 
     date: Date
+    timestamp: datetime | None = None
+    bucket: str | None = None
+    bucket_label: str | None = None
+    bucket_status: ScoreHistoryBucketStatus | None = None
     setup_score: int | None = None
     level_score: int | None = None
     level_score_normalized: float | None = None
     heat_score: float | None = None
     level_count: int = 0
+
+
+class ScoreHistoryAxisBucket(BaseModel):
+    """One bucket on the score-history chart axis."""
+
+    key: str
+    label: str
+    status: ScoreHistoryBucketStatus
+
+
+class ScoreHistoryAxis(BaseModel):
+    """Chart-axis metadata for score-history visualization."""
+
+    mode: ScoreHistoryAxisMode
+    timezone: str = "America/New_York"
+    bucket_minutes: int | None = None
+    session_start: str | None = None
+    session_end: str | None = None
+    buckets: list[ScoreHistoryAxisBucket] = Field(default_factory=list)
 
 
 class ScoreHistoryTicker(BaseModel):
@@ -418,6 +443,7 @@ class ScoreHistoryResponse(BaseModel):
     range: ScoreHistoryRange
     score_metric: ScoreMetricName
     level_basis: LevelScoreBasisName
+    axis: ScoreHistoryAxis | None = None
     summary: ScoreHistorySummary
     tickers: list[ScoreHistoryTicker] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

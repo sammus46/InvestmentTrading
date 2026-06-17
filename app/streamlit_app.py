@@ -45,6 +45,7 @@ from app.models import (
     ScannerRequest,
     ScannerResponse,
     SectorAnalyticsResponse,
+    ScoreHistoryAxis,
     ScoreHistoryRange,
     ScoreHistoryPoint,
     ScoreHistoryResponse,
@@ -85,12 +86,13 @@ NEWS_CATEGORY_LABELS = {
 CHART_TYPE_OPTIONS = ("Line", "Candles")
 CHART_RANGE_OPTIONS: tuple[ChartRange, ...] = tuple(CHART_INTERVALS_BY_RANGE.keys())
 CHART_RANGE_LABELS = {"1Y": "1YR"}
-SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("7D", "30D", "90D", "1Y", "All")
+SCORE_ANALYTICS_RANGES: tuple[ScoreHistoryRange, ...] = ("1D", "7D", "30D", "90D", "1Y", "All")
 SCORE_ANALYTICS_METRICS: tuple[ScoreMetricName, ...] = ("setup", "level", "both")
 SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")
 SCORE_ANALYTICS_MOVEMENTS = ("all", "improving", "declining", "flat")
 SCORE_ANALYTICS_SORTS = ("watchlist", "setup", "level", "gain", "drop")
 SCORE_OPTION_LABELS = {
+    "1D": "1D",
     "7D": "7D",
     "30D": "30D",
     "90D": "90D",
@@ -505,7 +507,7 @@ def normalize_chart_interval(chart_range: ChartRange, value: object) -> ChartInt
 def normalize_score_history_range(value: object) -> ScoreHistoryRange:
     """Return a supported score-history range."""
     candidate = str(value or "")
-    return candidate if candidate in SCORE_ANALYTICS_RANGES else "30D"  # type: ignore[return-value]
+    return candidate if candidate in SCORE_ANALYTICS_RANGES else "1D"  # type: ignore[return-value]
 
 
 def normalize_score_metric(value: object) -> ScoreMetricName:
@@ -2196,6 +2198,15 @@ def render_app_chrome() -> str:
             font-size: 11px;
             font-weight: 800;
           }
+          .streamlit-score-line-x-axis line {
+            stroke: #cbd5e1;
+            stroke-width: 1;
+          }
+          .streamlit-score-line-x-axis text {
+            fill: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+          }
           .streamlit-score-line-series polyline {
             fill: none;
             stroke: var(--score-series-color);
@@ -2207,6 +2218,11 @@ def render_app_chrome() -> str:
             fill: var(--score-series-color);
             stroke: #ffffff;
             stroke-width: 2;
+          }
+          .streamlit-score-line-end-label {
+            fill: var(--score-series-color);
+            font-size: 10px;
+            font-weight: 900;
           }
           .streamlit-score-line-legend {
             display: flex;
@@ -2286,6 +2302,12 @@ def render_app_chrome() -> str:
             color: #0f172a;
             letter-spacing: 0.06em;
             margin: 0;
+          }
+          .streamlit-score-movement-row {
+            align-items: center;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
           }
           .streamlit-score-movement {
             border-radius: 999px;
@@ -2379,6 +2401,24 @@ def render_app_chrome() -> str:
             border-radius: 0.25rem;
             min-height: 1.1rem;
           }
+          .streamlit-score-heat-strip i.empty {
+            background: transparent;
+            border: 1px dashed #cbd5e1;
+          }
+          .streamlit-score-heat-strip i.status-current {
+            box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.22);
+          }
+          .streamlit-score-heat-strip i.status-future {
+            opacity: 0.5;
+          }
+          .streamlit-score-heat-strip-axis {
+            color: #64748b !important;
+            display: flex;
+            font-size: 0.68rem;
+            font-weight: 800;
+            justify-content: space-between;
+            line-height: 1.2;
+          }
           .streamlit-score-heat-strip.empty {
             background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px);
             border-radius: 0.4rem;
@@ -2395,10 +2435,22 @@ def render_app_chrome() -> str:
           .streamlit-score-sparkline-card {
             padding: 0.5rem 0.55rem;
           }
+          .streamlit-score-sparkline-title {
+            align-items: center;
+            display: flex;
+            gap: 0.5rem;
+            justify-content: space-between;
+          }
+          .streamlit-score-sparkline-title small,
+          .streamlit-score-sparkline-caption {
+            color: #64748b !important;
+            font-size: 0.68rem;
+            font-weight: 900;
+          }
           .streamlit-score-sparkline,
           .streamlit-score-sparkline-empty {
             display: block;
-            height: 46px;
+            height: 72px;
             margin-top: 0.35rem;
             width: 100%;
           }
@@ -2411,6 +2463,20 @@ def render_app_chrome() -> str:
             stroke-linecap: round;
             stroke-linejoin: round;
             stroke-width: 3;
+          }
+          .streamlit-score-sparkline circle {
+            fill: #0f766e;
+            stroke: #ffffff;
+            stroke-width: 2;
+          }
+          .streamlit-score-sparkline-grid-line {
+            stroke: #dbe3ef;
+            stroke-width: 1;
+          }
+          .streamlit-score-sparkline-scale {
+            fill: #64748b;
+            font-size: 9px;
+            font-weight: 900;
           }
           .streamlit-score-sparkline-empty {
             background: repeating-linear-gradient(90deg, #e2e8f0 0 7px, transparent 7px 14px);
@@ -3422,7 +3488,7 @@ def sync_score_level_basis_to_level_filter() -> None:
 def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricName, LevelScoreBasisName, str, str, str]:
     """Render Score Analytics controls and return normalized values."""
     level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
-    st.session_state.score_range = normalize_score_history_range(st.session_state.get("score_range", "30D"))
+    st.session_state.score_range = normalize_score_history_range(st.session_state.get("score_range", "1D"))
     st.session_state.score_metric = normalize_score_metric(st.session_state.get("score_metric", "both"))
     st.session_state.score_chart_metric = normalize_score_chart_metric(st.session_state.get("score_chart_metric", "heat"))
     st.session_state.score_level_basis = normalize_level_filter(st.session_state.get("score_level_basis", level_filter))
@@ -3542,9 +3608,9 @@ def render_score_analytics(
             st.info("No score history matches the current filters.")
             return
 
-        st.markdown(score_summary_html(rows, score_metric), unsafe_allow_html=True)
-        st.markdown(score_line_chart_html(rows, chart_metric), unsafe_allow_html=True)
-        st.markdown(score_trend_cards_html(rows, score_metric), unsafe_allow_html=True)
+        st.markdown(score_summary_html(rows, score_metric, response.axis), unsafe_allow_html=True)
+        st.markdown(score_line_chart_html(rows, chart_metric, response.axis), unsafe_allow_html=True)
+        st.markdown(score_trend_cards_html(rows, score_metric, response.axis), unsafe_allow_html=True)
 
 
 def score_history_warnings(response: ScoreHistoryResponse) -> list[str]:
@@ -3597,7 +3663,11 @@ def sort_score_rows(
     return sorted(rows, key=watchlist_index)
 
 
-def score_summary_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetricName) -> str:
+def score_summary_html(
+    rows: list[ScoreHistoryTicker],
+    score_metric: ScoreMetricName,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
     """Return summary tile markup for score analytics."""
     setup_values = [row.latest_setup_score for row in rows if row.latest_setup_score is not None]
     level_values = [row.latest_level_score_normalized for row in rows if row.latest_level_score_normalized is not None]
@@ -3605,14 +3675,15 @@ def score_summary_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetric
     improving = sum(1 for row in rows if score_movement(row, score_metric) == "improving")
     declining = sum(1 for row in rows if score_movement(row, score_metric) == "declining")
     flat = len(rows) - improving - declining
+    movement_window = score_movement_window_label(axis)
     tiles = [
         score_summary_tile_html("Tracked", len([row for row in rows if row.points]), f"{len(rows)} visible"),
         score_summary_tile_html("Avg Derived Heat", score_average(heat_values), "hot/cold"),
         score_summary_tile_html("Avg Adam Setup", score_average(setup_values), "0-8"),
         score_summary_tile_html("Avg Derived Level", score_average(level_values), "normalized"),
-        score_summary_tile_html("Improving", improving, "1D"),
-        score_summary_tile_html("Declining", declining, "1D"),
-        score_summary_tile_html("Flat/New", flat, "1D"),
+        score_summary_tile_html("Improving", improving, movement_window),
+        score_summary_tile_html("Declining", declining, movement_window),
+        score_summary_tile_html("Flat/New", flat, movement_window),
     ]
     return f'<div class="streamlit-score-summary-strip">{"".join(tiles)}</div>'
 
@@ -3628,23 +3699,28 @@ def score_summary_tile_html(label: str, value: int | float | None, meta: str) ->
     )
 
 
-def score_line_chart_html(rows: list[ScoreHistoryTicker], chart_metric: str) -> str:
+def score_line_chart_html(
+    rows: list[ScoreHistoryTicker],
+    chart_metric: str,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
     """Return all-visible ticker line chart markup for the selected 0-100 score metric."""
     metric = normalize_score_chart_metric(chart_metric)
     metric_label = score_option_label(metric)
     colors = ("#0f766e", "#2563eb", "#dc2626", "#ca8a04", "#7c3aed", "#0891b2", "#be185d", "#4d7c0f")
+    axis_items = score_axis_items(rows, metric, axis)
     series = []
     for index, row in enumerate(rows):
-        points = [
-            {"date": point.date.isoformat(), "value": value}
-            for point in row.points
-            for value in [score_point_metric_value(point, metric)]
-            if value is not None
-        ]
-        if points:
+        point_by_axis_key = {point["axis_key"]: point for point in score_display_points(row, axis)}
+        points = []
+        for axis_index, item in enumerate(axis_items):
+            display_point = point_by_axis_key.get(item["key"])
+            source_point = display_point["point"] if display_point else None
+            value = score_point_metric_value(source_point, metric) if source_point is not None else None
+            points.append({"index": axis_index, "key": item["key"], "label": item["label"], "value": value})
+        if any(point["value"] is not None for point in points):
             series.append({"ticker": row.ticker, "color": colors[index % len(colors)], "points": points})
-    dates = sorted({point["date"] for row in series for point in row["points"]})
-    if not series or not dates:
+    if not series or not axis_items:
         return (
             '<section class="streamlit-score-line-panel">'
             '<div class="streamlit-score-line-header">'
@@ -3655,18 +3731,17 @@ def score_line_chart_html(rows: list[ScoreHistoryTicker], chart_metric: str) -> 
             "</section>"
         )
 
-    width = 760
-    height = 190
+    width = 840
+    height = 220
     left = 42
-    right = 12
+    right = 64
     top = 14
-    bottom = 30
+    bottom = 48
     plot_width = width - left - right
     plot_height = height - top - bottom
 
-    def x_for_date(value: str) -> float:
-        index = dates.index(value)
-        return left + plot_width / 2 if len(dates) == 1 else left + (index / (len(dates) - 1)) * plot_width
+    def x_for_index(index: int) -> float:
+        return left + plot_width / 2 if len(axis_items) == 1 else left + (index / (len(axis_items) - 1)) * plot_width
 
     def y_for_value(value: float) -> float:
         return top + ((100 - clamp_percent(value)) / 100) * plot_height
@@ -3680,50 +3755,185 @@ def score_line_chart_html(rows: list[ScoreHistoryTicker], chart_metric: str) -> 
         )
         for value in (0, 25, 50, 75, 100)
     )
+    x_axis_ticks = "".join(
+        (
+            "<g>"
+            f'<line x1="{x_for_index(index):.2f}" y1="{height - bottom}" x2="{x_for_index(index):.2f}" y2="{height - bottom + 5}"></line>'
+            f'<text x="{x_for_index(index):.2f}" y="{height - 16}" text-anchor="middle">{escape(str(axis_items[index]["label"]))}</text>'
+            "</g>"
+        )
+        for index in score_axis_tick_indexes(axis_items, axis)
+    )
+    x_axis = (
+        '<g class="streamlit-score-line-x-axis">'
+        f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}"></line>'
+        f"{x_axis_ticks}</g>"
+    )
     series_markup = []
     legend = []
     for row in series:
-        coordinates = " ".join(
-            f'{x_for_date(str(point["date"])):.2f},{y_for_value(float(point["value"])):.2f}'
-            for point in row["points"]
-        )
-        marker = ""
-        if len(row["points"]) == 1:
-            point = row["points"][0]
-            marker = f'<circle cx="{x_for_date(str(point["date"])):.2f}" cy="{y_for_value(float(point["value"])):.2f}" r="4"></circle>'
+        pieces = []
+        segment = []
+        finite_points = [point for point in row["points"] if point["value"] is not None]
+        for point in row["points"]:
+            if point["value"] is not None:
+                segment.append(point)
+                continue
+            if segment:
+                pieces.append(score_svg_segment_markup(segment, x_for_index, y_for_value))
+                segment = []
+        if segment:
+            pieces.append(score_svg_segment_markup(segment, x_for_index, y_for_value))
+        latest = finite_points[-1]
+        end_label = ""
+        if len(series) <= len(colors):
+            end_label = (
+                f'<text class="streamlit-score-line-end-label" x="{min(width - 38, x_for_index(int(latest["index"])) + 7):.2f}" '
+                f'y="{y_for_value(float(latest["value"])) + 4:.2f}">{escape(str(row["ticker"]))}</text>'
+            )
         series_markup.append(
             f'<g class="streamlit-score-line-series" style="--score-series-color:{escape(str(row["color"]))}">'
-            f'<polyline points="{coordinates}"></polyline>{marker}</g>'
+            f'{"".join(pieces)}{end_label}</g>'
         )
-        latest = row["points"][-1]
         legend.append(
             f'<span class="streamlit-score-line-legend-item" style="--score-series-color:{escape(str(row["color"]))}">'
             f'<i></i>{escape(str(row["ticker"]))} {format_score_summary_value(float(latest["value"]))}</span>'
         )
-    first_date = dates[0]
-    last_date = dates[-1]
-    date_range = first_date if first_date == last_date else f"{first_date} - {last_date}"
+    axis_meta = score_chart_axis_meta(axis_items, axis)
     return (
         '<section class="streamlit-score-line-panel">'
         '<div class="streamlit-score-line-header">'
         f"<h4>{escape(metric_label)} Trend</h4>"
-        f"<span>{escape(date_range)}</span>"
+        f"<span>{escape(axis_meta)}</span>"
         "</div>"
         f'<svg class="streamlit-score-line-chart" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(metric_label)} trend for visible tickers">'
         f"<title>{escape(metric_label)} trend for visible tickers</title>"
-        f"{grid}{''.join(series_markup)}</svg>"
+        f"{grid}{x_axis}{''.join(series_markup)}</svg>"
         f'<div class="streamlit-score-line-legend">{"".join(legend)}</div>'
         "</section>"
     )
 
 
-def score_trend_cards_html(rows: list[ScoreHistoryTicker], score_metric: ScoreMetricName) -> str:
+def score_is_intraday_axis(axis: ScoreHistoryAxis | None) -> bool:
+    """Return whether score analytics should use the intraday bucket axis."""
+    return bool(axis and axis.mode == "intraday" and axis.buckets)
+
+
+def score_axis_items(
+    rows: list[ScoreHistoryTicker],
+    metric: str,
+    axis: ScoreHistoryAxis | None = None,
+) -> list[dict[str, str]]:
+    """Return ordered axis keys/labels for score charts."""
+    if score_is_intraday_axis(axis):
+        return [
+            {"key": bucket.key, "label": bucket.label, "status": bucket.status}
+            for bucket in axis.buckets
+        ]
+    dates = sorted(
+        {
+            point.date.isoformat()
+            for row in rows
+            for point in row.points
+            if score_point_metric_value(point, metric) is not None
+        }
+    )
+    return [{"key": day, "label": day, "status": "past"} for day in dates]
+
+
+def score_display_points(
+    row: ScoreHistoryTicker,
+    axis: ScoreHistoryAxis | None = None,
+) -> list[dict[str, Any]]:
+    """Expand row points across the active axis, preserving intraday gaps."""
+    if not score_is_intraday_axis(axis):
+        return [
+            {"axis_key": point.date.isoformat(), "axis_label": point.date.isoformat(), "point": point}
+            for point in row.points
+        ]
+    point_by_bucket = {point.bucket: point for point in row.points if point.bucket}
+    return [
+        {
+            "axis_key": bucket.key,
+            "axis_label": bucket.label,
+            "bucket_status": bucket.status,
+            "point": point_by_bucket.get(bucket.key),
+        }
+        for bucket in axis.buckets
+    ]
+
+
+def score_svg_segment_markup(segment: list[dict[str, Any]], x_for_index: Any, y_for_value: Any) -> str:
+    """Return SVG line/circle markup for one contiguous score segment."""
+    if len(segment) == 1:
+        point = segment[0]
+        return (
+            f'<circle cx="{x_for_index(int(point["index"])):.2f}" '
+            f'cy="{y_for_value(float(point["value"])):.2f}" r="4"></circle>'
+        )
+    coordinates = " ".join(
+        f'{x_for_index(int(point["index"])):.2f},{y_for_value(float(point["value"])):.2f}'
+        for point in segment
+    )
+    return f'<polyline points="{coordinates}"></polyline>'
+
+
+def score_axis_tick_indexes(axis_items: list[dict[str, str]], axis: ScoreHistoryAxis | None = None) -> list[int]:
+    """Return readable x-axis tick indexes for score charts."""
+    count = len(axis_items)
+    if count <= 1:
+        return [0] if count else []
+    if score_is_intraday_axis(axis):
+        return [index for index in range(count) if index % 2 == 0 or index == count - 1]
+    if count <= 6:
+        return list(range(count))
+    return sorted({0, (count - 1) // 2, count - 1})
+
+
+def score_chart_axis_meta(axis_items: list[dict[str, str]], axis: ScoreHistoryAxis | None = None) -> str:
+    """Return compact axis metadata text."""
+    if score_is_intraday_axis(axis):
+        start = format_score_session_time(axis.session_start or "09:30")
+        end = format_score_session_time(axis.session_end or "16:00")
+        bucket_minutes = axis.bucket_minutes or 30
+        return f"{start} - {end} {score_timezone_label(axis.timezone)} · {bucket_minutes}m buckets"
+    first = axis_items[0]["label"] if axis_items else ""
+    last = axis_items[-1]["label"] if axis_items else ""
+    return first if first == last else f"{first} - {last}"
+
+
+def format_score_session_time(value: str) -> str:
+    """Format HH:MM session times as readable market time."""
+    try:
+        hour_text, minute_text = value.split(":", maxsplit=1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except ValueError:
+        return value
+    suffix = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minute:02d} {suffix}"
+
+
+def score_timezone_label(value: str | None) -> str:
+    """Return compact timezone text for score axes."""
+    return "ET" if value == "America/New_York" else value or ""
+
+
+def score_trend_cards_html(
+    rows: list[ScoreHistoryTicker],
+    score_metric: ScoreMetricName,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
     """Return per-ticker score trend card markup."""
-    cards = "".join(score_trend_card_html(row, score_metric) for row in rows)
+    cards = "".join(score_trend_card_html(row, score_metric, axis) for row in rows)
     return f'<div class="streamlit-score-trend-grid">{cards}</div>'
 
 
-def score_trend_card_html(row: ScoreHistoryTicker, score_metric: ScoreMetricName) -> str:
+def score_trend_card_html(
+    row: ScoreHistoryTicker,
+    score_metric: ScoreMetricName,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
     """Return one ticker score trend card."""
     show_setup = score_metric != "level"
     show_level = score_metric != "setup"
@@ -3731,8 +3941,10 @@ def score_trend_card_html(row: ScoreHistoryTicker, score_metric: ScoreMetricName
     latest = []
     sparklines = []
     if show_setup:
-        latest.append(score_latest_html("Adam Setup", format_setup_score(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d))
-        sparklines.append(score_sparkline_html(row, "setup_score", "Adam setup score"))
+        latest.append(
+            score_latest_html("Adam Setup", format_setup_score(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d, axis)
+        )
+        sparklines.append(score_sparkline_html(row, "setup_score", "Adam setup score", axis))
     if show_level:
         latest.append(
             score_latest_html(
@@ -3740,72 +3952,117 @@ def score_trend_card_html(row: ScoreHistoryTicker, score_metric: ScoreMetricName
                 format_level_score(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count),
                 row.level_normalized_delta_1d,
                 row.level_normalized_delta_5d,
+                axis,
             )
         )
-        sparklines.append(score_sparkline_html(row, "level_score_normalized", "Derived level score"))
+        sparklines.append(score_sparkline_html(row, "level_score_normalized", "Derived level score", axis))
     return (
         f'<article class="streamlit-score-card movement-{movement}">'
         "<header>"
         "<div>"
         f"<h4>{escape(row.ticker)}</h4>"
-        f"<span>{len(row.points)} point{'' if len(row.points) == 1 else 's'}</span>"
+        f"<span>{escape(score_trend_point_label(row, axis))}</span>"
         "</div>"
-        f'<span class="streamlit-score-movement {movement}">{escape(score_option_label(movement))}</span>'
         "</header>"
         f'<div class="streamlit-score-latest-grid">{"".join(latest)}</div>'
+        f'<div class="streamlit-score-movement-row">{score_movement_badge_html(row, score_metric, axis)}</div>'
         f"{score_heat_thermometer_html(row)}"
-        f"{score_heat_strip_html(row)}"
+        f"{score_heat_strip_html(row, axis)}"
         f'<div class="streamlit-score-sparkline-grid">{"".join(sparklines)}</div>'
         "</article>"
     )
 
 
-def score_latest_html(label: str, value: str, delta_1d: int | float | None, delta_5d: int | float | None) -> str:
+def score_latest_html(
+    label: str,
+    value: str,
+    delta_1d: int | float | None,
+    delta_5d: int | float | None,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
     """Return latest score/delta markup."""
     return (
         '<div class="streamlit-score-latest">'
         f"<span>{escape(label)}</span>"
         f"<strong>{value}</strong>"
-        f"<small>1D {format_score_delta(delta_1d)} / 5D {format_score_delta(delta_5d)}</small>"
+        f"<small>{score_delta_window_text(delta_1d, delta_5d, axis)}</small>"
         "</div>"
     )
 
 
-def score_sparkline_html(row: ScoreHistoryTicker, field: str, label: str) -> str:
+def score_sparkline_html(
+    row: ScoreHistoryTicker,
+    field: str,
+    label: str,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
     """Return a compact SVG sparkline for one score field."""
+    is_setup = field == "setup_score"
+    max_value = 8 if is_setup else 100
+    scale_label = "0-8" if is_setup else "0-100%"
+    display_points = score_display_points(row, axis)
     series = [
-        (point.date.isoformat(), float(value))
-        for point in row.points
-        for value in [getattr(point, field)]
-        if value is not None
+        {
+            "index": index,
+            "axis_label": str(display_point["axis_label"]),
+            "value": value,
+        }
+        for index, display_point in enumerate(display_points)
+        for point in [display_point["point"]]
+        for value in [numeric_or_none(getattr(point, field, None)) if point is not None else None]
     ]
-    if len(series) < 2:
+    finite_points = [point for point in series if point["value"] is not None]
+    if not finite_points:
         return (
             '<div class="streamlit-score-sparkline-card">'
-            f"<span>{escape(label)}</span>"
+            '<div class="streamlit-score-sparkline-title">'
+            f"<span>{escape(label)}</span><small>{escape(scale_label)}</small>"
+            "</div>"
             '<div class="streamlit-score-sparkline-empty"></div>'
             "</div>"
         )
-    width = 180
-    height = 46
-    min_value = min(value for _, value in series)
-    max_value = max(value for _, value in series)
-    if min_value == max_value:
-        min_value -= 1
-        max_value += 1
-    coordinates = []
-    for index, (_, value) in enumerate(series):
-        x = (index / (len(series) - 1)) * width
-        y = height - ((value - min_value) / (max_value - min_value)) * height
-        coordinates.append(f"{x:.2f},{y:.2f}")
+    width = 220
+    height = 72
+    left = 24
+    right = 6
+    top = 8
+    bottom = 18
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+
+    def x_for_index(index: int) -> float:
+        return left + plot_width / 2 if len(series) == 1 else left + (index / (len(series) - 1)) * plot_width
+
+    def y_for_value(value: float) -> float:
+        return top + ((max_value - clamp_between(value, 0, max_value)) / max_value) * plot_height
+
+    pieces = []
+    segment = []
+    for point in series:
+        if point["value"] is not None:
+            segment.append(point)
+            continue
+        if segment:
+            pieces.append(score_svg_segment_markup(segment, x_for_index, y_for_value))
+            segment = []
+    if segment:
+        pieces.append(score_svg_segment_markup(segment, x_for_index, y_for_value))
+    caption = score_sparkline_caption(finite_points)
     return (
         '<div class="streamlit-score-sparkline-card">'
-        f"<span>{escape(label)}</span>"
+        '<div class="streamlit-score-sparkline-title">'
+        f"<span>{escape(label)}</span><small>{escape(scale_label)}</small>"
+        "</div>"
         f'<svg class="streamlit-score-sparkline" viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="{escape(label)} trend">'
-        f"<title>{escape(label)} trend from {escape(series[0][0])} to {escape(series[-1][0])}</title>"
-        f'<polyline points="{" ".join(coordinates)}"></polyline>'
+        f'<title>{escape(label)} trend from {escape(str(finite_points[0]["axis_label"]))} to {escape(str(finite_points[-1]["axis_label"]))}</title>'
+        f'<line class="streamlit-score-sparkline-grid-line" x1="{left}" y1="{top}" x2="{width - right}" y2="{top}"></line>'
+        f'<line class="streamlit-score-sparkline-grid-line" x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}"></line>'
+        f'<text class="streamlit-score-sparkline-scale" x="2" y="{top + 4}">{max_value}</text>'
+        f'<text class="streamlit-score-sparkline-scale" x="2" y="{height - bottom + 4}">0</text>'
+        f'{"".join(pieces)}'
         "</svg>"
+        f'<small class="streamlit-score-sparkline-caption">{escape(caption)}</small>'
         "</div>"
     )
 
@@ -3829,30 +4086,104 @@ def score_heat_thermometer_html(row: ScoreHistoryTicker) -> str:
     )
 
 
-def score_heat_strip_html(row: ScoreHistoryTicker) -> str:
+def score_heat_strip_html(row: ScoreHistoryTicker, axis: ScoreHistoryAxis | None = None) -> str:
     """Return daily hot/cold heat strip markup."""
-    points = [point for point in row.points if point.date]
+    points = score_display_points(row, axis)
+    label = "Trading Day Derived Heat" if score_is_intraday_axis(axis) else "Daily Derived Heat History"
     if not points:
         return (
             '<div class="streamlit-score-heat-strip-card">'
-            "<span>Daily Derived Heat</span>"
+            f"<span>{escape(label)}</span>"
             '<div class="streamlit-score-heat-strip empty"></div>'
             "</div>"
         )
+    first_label = str(points[0]["axis_label"]) if points else ""
+    last_label = str(points[-1]["axis_label"]) if points else ""
     cells = []
-    for point in points:
-        heat = score_point_heat(point)
+    for display_point in points:
+        point = display_point["point"]
+        heat = score_point_heat(point) if point is not None else None
         band_id, band_label = heat_band(heat)
-        title = f"{point.date.isoformat()}: {format_heat_score(heat)} {band_label}"
+        status = str(display_point.get("bucket_status") or "past")
+        axis_label = str(display_point["axis_label"])
+        empty_reason = "Not happened yet" if status == "future" else "No score snapshot"
+        title = f"{axis_label}: {format_heat_score(heat)} {band_label}" if heat is not None else f"{axis_label}: {empty_reason}"
+        state = "filled" if heat is not None else "empty"
         cells.append(
-            f'<i class="streamlit-heat-{band_id}" title="{escape(title)}" aria-label="{escape(title)}"></i>'
+            f'<i class="streamlit-heat-{band_id} status-{escape(status)} {state}" title="{escape(title)}" aria-label="{escape(title)}"></i>'
         )
     return (
         '<div class="streamlit-score-heat-strip-card">'
-        "<span>Daily Derived Heat</span>"
+        f"<span>{escape(label)}</span>"
         f'<div class="streamlit-score-heat-strip">{"".join(cells)}</div>'
+        f'<div class="streamlit-score-heat-strip-axis"><span>{escape(first_label)}</span><span>{escape(last_label)}</span></div>'
         "</div>"
     )
+
+
+def score_trend_point_label(row: ScoreHistoryTicker, axis: ScoreHistoryAxis | None = None) -> str:
+    """Return the score card point-count label."""
+    count = len(row.points)
+    if score_is_intraday_axis(axis):
+        return f"{count} observed bucket{'' if count == 1 else 's'}"
+    return f"{count} point{'' if count == 1 else 's'}"
+
+
+def score_movement_badge_html(
+    row: ScoreHistoryTicker,
+    score_metric: ScoreMetricName,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
+    """Return explicit movement badge markup."""
+    movement = score_movement(row, score_metric)
+    amount = score_movement_amount(row, score_metric)
+    metric = score_movement_metric_label(score_metric)
+    delta = f" {format_score_delta_text(amount)}" if amount is not None else ""
+    text = f"{score_option_label(movement)}{delta} {metric}, compared with {score_movement_window_label(axis).lower()}"
+    return f'<span class="streamlit-score-movement {movement}" title="{escape(text)}">{escape(text)}</span>'
+
+
+def score_movement_metric_label(score_metric: ScoreMetricName) -> str:
+    """Return the metric used by movement calculations."""
+    if score_metric == "setup":
+        return "setup"
+    if score_metric == "level":
+        return "level"
+    return "heat"
+
+
+def score_movement_window_label(axis: ScoreHistoryAxis | None = None) -> str:
+    """Return movement comparison window text."""
+    return "Prior bucket" if score_is_intraday_axis(axis) else "Prior day"
+
+
+def score_delta_window_text(
+    delta_1d: int | float | None,
+    delta_5d: int | float | None,
+    axis: ScoreHistoryAxis | None = None,
+) -> str:
+    """Return latest delta text for daily or intraday score cards."""
+    if score_is_intraday_axis(axis):
+        return f"Prev bucket {format_score_delta(delta_1d)} / 5 buckets {format_score_delta(delta_5d)}"
+    return f"1D {format_score_delta(delta_1d)} / 5D {format_score_delta(delta_5d)}"
+
+
+def format_score_delta_text(value: int | float | None) -> str:
+    """Return plain signed score delta text."""
+    if value is None:
+        return ""
+    number = float(value)
+    formatted = f"{number:.1f}".removesuffix(".0")
+    return f"+{formatted}" if number > 0 else formatted
+
+
+def score_sparkline_caption(points: list[dict[str, Any]]) -> str:
+    """Return first/latest label text for a score sparkline."""
+    if not points:
+        return ""
+    first = str(points[0]["axis_label"])
+    last = str(points[-1]["axis_label"])
+    return first if first == last else f"{first} - {last}"
 
 
 def score_point_metric_value(point: ScoreHistoryPoint, metric: str) -> float | None:
@@ -3921,6 +4252,11 @@ def clamp_percent(value: float | None) -> float:
     if value is None:
         return 0.0
     return max(0.0, min(100.0, float(value)))
+
+
+def clamp_between(value: float, minimum: float, maximum: float) -> float:
+    """Clamp a value to an inclusive numeric range."""
+    return max(minimum, min(maximum, float(value)))
 
 
 def heat_band(value: float | None) -> tuple[str, str]:

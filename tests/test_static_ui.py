@@ -123,12 +123,21 @@ def test_static_score_analytics_renders_heat_views():
     js = Path("app/static/app.js").read_text(encoding="utf-8")
     css = Path("app/static/styles.css").read_text(encoding="utf-8")
 
+    assert 'const SCORE_ANALYTICS_RANGES = ["1D", "7D", "30D", "90D", "1Y", "All"];' in js
+    assert 'range: "1D"' in js
     assert 'const SCORE_ANALYTICS_CHART_METRICS = ["heat", "setup", "level"];' in js
     assert 'renderScoreSelect("Chart", "chartMetric"' in js
     assert "function renderScoreLineChart(rows)" in js
+    assert "function scoreAxisItems(rows, metric)" in js
+    assert "function scoreDisplayPoints(row)" in js
+    assert "function renderScoreMovementBadge(row)" in js
     assert "function renderScoreHeatThermometer(row)" in js
     assert "function renderScoreHeatStrip(row)" in js
     assert "function heatScore(setupScore, levelScoreNormalized)" in js
     assert ".score-line-panel" in css
+    assert ".score-line-x-axis" in css
+    assert ".score-line-end-label" in css
     assert ".score-thermometer" in css
     assert ".score-heat-strip" in css
+    assert ".score-heat-strip i.empty" in css
+    assert ".score-sparkline-scale" in css
