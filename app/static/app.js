@@ -2862,7 +2862,7 @@ function renderScoreAnalyticsControls() {
     <div class="score-analytics-header">
       <div>
         <h3>Score Analytics</h3>
-        <p>Daily setup and weighted level score trends for the visible tickers.</p>
+        <p>Adam setup scores with derived level and heat trends for the visible tickers.</p>
       </div>
       <div class="score-toolbar" aria-label="Score analytics controls">
         ${renderScoreSelect("Range", "range", scoreAnalyticsSettings.range, SCORE_ANALYTICS_RANGES, scoreOptionLabel)}
@@ -2894,10 +2894,10 @@ function scoreOptionLabel(option) {
     "90D": "90D",
     "1Y": "1Y",
     All: "All",
-    setup: "Setup",
-    level: "Level",
+    setup: "Adam Setup",
+    level: "Derived Level",
     both: "Both",
-    heat: "Heat",
+    heat: "Derived Heat",
     all: "All",
     scanner: "Scanner",
     weight_20: "Weight 20+",
@@ -2968,9 +2968,9 @@ function renderScoreSummary(rows) {
   return `
     <div class="score-summary-strip">
       ${renderScoreSummaryTile("Tracked", rows.filter((row) => row.points?.length).length, `${rows.length} visible`)}
-      ${renderScoreSummaryTile("Avg Heat", averageValue(heatValues), "hot/cold")}
-      ${renderScoreSummaryTile("Avg Setup", averageValue(setupValues), "0-8")}
-      ${renderScoreSummaryTile("Avg Level", averageValue(levelValues), "normalized")}
+      ${renderScoreSummaryTile("Avg Derived Heat", averageValue(heatValues), "hot/cold")}
+      ${renderScoreSummaryTile("Avg Adam Setup", averageValue(setupValues), "0-8")}
+      ${renderScoreSummaryTile("Avg Derived Level", averageValue(levelValues), "normalized")}
       ${renderScoreSummaryTile("Improving", improving, "1D")}
       ${renderScoreSummaryTile("Declining", declining, "1D")}
       ${renderScoreSummaryTile("Flat/New", flat, "1D")}
@@ -3094,14 +3094,14 @@ function renderScoreTrendCard(row) {
         <span class="score-movement ${movement}">${escapeHtml(scoreOptionLabel(movement))}</span>
       </header>
       <div class="score-latest-grid">
-        ${showSetup ? renderScoreLatest("Setup", formatSetupScore(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d) : ""}
-        ${showLevel ? renderScoreLatest("Level", formatLevelScore(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count), row.level_normalized_delta_1d, row.level_normalized_delta_5d) : ""}
+        ${showSetup ? renderScoreLatest("Adam Setup", formatSetupScore(row.latest_setup_score), row.setup_delta_1d, row.setup_delta_5d) : ""}
+        ${showLevel ? renderScoreLatest("Derived Level", formatLevelScore(row.latest_level_score, row.latest_level_score_normalized, row.latest_level_count), row.level_normalized_delta_1d, row.level_normalized_delta_5d) : ""}
       </div>
       ${renderScoreHeatThermometer(row)}
       ${renderScoreHeatStrip(row)}
       <div class="score-sparkline-grid">
-        ${showSetup ? renderScoreSparkline(row.points || [], "setup_score", "Setup score") : ""}
-        ${showLevel ? renderScoreSparkline(row.points || [], "level_score_normalized", "Level score") : ""}
+        ${showSetup ? renderScoreSparkline(row.points || [], "setup_score", "Adam setup score") : ""}
+        ${showLevel ? renderScoreSparkline(row.points || [], "level_score_normalized", "Derived level score") : ""}
       </div>
     </article>
   `;
@@ -3160,10 +3160,10 @@ function renderScoreHeatThermometer(row) {
   return `
     <div class="score-thermometer heat-${band.id}">
       <div>
-        <span>Heat</span>
+        <span>Derived Heat</span>
         <strong>${formatHeatScore(heat)}</strong>
       </div>
-      <div class="score-thermometer-track" aria-label="Heat score ${escapeHtml(formatHeatScore(heat))}">
+      <div class="score-thermometer-track" aria-label="Derived heat score ${escapeHtml(formatHeatScore(heat))}">
         <span style="width:${width.toFixed(1)}%"></span>
       </div>
       <small>${escapeHtml(band.label)}</small>
@@ -3176,14 +3176,14 @@ function renderScoreHeatStrip(row) {
   if (!points.length) {
     return `
       <div class="score-heat-strip-card">
-        <span>Daily Heat</span>
+        <span>Daily Derived Heat</span>
         <div class="score-heat-strip empty"></div>
       </div>
     `;
   }
   return `
     <div class="score-heat-strip-card">
-      <span>Daily Heat</span>
+      <span>Daily Derived Heat</span>
       <div class="score-heat-strip">
         ${points.map((point) => {
           const heat = scorePointHeat(point);

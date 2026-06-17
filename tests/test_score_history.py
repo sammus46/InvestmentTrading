@@ -83,6 +83,13 @@ def test_heat_score_reweights_available_components():
     assert ScoreHistoryService.heat_score(None, None) is None
 
 
+def test_heat_score_stays_derived_from_setup_and_level_scores():
+    setup_score = 2
+    level_score_normalized = 31.1
+
+    assert ScoreHistoryService.heat_score(setup_score, level_score_normalized) == 27.4
+
+
 def test_score_history_merges_same_day_records(tmp_path):
     service = ScoreHistoryService(
         tmp_path / "score_history.json",
