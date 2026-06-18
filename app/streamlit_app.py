@@ -108,6 +108,12 @@ SCORE_ANALYTICS_METRICS: tuple[ScoreMetricName, ...] = ("setup", "level", "both"
 SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")
 SCORE_ANALYTICS_MOVEMENTS = ("all", "improving", "declining", "flat")
 SCORE_ANALYTICS_SORTS = ("watchlist", "setup", "level", "gain", "drop")
+SCORE_RANGE_WIDGET_KEY = "_score_range_widget"
+SCORE_METRIC_WIDGET_KEY = "_score_metric_widget"
+SCORE_CHART_METRIC_WIDGET_KEY = "_score_chart_metric_widget"
+SCORE_LEVEL_BASIS_WIDGET_KEY = "_score_level_basis_widget"
+SCORE_MOVEMENT_WIDGET_KEY = "_score_movement_widget"
+SCORE_SORT_WIDGET_KEY = "_score_sort_widget"
 SCORE_OPTION_LABELS = {
     "1D": "1D",
     "7D": "7D",
@@ -3498,23 +3504,39 @@ def render_chart_history(
 
 def sync_score_level_basis_to_level_filter() -> None:
     """Keep the score level-basis selector aligned with the report level filter."""
-    st.session_state.level_filter = normalize_level_filter(st.session_state.get("score_level_basis", DEFAULT_LEVEL_FILTER))
+    st.session_state.score_level_basis = normalize_level_filter(
+        st.session_state.get(SCORE_LEVEL_BASIS_WIDGET_KEY, DEFAULT_LEVEL_FILTER)
+    )
+    st.session_state.level_filter = st.session_state.score_level_basis
     persist_session_settings()
 
 
 def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricName, LevelScoreBasisName, str, str, str]:
     """Render Score Analytics controls and return normalized values."""
     level_filter = normalize_level_filter(st.session_state.get("level_filter", DEFAULT_LEVEL_FILTER))
-    st.session_state.score_range = normalize_score_history_range(
+    score_range_default = normalize_score_history_range(
         st.session_state.get("score_range", SCORE_ANALYTICS_DEFAULT_RANGE)
     )
-    st.session_state.score_metric = normalize_score_metric(st.session_state.get("score_metric", "both"))
-    st.session_state.score_chart_metric = normalize_score_chart_metric(st.session_state.get("score_chart_metric", "heat"))
-    st.session_state.score_level_basis = normalize_level_filter(st.session_state.get("score_level_basis", level_filter))
-    st.session_state.score_movement = normalize_score_movement(st.session_state.get("score_movement", "all"))
-    st.session_state.score_sort = normalize_score_sort(st.session_state.get("score_sort", "watchlist"))
-    if st.session_state.score_level_basis != level_filter:
-        st.session_state.score_level_basis = level_filter
+    score_metric_default = normalize_score_metric(st.session_state.get("score_metric", "both"))
+    chart_metric_default = normalize_score_chart_metric(st.session_state.get("score_chart_metric", "heat"))
+    level_basis_default = normalize_level_filter(st.session_state.get("score_level_basis", level_filter))
+    movement_default = normalize_score_movement(st.session_state.get("score_movement", "all"))
+    sort_default = normalize_score_sort(st.session_state.get("score_sort", "watchlist"))
+    if level_basis_default != level_filter:
+        level_basis_default = level_filter
+
+    st.session_state.score_range = score_range_default
+    st.session_state.score_metric = score_metric_default
+    st.session_state.score_chart_metric = chart_metric_default
+    st.session_state.score_level_basis = level_basis_default
+    st.session_state.score_movement = movement_default
+    st.session_state.score_sort = sort_default
+    st.session_state.setdefault(SCORE_RANGE_WIDGET_KEY, score_range_default)
+    st.session_state.setdefault(SCORE_METRIC_WIDGET_KEY, score_metric_default)
+    st.session_state.setdefault(SCORE_CHART_METRIC_WIDGET_KEY, chart_metric_default)
+    st.session_state.setdefault(SCORE_LEVEL_BASIS_WIDGET_KEY, level_basis_default)
+    st.session_state.setdefault(SCORE_MOVEMENT_WIDGET_KEY, movement_default)
+    st.session_state.setdefault(SCORE_SORT_WIDGET_KEY, sort_default)
 
     range_col, metric_col, chart_col, basis_col, movement_col, sort_col = st.columns(
         [0.7, 0.78, 0.78, 0.88, 0.92, 1.08],
@@ -3524,28 +3546,28 @@ def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricNam
         score_range = st.selectbox(
             "Range",
             SCORE_ANALYTICS_RANGES,
-            key="score_range",
+            key=SCORE_RANGE_WIDGET_KEY,
             format_func=score_option_label,
         )
     with metric_col:
         score_metric = st.selectbox(
             "Metric",
             SCORE_ANALYTICS_METRICS,
-            key="score_metric",
+            key=SCORE_METRIC_WIDGET_KEY,
             format_func=score_option_label,
         )
     with chart_col:
         chart_metric = st.selectbox(
             "Chart metric",
             SCORE_ANALYTICS_CHART_METRICS,
-            key="score_chart_metric",
+            key=SCORE_CHART_METRIC_WIDGET_KEY,
             format_func=score_option_label,
         )
     with basis_col:
         level_basis = st.selectbox(
             "Level basis",
             LEVEL_FILTER_OPTIONS,
-            key="score_level_basis",
+            key=SCORE_LEVEL_BASIS_WIDGET_KEY,
             format_func=score_option_label,
             on_change=sync_score_level_basis_to_level_filter,
         )
@@ -3553,23 +3575,29 @@ def render_score_analytics_controls() -> tuple[ScoreHistoryRange, ScoreMetricNam
         movement = st.selectbox(
             "Movement",
             SCORE_ANALYTICS_MOVEMENTS,
-            key="score_movement",
+            key=SCORE_MOVEMENT_WIDGET_KEY,
             format_func=score_option_label,
         )
     with sort_col:
         sort = st.selectbox(
             "Sort",
             SCORE_ANALYTICS_SORTS,
-            key="score_sort",
+            key=SCORE_SORT_WIDGET_KEY,
             format_func=score_option_label,
         )
+    st.session_state.score_range = normalize_score_history_range(score_range)
+    st.session_state.score_metric = normalize_score_metric(score_metric)
+    st.session_state.score_chart_metric = normalize_score_chart_metric(chart_metric)
+    st.session_state.score_level_basis = normalize_level_filter(level_basis)
+    st.session_state.score_movement = normalize_score_movement(movement)
+    st.session_state.score_sort = normalize_score_sort(sort)
     return (
-        normalize_score_history_range(score_range),
-        normalize_score_metric(score_metric),
-        normalize_level_filter(level_basis),
-        normalize_score_movement(movement),
-        normalize_score_sort(sort),
-        normalize_score_chart_metric(chart_metric),
+        st.session_state.score_range,
+        st.session_state.score_metric,
+        st.session_state.score_level_basis,
+        st.session_state.score_movement,
+        st.session_state.score_sort,
+        st.session_state.score_chart_metric,
     )
 
 
