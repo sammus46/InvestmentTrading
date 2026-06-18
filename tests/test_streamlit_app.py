@@ -807,7 +807,15 @@ def test_streamlit_score_analytics_includes_chart_metric_control():
     assert "supported_score_history_ranges()" in source
     assert 'SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")' in source
     assert '"Chart metric"' in source
-    assert "score_line_chart_html(rows, chart_metric, response.axis)" in source
+    assert "score_line_chart_html(rows, chart_metric, axis)" in source
+
+
+def test_streamlit_score_response_axis_handles_legacy_response_without_axis():
+    axis = ScoreHistoryAxis(mode="intraday", bucket_minutes=30)
+
+    assert streamlit_app_module.score_response_axis(SimpleNamespace()) is None
+    assert streamlit_app_module.score_response_axis(SimpleNamespace(axis=axis)) == axis
+    assert streamlit_app_module.score_response_axis(SimpleNamespace(axis={"mode": "daily"})).mode == "daily"
 
 
 def test_streamlit_score_ranges_degrade_for_stale_runtime_model():

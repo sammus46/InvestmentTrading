@@ -3675,9 +3675,10 @@ def render_score_analytics(
             st.info("No score history matches the current filters.")
             return
 
-        st.markdown(score_summary_html(rows, score_metric, response.axis), unsafe_allow_html=True)
-        st.markdown(score_line_chart_html(rows, chart_metric, response.axis), unsafe_allow_html=True)
-        st.markdown(score_trend_cards_html(rows, score_metric, response.axis), unsafe_allow_html=True)
+        axis = score_response_axis(response)
+        st.markdown(score_summary_html(rows, score_metric, axis), unsafe_allow_html=True)
+        st.markdown(score_line_chart_html(rows, chart_metric, axis), unsafe_allow_html=True)
+        st.markdown(score_trend_cards_html(rows, score_metric, axis), unsafe_allow_html=True)
 
 
 def score_history_warnings(response: ScoreHistoryResponse) -> list[str]:
@@ -3691,6 +3692,19 @@ def score_history_warnings(response: ScoreHistoryResponse) -> list[str]:
         *[warning for row in response.tickers for warning in (row.warnings or [])],
     ]
     return list(dict.fromkeys(str(warning) for warning in warnings if warning))
+
+
+def score_response_axis(response: object) -> ScoreHistoryAxis | None:
+    """Return optional score-history axis metadata from current or legacy responses."""
+    axis = getattr(response, "axis", None)
+    if axis is None:
+        return None
+    if isinstance(axis, ScoreHistoryAxis):
+        return axis
+    try:
+        return ScoreHistoryAxis.model_validate(axis)
+    except Exception:
+        return None
 
 
 def filter_score_rows(
