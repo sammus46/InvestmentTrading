@@ -8,6 +8,7 @@ const ACTIVE_VIEW_STORAGE_KEY = "equity-levels-active-view";
 const CHART_SETTINGS_STORAGE_KEY = "equity-levels-chart-settings";
 const REPORT_LAYOUT_STORAGE_KEY = "equity-levels-report-layout";
 const SETTINGS_STORAGE_KEY = "investment-trading-settings-v1";
+const SECTOR_ANALYTICS_SETTINGS_STORAGE_KEY = "sector-analytics-settings-v1";
 const NEWS_COLLAPSED_HEADLINE_COUNT = 5;
 const NEWS_EXPANDED_HEADLINE_COUNT = 10;
 const NEWS_MAX_HEADLINE_COUNT = 20;
@@ -38,6 +39,17 @@ const DEFAULT_SCORE_ANALYTICS_SETTINGS = {
   chartMetric: "heat",
   movement: "all",
   sort: "watchlist",
+};
+const SECTOR_TREND_RANGES = ["1D", "5D", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"];
+const SECTOR_VISUAL_METRICS = ["relative", "performance", "setup", "pattern"];
+const SECTOR_SORTS = ["weight", "trend", "relative", "setup"];
+const SECTOR_PANEL_VIEWS = ["overview", "trends", "patterns", "details"];
+const DEFAULT_SECTOR_ANALYTICS_SETTINGS = {
+  range: "3M",
+  interval: "1d",
+  metric: "relative",
+  sort: "weight",
+  view: "overview",
 };
 const LEVEL_WEIGHT_MIN = 0;
 const LEVEL_WEIGHT_MAX = 50;
@@ -84,6 +96,7 @@ const DEFAULT_SETTINGS = {
   scannerView: "auto",
   newsPerTicker: NEWS_EXPANDED_HEADLINE_COUNT,
   scoreAnalytics: DEFAULT_SCORE_ANALYTICS_SETTINGS,
+  sectorAnalytics: DEFAULT_SECTOR_ANALYTICS_SETTINGS,
 };
 const LEVEL_FILTERS = [
   { id: "all", label: "All Levels", shortLabel: "All" },
@@ -251,6 +264,7 @@ let chartSettings = loadStoredChartSettings();
 let reportLayout = loadStoredReportLayout();
 let levelFilter = appSettings.levelFilter;
 let scoreAnalyticsSettings = appSettings.scoreAnalytics;
+let sectorAnalyticsSettings = loadStoredSectorAnalyticsSettings();
 let lastAppliedReportSearchSignature = "";
 let watchlistRefreshTimer = null;
 let autoRefreshTimer = null;
@@ -421,6 +435,18 @@ refreshAnalyticsButton.addEventListener("click", async () => {
   await loadSectorAnalytics();
 });
 
+viewPanels.analytics?.addEventListener("change", (event) => {
+  const control = event.target.closest("[data-sector-setting]");
+  if (!control) return;
+  updateSectorAnalyticsSetting(control.dataset.sectorSetting, control.value);
+});
+
+viewPanels.analytics?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-sector-view]");
+  if (!button) return;
+  updateSectorAnalyticsSetting("view", button.dataset.sectorView);
+});
+
 watchlistNewsEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-news-toggle]");
   if (!button || !currentNews) return;
@@ -541,6 +567,7 @@ async function initializeApp() {
   appSettings = normalizeSettings(appSettings);
   chartSettings = appSettings.chartSettings;
   scoreAnalyticsSettings = appSettings.scoreAnalytics;
+  sectorAnalyticsSettings = loadStoredSectorAnalyticsSettings(appSettings.sectorAnalytics);
   reportLayout = appSettings.reportLayout;
   levelFilter = appSettings.levelFilter;
   persistSettings();
@@ -775,6 +802,7 @@ function normalizeSettings(candidate = {}) {
     scannerView: normalizeScannerView(candidate.scannerView),
     newsPerTicker: normalizeNewsCount(candidate.newsPerTicker),
     scoreAnalytics: normalizeScoreAnalyticsSettings(candidate.scoreAnalytics),
+    sectorAnalytics: normalizeSectorAnalyticsSettings(candidate.sectorAnalytics),
   };
 }
 
@@ -819,6 +847,61 @@ function normalizeScoreAnalyticsSettings(candidate = {}) {
       : DEFAULT_SCORE_ANALYTICS_SETTINGS.movement,
     sort: SCORE_ANALYTICS_SORTS.includes(source.sort) ? source.sort : DEFAULT_SCORE_ANALYTICS_SETTINGS.sort,
   };
+}
+
+function loadStoredSectorAnalyticsSettings(fallback = {}) {
+  let stored = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(SECTOR_ANALYTICS_SETTINGS_STORAGE_KEY)) || {};
+  } catch (_) {
+    stored = {};
+  }
+  return normalizeSectorAnalyticsSettings({
+    ...fallback,
+    ...stored,
+  });
+}
+
+function normalizeSectorAnalyticsSettings(candidate = {}) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  const range = SECTOR_TREND_RANGES.includes(source.range) && RANGE_INTERVALS[source.range]
+    ? source.range
+    : DEFAULT_SECTOR_ANALYTICS_SETTINGS.range;
+  const intervals = RANGE_INTERVALS[range] || [];
+  const interval = intervals.includes(source.interval) ? source.interval : defaultSectorInterval(range);
+  return {
+    range,
+    interval,
+    metric: SECTOR_VISUAL_METRICS.includes(source.metric) ? source.metric : DEFAULT_SECTOR_ANALYTICS_SETTINGS.metric,
+    sort: SECTOR_SORTS.includes(source.sort) ? source.sort : DEFAULT_SECTOR_ANALYTICS_SETTINGS.sort,
+    view: SECTOR_PANEL_VIEWS.includes(source.view) ? source.view : DEFAULT_SECTOR_ANALYTICS_SETTINGS.view,
+  };
+}
+
+function defaultSectorInterval(range) {
+  const intervals = RANGE_INTERVALS[range] || [];
+  if (intervals.includes("1d")) return "1d";
+  if (intervals.includes("1wk")) return "1wk";
+  return RANGE_DEFAULT_INTERVAL[range] || intervals[0] || DEFAULT_SECTOR_ANALYTICS_SETTINGS.interval;
+}
+
+function updateSectorAnalyticsSetting(key, value) {
+  sectorAnalyticsSettings = normalizeSectorAnalyticsSettings({
+    ...sectorAnalyticsSettings,
+    [key]: value,
+  });
+  persistSectorAnalyticsSettings();
+  if (currentAnalytics) {
+    renderSectorAnalytics(currentAnalytics);
+  }
+  if (["range", "interval"].includes(key)) {
+    loadSectorAnalytics();
+  }
+}
+
+function persistSectorAnalyticsSettings() {
+  updateSettings({ sectorAnalytics: sectorAnalyticsSettings });
+  localStorage.setItem(SECTOR_ANALYTICS_SETTINGS_STORAGE_KEY, JSON.stringify(sectorAnalyticsSettings));
 }
 
 function normalizeWeightDefaults(candidate = {}) {
@@ -1160,6 +1243,7 @@ function filterCurrentDataToWatchlist() {
       .filter((row) => row.tickers.length);
     currentAnalytics.pattern_summary = (currentAnalytics.pattern_summary || []).filter((row) => watchlistTickers.includes(row.ticker));
     currentAnalytics.pattern_heatmap = (currentAnalytics.pattern_heatmap || []).filter((row) => watchlistTickers.includes(row.ticker));
+    currentAnalytics.theme_heatmap = buildThemeHeatmapRows(currentAnalytics.pattern_heatmap || []);
     currentAnalytics.pattern_details = (currentAnalytics.pattern_details || []).filter((row) => watchlistTickers.includes(row.ticker));
     currentAnalytics.recommendations = (currentAnalytics.recommendations || [])
       .map((item) => ({ ...item, tickers: (item.tickers || []).filter((ticker) => watchlistTickers.includes(ticker)) }))
@@ -1262,6 +1346,8 @@ function buildSectorAnalyticsPayload() {
   return {
     tickers: [...watchlistTickers],
     pattern_lookback_days: 30,
+    trend_range: sectorAnalyticsSettings.range,
+    trend_interval: sectorAnalyticsSettings.interval,
   };
 }
 
@@ -1965,29 +2051,34 @@ function renderScannerDataNotes(notes) {
 function renderSectorAnalytics(analytics) {
   currentAnalytics = analytics;
   analyticsGeneratedAtEl.textContent = `Analytics refreshed ${new Date(analytics.generated_at).toLocaleString()}`;
-  renderSectorCoverage(analytics.sector_rows || []);
+  const rows = sortedSectorRows(analytics.sector_rows || []);
+  renderSectorCoverage(rows, analytics);
   renderSectorRecommendations(analytics.recommendations || []);
-  renderSectorTrendTable(analytics.sector_rows || []);
+  renderSectorVisuals(analytics, rows);
   renderPatternAnalysis(analytics, analyticsPatternEl);
 }
 
-function renderSectorCoverage(rows) {
+function renderSectorCoverage(rows, analytics) {
   if (!rows.length) {
-    sectorCoverageEl.className = "analytics-grid empty";
+    sectorCoverageEl.className = "sector-dashboard empty";
     sectorCoverageEl.textContent = "No sector coverage was returned.";
     return;
   }
-  sectorCoverageEl.className = "analytics-grid";
-  sectorCoverageEl.innerHTML = rows.map((row) => `
-    <article class="analytics-tile">
-      <div>
-        <h4>${escapeHtml(row.sector || "Other")}</h4>
-        <span>${escapeHtml(row.etf || "No ETF")}</span>
-      </div>
-      <strong>${formatPercent(row.weight_percent)}</strong>
-      <p>${row.ticker_count} ticker${row.ticker_count === 1 ? "" : "s"}: ${(row.tickers || []).map(escapeHtml).join(", ")}</p>
-    </article>
-  `).join("");
+  const strongest = strongestSector(rows);
+  const concentrated = rows.find((row) => Number(row.weight_percent) > 50);
+  sectorCoverageEl.className = "sector-dashboard";
+  sectorCoverageEl.innerHTML = `
+    ${renderSectorToolbar(analytics)}
+    <div class="sector-summary-grid">
+      ${renderSectorSummaryTile("Sectors", rows.length, "Covered groups")}
+      ${renderSectorSummaryTile("Trend Leader", strongest?.sector || "-", strongest ? formatSignedPercent(strongest.trend_rs_vs_spy_percent) : "No trend")}
+      ${renderSectorSummaryTile("Concentration", concentrated?.sector || "Balanced", concentrated ? formatPercent(concentrated.weight_percent) : "No sector over 50%")}
+    </div>
+    <div class="sector-coverage-bars">
+      ${rows.map(renderSectorCoverageBar).join("")}
+    </div>
+    ${renderSectorStrengthMatrix(rows)}
+  `;
 }
 
 function renderSectorRecommendations(items) {
@@ -1996,7 +2087,7 @@ function renderSectorRecommendations(items) {
     sectorRecommendationsEl.textContent = "No sector recommendations were returned.";
     return;
   }
-  sectorRecommendationsEl.className = "recommendation-grid";
+  sectorRecommendationsEl.className = "recommendation-grid sector-insight-grid";
   sectorRecommendationsEl.innerHTML = items.map((item) => `
     <article class="recommendation-card ${escapeHtml(item.tone || "watch")}">
       <span>${escapeHtml(item.tone || "watch")}</span>
@@ -2007,41 +2098,293 @@ function renderSectorRecommendations(items) {
   `).join("");
 }
 
-function renderSectorTrendTable(rows) {
+function renderSectorVisuals(analytics, rows) {
   if (!rows.length) {
     sectorTrendsEl.className = "scanner-empty";
     sectorTrendsEl.textContent = "No sector trends were returned.";
     return;
   }
-  sectorTrendsEl.className = "scanner-table-wrap";
+  const view = sectorAnalyticsSettings.view;
+  sectorTrendsEl.className = `sector-visual-panel view-${escapeHtml(view)}`;
   sectorTrendsEl.innerHTML = `
-    <table class="scanner-table compact">
-      <thead>
-        <tr><th>Sector</th><th>ETF</th><th>Weight</th><th>Tickers</th><th>Avg Day</th><th>ETF Day</th><th>RS vs SPY</th><th>RS vs Sec</th><th>Setup</th><th>Strong</th><th>Pattern</th><th>Avg Dip</th><th>Recovery</th><th>Low Times</th><th>Read</th></tr>
-      </thead>
-      <tbody>
-        ${rows.map((row) => `
-          <tr>
-            <td><strong>${escapeHtml(row.sector || "Other")}</strong></td>
-            <td>${formatScannerText(row.etf)}</td>
-            <td>${formatPercent(row.weight_percent)}</td>
-            <td>${(row.tickers || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
-            <td>${formatSignedPercent(row.average_day_change_percent)}</td>
-            <td>${formatSignedPercent(row.sector_etf_day_change_percent)}</td>
-            <td>${formatSignedPercent(row.average_rs_vs_spy_percent)}</td>
-            <td>${formatSignedPercent(row.average_rs_vs_sector_percent)}</td>
-            <td>${formatValue(row.average_setup_score)}</td>
-            <td>${row.strong_setup_count ?? 0}</td>
-            <td>${formatPercent(row.average_pattern_consistency_percent)}</td>
-            <td>${formatPercent(row.average_dip_percent)}</td>
-            <td>${formatSignedPercent(row.average_recovery_percent)}</td>
-            <td>${(row.common_low_times || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
-            <td>${renderRecommendationTone(row.recommendation_tone)}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
+    ${view !== "details" ? renderSectorRotationPanel(analytics, rows) : ""}
+    ${view !== "patterns" ? renderSectorMacroStrip(analytics.macro_trend_series || []) : ""}
+    ${view === "details" || view === "overview" ? renderSectorDetailTable(rows) : ""}
   `;
+}
+
+function renderSectorToolbar(analytics) {
+  const intervals = RANGE_INTERVALS[sectorAnalyticsSettings.range] || [];
+  return `
+    <div class="sector-dashboard-toolbar" aria-label="Sector analytics controls">
+      ${renderSectorSelect("Range", "range", sectorAnalyticsSettings.range, SECTOR_TREND_RANGES)}
+      ${renderSectorSelect("Interval", "interval", sectorAnalyticsSettings.interval, intervals)}
+      ${renderSectorSelect("Metric", "metric", sectorAnalyticsSettings.metric, SECTOR_VISUAL_METRICS)}
+      ${renderSectorSelect("Sort", "sort", sectorAnalyticsSettings.sort, SECTOR_SORTS)}
+      <div class="sector-view-tabs" role="tablist" aria-label="Sector analytics views">
+        ${SECTOR_PANEL_VIEWS.map((view) => `
+          <button class="${view === sectorAnalyticsSettings.view ? "active" : ""}" type="button" data-sector-view="${escapeHtml(view)}" aria-selected="${view === sectorAnalyticsSettings.view}">
+            ${escapeHtml(formatSectorOption(view))}
+          </button>
+        `).join("")}
+      </div>
+      <span class="sector-refresh-meta">${escapeHtml(formatChartOption(analytics.trend_range || sectorAnalyticsSettings.range))} ${escapeHtml(analytics.trend_interval || sectorAnalyticsSettings.interval)}</span>
+    </div>
+  `;
+}
+
+function renderSectorSelect(label, key, value, options) {
+  return `
+    <label class="sector-select">
+      <span>${escapeHtml(label)}</span>
+      <select data-sector-setting="${escapeHtml(key)}">
+        ${(options || []).map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(formatSectorOption(option))}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function renderSectorSummaryTile(label, value, subtext) {
+  return `
+    <article class="sector-summary-tile">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+      <p>${escapeHtml(String(subtext || ""))}</p>
+    </article>
+  `;
+}
+
+function renderSectorCoverageBar(row) {
+  const width = Math.max(0, Math.min(100, Number(row.weight_percent) || 0));
+  return `
+    <article class="sector-coverage-row">
+      <div>
+        <h4>${escapeHtml(row.sector || "Other")}</h4>
+        <span>${escapeHtml(row.etf || "No ETF")} · ${(row.tickers || []).map(escapeHtml).join(", ")}</span>
+      </div>
+      <strong>${formatPercent(row.weight_percent)}</strong>
+      <div class="sector-weight-track" aria-hidden="true"><i style="width:${width.toFixed(1)}%"></i></div>
+    </article>
+  `;
+}
+
+function renderSectorStrengthMatrix(rows) {
+  const metric = sectorAnalyticsSettings.metric;
+  const points = rows.map((row) => ({
+    row,
+    x: Number(row.trend_rs_vs_spy_percent),
+    y: Number(sectorMetricValue(row, metric)),
+  })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (!points.length) return '<div class="sector-strength-matrix empty">No trend matrix data returned.</div>';
+  const yValues = points.map((point) => point.y);
+  const yMin = Math.min(...yValues, 0);
+  const yMax = Math.max(...yValues, 1);
+  const yRange = yMax === yMin ? 1 : yMax - yMin;
+  return `
+    <div class="sector-strength-matrix" role="img" aria-label="Sector strength matrix">
+      <div class="matrix-axis x"></div>
+      <div class="matrix-axis y"></div>
+      ${points.map(({ row, x, y }) => {
+        const left = Math.max(3, Math.min(97, 50 + x * 3));
+        const bottom = Math.max(5, Math.min(95, ((y - yMin) / yRange) * 86 + 7));
+        return `
+          <span class="matrix-dot tone-${escapeHtml(row.recommendation_tone || "watch")}" style="left:${left.toFixed(1)}%;bottom:${bottom.toFixed(1)}%;" title="${escapeHtml(row.sector)} ${formatSignedPercent(row.trend_rs_vs_spy_percent)}">
+            ${escapeHtml(String(row.sector || "?").slice(0, 3))}
+          </span>
+        `;
+      }).join("")}
+      <span class="matrix-label left">Lagging SPY</span>
+      <span class="matrix-label right">Leading SPY</span>
+      <span class="matrix-label top">${escapeHtml(formatSectorOption(metric))}</span>
+    </div>
+  `;
+}
+
+function renderSectorRotationPanel(analytics, rows) {
+  return `
+    <section class="sector-chart-panel">
+      <div class="section-heading">
+        <h3>Sector Rotation</h3>
+      </div>
+      ${renderTrendLineChart(sectorRotationSeries(analytics, rows), "sector-rotation-chart")}
+    </section>
+  `;
+}
+
+function sectorRotationSeries(analytics, rows) {
+  const sectors = new Set(rows.slice(0, 5).map((row) => row.sector));
+  const selected = (analytics.sector_trend_series || [])
+    .filter((series) => series.kind === "watchlist_sector" && sectors.has(series.sector))
+    .slice(0, 5);
+  return [...selected, ...(analytics.benchmark_trend_series || []).slice(0, 1)];
+}
+
+function renderSectorMacroStrip(series) {
+  if (!series.length) return '<div class="sector-macro-strip empty">No macro trend data returned.</div>';
+  return `
+    <section class="sector-macro-panel">
+      <div class="section-heading">
+        <h3>Macro Context</h3>
+      </div>
+      <div class="sector-macro-strip">
+        ${series.map((item) => `
+          <article class="sector-macro-tile ${Number(item.change_percent) < 0 ? "negative" : "positive"}">
+            <div>
+              <h4>${escapeHtml(item.label || item.symbol)}</h4>
+              <strong>${formatSignedPercent(item.change_percent)}</strong>
+            </div>
+            ${buildTrendSparkline(item.points || [])}
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSectorDetailTable(rows) {
+  return `
+    <details class="sector-detail-table" open>
+      <summary>Sector Detail</summary>
+      <div class="scanner-table-wrap">
+        <table class="scanner-table compact">
+          <thead>
+            <tr><th>Sector</th><th>ETF</th><th>Weight</th><th>Trend</th><th>ETF Trend</th><th>Trend RS</th><th>Up/Down</th><th>Leaders</th><th>Laggards</th><th>Avg Day</th><th>ETF Day</th><th>RS vs SPY</th><th>RS vs Sec</th><th>Setup</th><th>Strong</th><th>Pattern</th><th>Avg Dip</th><th>Recovery</th><th>Low Times</th><th>Read</th></tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td><strong>${escapeHtml(row.sector || "Other")}</strong></td>
+                <td>${formatScannerText(row.etf)}</td>
+                <td>${formatPercent(row.weight_percent)}</td>
+                <td>${formatSignedPercent(row.trend_change_percent)}</td>
+                <td>${formatSignedPercent(row.sector_etf_trend_change_percent)}</td>
+                <td>${formatSignedPercent(row.trend_rs_vs_spy_percent)}</td>
+                <td>${row.up_ticker_count ?? 0}/${row.down_ticker_count ?? 0}</td>
+                <td>${(row.leader_tickers || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
+                <td>${(row.laggard_tickers || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
+                <td>${formatSignedPercent(row.average_day_change_percent)}</td>
+                <td>${formatSignedPercent(row.sector_etf_day_change_percent)}</td>
+                <td>${formatSignedPercent(row.average_rs_vs_spy_percent)}</td>
+                <td>${formatSignedPercent(row.average_rs_vs_sector_percent)}</td>
+                <td>${formatValue(row.average_setup_score)}</td>
+                <td>${row.strong_setup_count ?? 0}</td>
+                <td>${formatPercent(row.average_pattern_consistency_percent)}</td>
+                <td>${formatPercent(row.average_dip_percent)}</td>
+                <td>${formatSignedPercent(row.average_recovery_percent)}</td>
+                <td>${(row.common_low_times || []).map(escapeHtml).join(", ") || "&mdash;"}</td>
+                <td>${renderRecommendationTone(row.recommendation_tone)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
+function renderTrendLineChart(series, cssClass) {
+  const normalized = (series || []).filter((item) => (item.points || []).some((point) => point.change_percent !== null && point.change_percent !== undefined));
+  if (!normalized.length) return '<div class="sector-chart-empty">No trend series returned.</div>';
+  const width = 760;
+  const height = 280;
+  const padding = { top: 18, right: 22, bottom: 32, left: 42 };
+  const allValues = normalized.flatMap((item) => (item.points || []).map((point) => Number(point.change_percent)).filter(Number.isFinite));
+  let minValue = Math.min(...allValues, 0);
+  let maxValue = Math.max(...allValues, 0);
+  if (minValue === maxValue) {
+    minValue -= 1;
+    maxValue += 1;
+  }
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const yFor = (value) => padding.top + (1 - ((value - minValue) / (maxValue - minValue))) * plotHeight;
+  const zeroY = yFor(0);
+  const lines = normalized.map((item, index) => {
+    const points = item.points || [];
+    const finite = points
+      .map((point, pointIndex) => ({ value: Number(point.change_percent), pointIndex }))
+      .filter((point) => Number.isFinite(point.value));
+    const coords = finite.map(({ value, pointIndex }) => {
+      const x = padding.left + (points.length <= 1 ? plotWidth / 2 : (pointIndex / (points.length - 1)) * plotWidth);
+      return `${x.toFixed(2)},${yFor(value).toFixed(2)}`;
+    }).join(" ");
+    const color = SCORE_SERIES_COLORS[index % SCORE_SERIES_COLORS.length];
+    return `<polyline points="${coords}" style="--series-color:${color}"><title>${escapeHtml(item.label)} ${formatSignedPercent(item.change_percent)}</title></polyline>`;
+  }).join("");
+  return `
+    <div class="${escapeHtml(cssClass)}">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Normalized sector trend chart">
+        <line class="zero-line" x1="${padding.left}" x2="${width - padding.right}" y1="${zeroY.toFixed(2)}" y2="${zeroY.toFixed(2)}"></line>
+        ${lines}
+      </svg>
+      <div class="sector-chart-legend">
+        ${normalized.map((item, index) => `<span style="--series-color:${SCORE_SERIES_COLORS[index % SCORE_SERIES_COLORS.length]}">${escapeHtml(item.label)} <strong>${formatSignedPercent(item.change_percent)}</strong></span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function buildTrendSparkline(points) {
+  const values = (points || []).map((point) => Number(point.change_percent)).filter(Number.isFinite);
+  if (!values.length) return '<div class="sparkline empty"></div>';
+  const width = 116;
+  const height = 42;
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  if (minValue === maxValue) {
+    minValue -= 1;
+    maxValue += 1;
+  }
+  const yFor = (value) => height - ((value - minValue) / (maxValue - minValue)) * height;
+  const coords = values.map((value, index) => {
+    const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
+    return `${x.toFixed(2)},${yFor(value).toFixed(2)}`;
+  }).join(" ");
+  const changeClass = values[values.length - 1] < 0 ? "negative" : "positive";
+  return `
+    <svg class="sparkline ${changeClass}" viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">
+      <polyline points="${coords}"></polyline>
+    </svg>
+  `;
+}
+
+function sortedSectorRows(rows) {
+  const sort = sectorAnalyticsSettings.sort;
+  const valueFor = (row) => {
+    if (sort === "trend") return Number(row.trend_change_percent ?? -999);
+    if (sort === "relative") return Number(row.trend_rs_vs_spy_percent ?? -999);
+    if (sort === "setup") return Number(row.average_setup_score ?? -999);
+    return Number(row.weight_percent ?? 0);
+  };
+  return [...rows].sort((left, right) => valueFor(right) - valueFor(left) || String(left.sector).localeCompare(String(right.sector)));
+}
+
+function strongestSector(rows) {
+  return rows.filter((row) => row.trend_rs_vs_spy_percent !== null && row.trend_rs_vs_spy_percent !== undefined)
+    .sort((left, right) => Number(right.trend_rs_vs_spy_percent) - Number(left.trend_rs_vs_spy_percent))[0] || rows[0];
+}
+
+function sectorMetricValue(row, metric) {
+  if (metric === "performance") return row.trend_change_percent;
+  if (metric === "setup") return row.average_setup_score;
+  if (metric === "pattern") return row.average_pattern_consistency_percent;
+  return row.average_rs_vs_spy_percent;
+}
+
+function formatSectorOption(value) {
+  const labels = {
+    relative: "Relative",
+    performance: "Performance",
+    setup: "Setup",
+    pattern: "Pattern",
+    weight: "Weight",
+    trend: "Trend",
+    overview: "Overview",
+    trends: "Trends",
+    patterns: "Patterns",
+    details: "Details",
+  };
+  return labels[value] || formatChartOption(value);
 }
 
 function renderPatternAnalysis(scanner, targetEl) {
@@ -2053,15 +2396,19 @@ function renderPatternAnalysis(scanner, targetEl) {
   }
   targetEl.className = "scanner-patterns";
   const buckets = scanner.pattern_bucket_labels || scanner.pattern_buckets || [];
+  const themeHeatmap = (scanner.theme_heatmap || []).length
+    ? scanner.theme_heatmap
+    : buildThemeHeatmapRows(scanner.pattern_heatmap || []);
   targetEl.innerHTML = `
     <section class="scanner-subsection">
       <h3>Pattern Summary</h3>
       <div class="scanner-table-wrap">
         <table class="scanner-table compact">
-          <thead><tr><th>Sector</th><th>Ticker</th><th>Days</th><th>Dip Days</th><th>Consistency</th><th>Avg Dip</th><th>Avg Recovery</th><th>Common Low Times</th></tr></thead>
+          <thead><tr><th>Theme</th><th>Sector</th><th>Ticker</th><th>Days</th><th>Dip Days</th><th>Consistency</th><th>Avg Dip</th><th>Avg Recovery</th><th>Common Low Times</th></tr></thead>
           <tbody>
             ${summary.map((row) => `
               <tr>
+                <td>${escapeHtml(row.theme || row.sector || "Other")}</td>
                 <td>${escapeHtml(row.sector || "Other")}</td>
                 <td><strong>${escapeHtml(row.ticker)}</strong></td>
                 <td>${row.total_days}</td>
@@ -2077,17 +2424,66 @@ function renderPatternAnalysis(scanner, targetEl) {
       </div>
     </section>
     <section class="scanner-subsection">
-      <h3>5-Min Heatmap</h3>
+      <h3>By Theme</h3>
+      <p class="pattern-help">Average percent from open by 5-minute ET bucket, grouped by watchlist theme.</p>
+      ${renderThemeHeatmap(themeHeatmap, buckets)}
+    </section>
+    <section class="scanner-subsection">
+      <h3>Ticker Intraday Heatmap</h3>
+      <p class="pattern-help">Average percent from open by 5-minute ET bucket for each ticker.</p>
       ${renderPatternHeatmap(scanner.pattern_heatmap || [], buckets)}
     </section>
     <section class="scanner-subsection">
-      <h3>Per-Ticker Detail</h3>
+      <h3>Daily Pattern Evidence</h3>
+      <p class="pattern-help">Morning low is the lowest percent-from-open in the 9:00-10:55 AM MT window. Recovery is close percent minus that morning low.</p>
       ${renderPatternDetails(scanner.pattern_details || [])}
     </section>
     <section class="scanner-subsection">
       <h3>Key Takeaways</h3>
       <ul class="scanner-takeaways">${(scanner.takeaways || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
     </section>
+  `;
+}
+
+function buildThemeHeatmapRows(rows) {
+  const groups = rows.reduce((acc, row) => {
+    const theme = row.theme || row.sector || "Other";
+    acc[theme] = acc[theme] || [];
+    acc[theme].push(row);
+    return acc;
+  }, {});
+  return Object.entries(groups).map(([theme, themeRows]) => {
+    const maxLength = Math.max(...themeRows.map((row) => (row.values || []).length), 0);
+    const values = Array.from({ length: maxLength }, (_, index) => {
+      const bucketValues = themeRows
+        .map((row) => row.values?.[index])
+        .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))
+        .map(Number);
+      if (!bucketValues.length) return null;
+      return Number((bucketValues.reduce((sum, value) => sum + value, 0) / bucketValues.length).toFixed(2));
+    });
+    const tickers = [...new Set(themeRows.map((row) => row.ticker).filter(Boolean))].sort();
+    return { theme, ticker_count: tickers.length, tickers, values };
+  }).sort((left, right) => (right.ticker_count || 0) - (left.ticker_count || 0) || left.theme.localeCompare(right.theme));
+}
+
+function renderThemeHeatmap(rows, bucketLabels) {
+  if (!rows.length) return '<div class="scanner-empty">No theme heatmap data returned.</div>';
+  return `
+    <div class="heatmap-wrap">
+      <table class="heatmap-table">
+        <thead><tr><th>Theme</th><th>Tickers</th>${bucketLabels.map((label, index) => `<th title="${escapeHtml(label)}">${index % 6 === 0 ? escapeHtml(label.replace(" ET", "")) : ""}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <th>${escapeHtml(row.theme || "Other")}</th>
+              <td title="${(row.tickers || []).map(escapeHtml).join(", ")}">${row.ticker_count || (row.tickers || []).length}</td>
+              ${(row.values || []).map((value) => `<td style="background:${heatmapColor(value)}" title="${value === null || value === undefined ? "No data" : `${Number(value).toFixed(2)}%`}">${value === null || value === undefined ? "" : Number(value).toFixed(1)}</td>`).join("")}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -2112,33 +2508,40 @@ function renderPatternHeatmap(rows, bucketLabels) {
 
 function renderPatternDetails(details) {
   if (!details.length) return '<div class="scanner-empty">No day-by-day details returned.</div>';
-  const byTicker = details.reduce((groups, detail) => {
-    groups[detail.ticker] = groups[detail.ticker] || [];
-    groups[detail.ticker].push(detail);
+  const byTheme = details.reduce((groups, detail) => {
+    const theme = detail.theme || detail.sector || "Other";
+    groups[theme] = groups[theme] || {};
+    groups[theme][detail.ticker] = groups[theme][detail.ticker] || [];
+    groups[theme][detail.ticker].push(detail);
     return groups;
   }, {});
-  return Object.entries(byTicker).map(([ticker, rows]) => `
+  return Object.entries(byTheme).map(([theme, tickers]) => `
     <details class="pattern-detail">
-      <summary>${escapeHtml(ticker)} - ${rows.length} days</summary>
-      <div class="scanner-table-wrap">
-        <table class="scanner-table compact">
-          <thead><tr><th>Date</th><th>Morning Low</th><th>Low Time</th><th>Recovery</th><th>Dip?</th><th>Day Low</th><th>Day Low Time</th><th>Close From Open</th></tr></thead>
-          <tbody>
-            ${rows.map((row) => `
-              <tr>
-                <td>${formatDate(row.date) || escapeHtml(row.date)}</td>
-                <td>${formatPercent(row.morning_low_percent)}</td>
-                <td>${escapeHtml(row.morning_low_time)}</td>
-                <td>${formatSignedPercent(row.recovery_to_close_percent)}</td>
-                <td>${row.dip_in_window ? "Yes" : "No"}</td>
-                <td>${formatPercent(row.day_low_percent)}</td>
-                <td>${escapeHtml(row.day_low_time)}</td>
-                <td>${formatSignedPercent(row.close_from_open_percent)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
+      <summary>${escapeHtml(theme)} - ${Object.keys(tickers).length} ticker${Object.keys(tickers).length === 1 ? "" : "s"}</summary>
+      ${Object.entries(tickers).map(([ticker, rows]) => `
+        <details class="pattern-detail nested">
+          <summary>${escapeHtml(ticker)} - ${rows.length} days</summary>
+          <div class="scanner-table-wrap">
+            <table class="scanner-table compact">
+              <thead><tr><th>Date</th><th title="Lowest percent-from-open in the 9:00-10:55 AM MT window">Morning Low</th><th>Low Time</th><th title="Close percent-from-open minus morning low percent">Recovery</th><th>Dip?</th><th>Day Low</th><th>Day Low Time</th><th>Close From Open</th></tr></thead>
+              <tbody>
+                ${rows.map((row) => `
+                  <tr>
+                    <td>${formatDate(row.date) || escapeHtml(row.date)}</td>
+                    <td>${formatPercent(row.morning_low_percent)}</td>
+                    <td>${escapeHtml(row.morning_low_time)}</td>
+                    <td>${formatSignedPercent(row.recovery_to_close_percent)}</td>
+                    <td>${row.dip_in_window ? "Yes" : "No"}</td>
+                    <td>${formatPercent(row.day_low_percent)}</td>
+                    <td>${escapeHtml(row.day_low_time)}</td>
+                    <td>${formatSignedPercent(row.close_from_open_percent)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      `).join("")}
     </details>
   `).join("");
 }

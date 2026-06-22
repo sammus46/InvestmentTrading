@@ -141,3 +141,29 @@ def test_static_score_analytics_renders_heat_views():
     assert ".score-heat-strip" in css
     assert ".score-heat-strip i.empty" in css
     assert ".score-sparkline-scale" in css
+
+
+def test_static_sector_analytics_renders_visual_dashboard():
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+    css = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert 'const SECTOR_ANALYTICS_SETTINGS_STORAGE_KEY = "sector-analytics-settings-v1";' in js
+    assert 'trend_range: sectorAnalyticsSettings.range' in js
+    assert 'trend_interval: sectorAnalyticsSettings.interval' in js
+    assert "function renderSectorToolbar(analytics)" in js
+    assert "function renderSectorStrengthMatrix(rows)" in js
+    assert "function renderSectorRotationPanel(analytics, rows)" in js
+    assert "function renderSectorMacroStrip(series)" in js
+    assert "function renderSectorDetailTable(rows)" in js
+    assert "function renderThemeHeatmap(rows, bucketLabels)" in js
+    assert "function buildThemeHeatmapRows(rows)" in js
+    assert "By Theme" in js
+    assert "Ticker Intraday Heatmap" in js
+    assert "Daily Pattern Evidence" in js
+    assert "Morning low is the lowest percent-from-open" in js
+    assert ".sector-dashboard-toolbar" in css
+    assert ".sector-rotation-chart" in css
+    assert ".sector-strength-matrix" in css
+    assert ".sector-macro-strip" in css
+    assert ".sector-detail-table" in css
+    assert ".pattern-help" in css

@@ -24,6 +24,7 @@ NewsAnalysisStatus = Literal["pending", "analyzed", "failed", "skipped"]
 RecommendationTone = Literal["focus", "watch", "wait", "note"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
+SectorTrendSeriesKind = Literal["watchlist_sector", "sector_etf", "benchmark", "macro"]
 DisplayRowKind = Literal["price", "percent", "date", "text"]
 DisplayRowEmphasis = Literal["normal", "priority", "current"]
 ReportLayoutName = Literal["grid", "price_ladder", "compact", "compare"]
@@ -499,6 +500,7 @@ class PatternSummaryRow(BaseModel):
     """Summary of recurring intraday dip behavior for one ticker."""
 
     sector: str = "Other"
+    theme: str = "Other"
     ticker: str
     total_days: int
     dip_days: int
@@ -514,6 +516,16 @@ class PatternHeatmapRow(BaseModel):
 
     ticker: str
     sector: str = "Other"
+    theme: str = "Other"
+    values: list[float | None] = Field(default_factory=list)
+
+
+class ThemeHeatmapRow(BaseModel):
+    """Average percent-from-open values by theme and 5-minute time bucket."""
+
+    theme: str
+    ticker_count: int
+    tickers: list[str] = Field(default_factory=list)
     values: list[float | None] = Field(default_factory=list)
 
 
@@ -521,6 +533,8 @@ class PatternDayDetail(BaseModel):
     """Day-by-day intraday pattern details for one ticker."""
 
     ticker: str
+    sector: str = "Other"
+    theme: str = "Other"
     date: Date
     morning_low_percent: float
     morning_low_time: str
@@ -540,6 +554,7 @@ class ScannerResponse(BaseModel):
     pattern_summary: list[PatternSummaryRow] = Field(default_factory=list)
     pattern_buckets: list[str] = Field(default_factory=list)
     pattern_bucket_labels: list[str] = Field(default_factory=list)
+    theme_heatmap: list[ThemeHeatmapRow] = Field(default_factory=list)
     pattern_heatmap: list[PatternHeatmapRow] = Field(default_factory=list)
     pattern_details: list[PatternDayDetail] = Field(default_factory=list)
     takeaways: list[str] = Field(default_factory=list)
@@ -551,12 +566,25 @@ class SectorAnalyticsRequest(BaseModel):
 
     tickers: Annotated[list[str], Field(min_length=1, max_length=50)]
     pattern_lookback_days: int = Field(default=30, ge=5, le=58)
+    trend_range: ChartRange = "3M"
+    trend_interval: ChartInterval = "1d"
 
     @field_validator("tickers", mode="before")
     @classmethod
     def split_ticker_input(cls, value: object) -> list[str]:
         """Accept either a list or comma/space/newline separated ticker text."""
         return GenerateRequest.split_ticker_input(value)
+
+    @model_validator(mode="after")
+    def validate_trend_interval(self) -> "SectorAnalyticsRequest":
+        """Reject trend ranges and intervals the provider chart path cannot support."""
+        if self.trend_interval not in CHART_INTERVALS_BY_RANGE[self.trend_range]:
+            supported = ", ".join(CHART_INTERVALS_BY_RANGE[self.trend_range])
+            raise ValueError(
+                f"unsupported trend_interval {self.trend_interval} for trend_range {self.trend_range}; "
+                f"use one of: {supported}"
+            )
+        return self
 
 
 class SectorAnalyticsRecommendation(BaseModel):
@@ -587,8 +615,37 @@ class SectorAnalyticsRow(BaseModel):
     average_dip_percent: float | None = None
     average_recovery_percent: float | None = None
     common_low_times: list[str] = Field(default_factory=list)
+    trend_change_percent: float | None = None
+    sector_etf_trend_change_percent: float | None = None
+    trend_rs_vs_spy_percent: float | None = None
+    up_ticker_count: int = 0
+    down_ticker_count: int = 0
+    leader_tickers: list[str] = Field(default_factory=list)
+    laggard_tickers: list[str] = Field(default_factory=list)
     recommendation_tone: RecommendationTone = "watch"
     recommendation_text: str
+
+
+class SectorTrendPoint(BaseModel):
+    """One normalized trend point for sector analytics visuals."""
+
+    timestamp: datetime
+    close: float | None = None
+    change_percent: float | None = None
+
+
+class SectorTrendSeries(BaseModel):
+    """Normalized trend series for sector, benchmark, and macro visuals."""
+
+    kind: SectorTrendSeriesKind
+    symbol: str
+    label: str
+    range: ChartRange
+    interval: ChartInterval
+    sector: str | None = None
+    points: list[SectorTrendPoint] = Field(default_factory=list)
+    change_percent: float | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class SectorAnalyticsResponse(BaseModel):
@@ -596,10 +653,16 @@ class SectorAnalyticsResponse(BaseModel):
 
     generated_at: datetime
     watchlist: list[str]
+    trend_range: ChartRange = "3M"
+    trend_interval: ChartInterval = "1d"
     sector_rows: list[SectorAnalyticsRow] = Field(default_factory=list)
+    sector_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
+    benchmark_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
+    macro_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
     pattern_summary: list[PatternSummaryRow] = Field(default_factory=list)
     pattern_buckets: list[str] = Field(default_factory=list)
     pattern_bucket_labels: list[str] = Field(default_factory=list)
+    theme_heatmap: list[ThemeHeatmapRow] = Field(default_factory=list)
     pattern_heatmap: list[PatternHeatmapRow] = Field(default_factory=list)
     pattern_details: list[PatternDayDetail] = Field(default_factory=list)
     recommendations: list[SectorAnalyticsRecommendation] = Field(default_factory=list)

@@ -449,6 +449,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .pattern-detail { background: #ffffff; border: 1px solid #dbe3ef; border-radius: 8px; overflow: hidden; }
 .pattern-detail summary { background: #f8fafc; color: #111827; cursor: pointer; font-weight: 900; padding: 12px 14px; }
 .pattern-detail .scanner-table-wrap { padding: 12px; }
+.pattern-detail.nested { border-left: 0; border-right: 0; border-radius: 0; margin: 0 12px 12px; }
+.pattern-help { color: #64748b; font-size: 0.86rem; margin: 0; }
 .scanner-takeaways { margin: 0; padding-left: 20px; }
 .scanner-takeaways li { color: #334155; margin-bottom: 8px; }
 
@@ -472,6 +474,67 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .recommendation-card.focus { border-left-color: #0f766e; }
 .recommendation-card.wait { border-left-color: #dc2626; }
 .recommendation-card.note { border-left-color: #2563eb; }
+.sector-dashboard,
+.sector-visual-panel { display: grid; gap: 14px; min-width: 0; }
+.sector-dashboard.empty,
+.sector-chart-empty,
+.sector-macro-strip.empty,
+.sector-strength-matrix.empty { border: 1px dashed #cbd5e1; border-radius: 8px; color: #64748b; padding: 18px; }
+.sector-dashboard-toolbar { align-items: end; background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; }
+.sector-select { display: grid; gap: 4px; margin: 0; min-width: 116px; }
+.sector-select span,
+.sector-refresh-meta { color: #64748b; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
+.sector-select select { min-height: 34px; min-width: 0; padding: 6px 28px 6px 8px; }
+.sector-view-tabs { align-items: center; background: #ffffff; border: 1px solid #dbe3ef; border-radius: 8px; display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; }
+.sector-view-tabs button { background: transparent; border: 0; box-shadow: none; color: #475569; min-height: 30px; padding: 6px 9px; }
+.sector-view-tabs button.active { background: #0f766e; color: #ffffff; }
+.sector-refresh-meta { margin-left: auto; padding: 8px 2px; }
+.sector-summary-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.sector-summary-tile,
+.sector-coverage-row,
+.sector-chart-panel,
+.sector-macro-panel,
+.sector-detail-table { background: #ffffff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 14px; }
+.sector-summary-tile { display: grid; gap: 5px; }
+.sector-summary-tile span { color: #64748b; font-size: 0.7rem; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; }
+.sector-summary-tile strong { color: #0f172a; font-size: 1.25rem; }
+.sector-summary-tile p { margin: 0; }
+.sector-coverage-bars { display: grid; gap: 10px; }
+.sector-coverage-row { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
+.sector-coverage-row h4 { margin: 0 0 3px; }
+.sector-coverage-row span { color: #64748b; display: block; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sector-coverage-row strong { color: #0f766e; font-size: 1rem; }
+.sector-weight-track { background: #e2e8f0; border-radius: 999px; grid-column: 1 / -1; height: 9px; overflow: hidden; }
+.sector-weight-track i { background: linear-gradient(90deg, #0f766e, #2563eb); display: block; height: 100%; }
+.sector-strength-matrix { background: #ffffff; border: 1px solid #dbe3ef; border-radius: 8px; height: 250px; overflow: hidden; position: relative; }
+.matrix-axis { background: #e2e8f0; position: absolute; }
+.matrix-axis.x { height: 1px; left: 16px; right: 16px; top: 50%; }
+.matrix-axis.y { bottom: 16px; left: 50%; top: 16px; width: 1px; }
+.matrix-dot { align-items: center; border: 2px solid #ffffff; border-radius: 999px; box-shadow: 0 6px 16px rgba(15, 23, 42, 0.16); color: #ffffff; display: inline-flex; font-size: 0.62rem; font-weight: 900; height: 34px; justify-content: center; position: absolute; transform: translate(-50%, 50%); width: 34px; }
+.matrix-dot.tone-focus { background: #0f766e; }
+.matrix-dot.tone-watch { background: #f59e0b; }
+.matrix-dot.tone-wait { background: #dc2626; }
+.matrix-dot.tone-note { background: #2563eb; }
+.matrix-label { color: #64748b; font-size: 0.68rem; font-weight: 900; position: absolute; text-transform: uppercase; }
+.matrix-label.left { bottom: 8px; left: 12px; }
+.matrix-label.right { bottom: 8px; right: 12px; }
+.matrix-label.top { right: 12px; top: 8px; }
+.sector-rotation-chart { display: grid; gap: 10px; min-width: 0; }
+.sector-rotation-chart svg { background: #fbfdff; border: 1px solid #eef2f7; border-radius: 8px; height: auto; max-height: 320px; width: 100%; }
+.sector-rotation-chart polyline { fill: none; stroke: var(--series-color); stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
+.sector-rotation-chart .zero-line { stroke: #cbd5e1; stroke-dasharray: 4 5; }
+.sector-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.sector-chart-legend span { align-items: center; color: #475569; display: inline-flex; font-size: 0.78rem; font-weight: 800; gap: 5px; }
+.sector-chart-legend span::before { background: var(--series-color); border-radius: 999px; content: ""; height: 8px; width: 8px; }
+.sector-macro-strip { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.sector-macro-tile { align-items: center; background: #ffffff; border: 1px solid #dbe3ef; border-left: 4px solid #0f766e; border-radius: 8px; display: grid; gap: 10px; grid-template-columns: 1fr 116px; padding: 12px; }
+.sector-macro-tile.negative { border-left-color: #dc2626; }
+.sector-macro-tile h4 { margin: 0 0 4px; }
+.sector-macro-tile strong { color: #059669; }
+.sector-macro-tile.negative strong { color: #dc2626; }
+.sector-detail-table { padding: 0; }
+.sector-detail-table summary { cursor: pointer; font-weight: 900; padding: 12px 14px; }
+.sector-detail-table .scanner-table-wrap { border: 0; border-top: 1px solid #dbe3ef; border-radius: 0 0 8px 8px; }
 
 .news-panel { display: grid; gap: 20px; }
 .news-section { display: grid; gap: 12px; }

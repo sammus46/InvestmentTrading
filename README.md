@@ -217,6 +217,7 @@ Each JSON and PDF report includes the following levels for every requested ticke
 - Adam-aligned technical levels: latest price, today VWAP, 1-month high/low, 50/200 SMA, 20 EMA daily, 9/20 EMA on 5-minute bars, classic pivots, Fibonacci retracements, earnings open, and pre-earnings close.
 - Daily Bollinger Bands. These remain an app-specific display metric and do not feed scanner support/resistance scoring.
 - Scanner calculations include VWAP extension, relative strength versus SPY/sector ETF, support/resistance confidence zones, reclaim/rejection signals, setup scoring, and intraday pattern summaries.
+- Sector Analytics adds configurable trend ranges and intervals, normalized watchlist-sector and sector-ETF trend series, SPY-relative trend strength, leader/laggard participation counts, macro context using the existing major market instruments, and theme-level intraday heatmaps for watchlist groupings such as Space and Semiconductors.
 - Per-ticker warnings when individual metrics are unavailable, delayed, rate-limited, or missing from the provider response.
 - Browser-style web charts using app-owned OHLC data, with global and per-ticker controls for line versus candlestick view, supported range, and interval. Charts are compact, follow the same ticker order as the draggable metric cards, and no longer overlay trading levels. PDF charts continue to use completed daily closes.
 
@@ -305,6 +306,16 @@ curl -X POST http://127.0.0.1:8000/api/scanner \
 ```
 
 The scanner uses the same saved watchlist as the levels and news views. In the browser and Streamlit UIs, the `Run Levels + Scanner` button refreshes both the price-level report and scanner output together. Expected missing optional inputs, such as young tickers without 200 completed daily closes, are shown as quiet data notes instead of warning rows. Setup score, relative strength, VWAP state, lows-held, range, and momentum cells use compact color/symbol coding for faster scanning. The browser and Streamlit UIs default to a horizontally scrollable ticker-row table on mobile, with the stacked cards view still available as an explicit setting.
+
+Generate sector analytics:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/sector-analytics \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":"AAPL, MSFT, NVDA","trend_range":"3M","trend_interval":"1d"}'
+```
+
+The response keeps the existing sector rows, recommendations, pattern summary, ticker heatmap, and detail records, and adds normalized trend series for covered watchlist sectors, sector ETFs, `SPY`, the existing macro snapshot instruments, and `theme_heatmap` rows aggregated from ticker-level intraday patterns. Official `sector` and `etf` fields remain available for ETF-relative strength, while user-facing `theme` fields group names such as `RKLB`, `BKSY`, and `ASTS` under `Space` for clearer watchlist analytics. Daily pattern details are supporting evidence: morning low is the lowest percent-from-open in the 9:00-10:55 AM MT window, and recovery is close percent minus that morning low. The browser UI persists its Sector Analytics controls in `sector-analytics-settings-v1`; Streamlit stores equivalent settings in the app state file.
 
 Fetch score history:
 

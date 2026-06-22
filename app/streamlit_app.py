@@ -44,6 +44,7 @@ from app.models import (
     NewsResponse,
     ScannerRequest,
     ScannerResponse,
+    SectorAnalyticsRow,
     SectorAnalyticsResponse,
     ScoreHistoryAxis,
     ScoreHistoryRange,
@@ -108,6 +109,10 @@ SCORE_ANALYTICS_METRICS: tuple[ScoreMetricName, ...] = ("setup", "level", "both"
 SCORE_ANALYTICS_CHART_METRICS = ("heat", "setup", "level")
 SCORE_ANALYTICS_MOVEMENTS = ("all", "improving", "declining", "flat")
 SCORE_ANALYTICS_SORTS = ("watchlist", "setup", "level", "gain", "drop")
+SECTOR_TREND_RANGE_OPTIONS: tuple[ChartRange, ...] = ("1D", "5D", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y")
+SECTOR_VISUAL_METRICS = ("relative", "performance", "setup", "pattern")
+SECTOR_SORT_OPTIONS = ("weight", "trend", "relative", "setup")
+SECTOR_VIEW_OPTIONS = ("overview", "trends", "patterns", "details")
 SCORE_RANGE_WIDGET_KEY = "_score_range_widget"
 SCORE_METRIC_WIDGET_KEY = "_score_metric_widget"
 SCORE_CHART_METRIC_WIDGET_KEY = "_score_chart_metric_widget"
@@ -183,6 +188,11 @@ STREAMLIT_DEFAULT_SETTINGS = {
     "chart_type": "Line",
     "chart_range": "1D",
     "chart_interval": "5m",
+    "sector_trend_range": "3M",
+    "sector_trend_interval": "1d",
+    "sector_visual_metric": "relative",
+    "sector_sort": "weight",
+    "sector_view": "overview",
     "auto_load": True,
     "auto_refresh": True,
     "news_per_ticker": NEWS_EXPANDED_HEADLINE_COUNT,
@@ -387,15 +397,36 @@ def build_scanner(tickers: tuple[str, ...], refresh_token: int = 0) -> ScannerRe
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def build_sector_analytics_payload(tickers: tuple[str, ...], refresh_token: int = 0) -> dict[str, Any]:
+def build_sector_analytics_payload(
+    tickers: tuple[str, ...],
+    trend_range: ChartRange = "3M",
+    trend_interval: ChartInterval = "1d",
+    refresh_token: int = 0,
+) -> dict[str, Any]:
     """Run sector analytics as cache-safe JSON-compatible data."""
     del refresh_token
-    return scanner_service().build_sector_analytics(list(tickers)).model_dump(mode="json")
+    return scanner_service().build_sector_analytics(
+        list(tickers),
+        trend_range=trend_range,
+        trend_interval=trend_interval,
+    ).model_dump(mode="json")
 
 
-def build_sector_analytics(tickers: tuple[str, ...], refresh_token: int = 0) -> SectorAnalyticsResponse:
+def build_sector_analytics(
+    tickers: tuple[str, ...],
+    trend_range: ChartRange = "3M",
+    trend_interval: ChartInterval = "1d",
+    refresh_token: int = 0,
+) -> SectorAnalyticsResponse:
     """Run sector trend and intraday pattern analytics."""
-    return SectorAnalyticsResponse.model_validate(build_sector_analytics_payload(tickers, refresh_token=refresh_token))
+    return SectorAnalyticsResponse.model_validate(
+        build_sector_analytics_payload(
+            tickers,
+            trend_range,
+            trend_interval,
+            refresh_token=refresh_token,
+        )
+    )
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -527,6 +558,47 @@ def normalize_chart_interval(chart_range: ChartRange, value: object) -> ChartInt
     return candidate if candidate in options else CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]  # type: ignore[return-value]
 
 
+def normalize_sector_trend_range(value: object) -> ChartRange:
+    """Return a supported sector analytics trend range."""
+    candidate = str(value or "")
+    return candidate if candidate in SECTOR_TREND_RANGE_OPTIONS else STREAMLIT_DEFAULT_SETTINGS["sector_trend_range"]  # type: ignore[return-value]
+
+
+def sector_default_interval(chart_range: ChartRange) -> ChartInterval:
+    """Return the preferred interval for sector trend visuals."""
+    options = CHART_INTERVALS_BY_RANGE[chart_range]
+    if "1d" in options:
+        return "1d"
+    if "1wk" in options:
+        return "1wk"
+    return CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]
+
+
+def normalize_sector_trend_interval(chart_range: ChartRange, value: object) -> ChartInterval:
+    """Return a supported interval for sector trend visuals."""
+    candidate = str(value or "")
+    options = CHART_INTERVALS_BY_RANGE[chart_range]
+    return candidate if candidate in options else sector_default_interval(chart_range)  # type: ignore[return-value]
+
+
+def normalize_sector_visual_metric(value: object) -> str:
+    """Return a supported sector matrix metric."""
+    candidate = str(value or "")
+    return candidate if candidate in SECTOR_VISUAL_METRICS else str(STREAMLIT_DEFAULT_SETTINGS["sector_visual_metric"])
+
+
+def normalize_sector_sort(value: object) -> str:
+    """Return a supported sector sort option."""
+    candidate = str(value or "")
+    return candidate if candidate in SECTOR_SORT_OPTIONS else str(STREAMLIT_DEFAULT_SETTINGS["sector_sort"])
+
+
+def normalize_sector_view(value: object) -> str:
+    """Return a supported sector dashboard view."""
+    candidate = str(value or "")
+    return candidate if candidate in SECTOR_VIEW_OPTIONS else str(STREAMLIT_DEFAULT_SETTINGS["sector_view"])
+
+
 def normalize_score_history_range(value: object) -> ScoreHistoryRange:
     """Return a supported score-history range."""
     candidate = str(value or "")
@@ -560,6 +632,24 @@ def normalize_score_sort(value: object) -> str:
 def score_option_label(value: object) -> str:
     """Return a human label for score analytics controls."""
     return SCORE_OPTION_LABELS.get(str(value), str(value))
+
+
+def sector_option_label(value: object) -> str:
+    """Return a human label for sector analytics controls."""
+    labels = {
+        "relative": "Relative",
+        "performance": "Performance",
+        "setup": "Setup",
+        "pattern": "Pattern",
+        "weight": "Weight",
+        "trend": "Trend",
+        "overview": "Overview",
+        "trends": "Trends",
+        "patterns": "Patterns",
+        "details": "Details",
+    }
+    text = str(value)
+    return labels.get(text, format_chart_option(text))
 
 
 def normalize_level_weight(value: object) -> int | None:
@@ -600,6 +690,7 @@ def normalize_streamlit_settings(value: object) -> dict[str, Any]:
     source = value if isinstance(value, dict) else {}
     default_view = str(source.get("default_view") or STREAMLIT_DEFAULT_SETTINGS["default_view"])
     chart_range = normalize_chart_range(source.get("chart_range"))
+    sector_trend_range = normalize_sector_trend_range(source.get("sector_trend_range"))
     return {
         "default_view": default_view if default_view in STREAMLIT_VIEWS else STREAMLIT_DEFAULT_SETTINGS["default_view"],
         "report_layout": normalize_report_layout(source.get("report_layout")),
@@ -609,6 +700,14 @@ def normalize_streamlit_settings(value: object) -> dict[str, Any]:
         "chart_type": normalize_chart_type(source.get("chart_type")),
         "chart_range": chart_range,
         "chart_interval": normalize_chart_interval(chart_range, source.get("chart_interval")),
+        "sector_trend_range": sector_trend_range,
+        "sector_trend_interval": normalize_sector_trend_interval(
+            sector_trend_range,
+            source.get("sector_trend_interval"),
+        ),
+        "sector_visual_metric": normalize_sector_visual_metric(source.get("sector_visual_metric")),
+        "sector_sort": normalize_sector_sort(source.get("sector_sort")),
+        "sector_view": normalize_sector_view(source.get("sector_view")),
         "auto_load": bool(source.get("auto_load", STREAMLIT_DEFAULT_SETTINGS["auto_load"])),
         "auto_refresh": bool(source.get("auto_refresh", STREAMLIT_DEFAULT_SETTINGS["auto_refresh"])),
         "news_per_ticker": normalize_news_count(source.get("news_per_ticker")),
@@ -1172,6 +1271,237 @@ def render_app_chrome() -> str:
           .streamlit-market-change.negative { color: #dc2626 !important; }
           .streamlit-market-grid.major .streamlit-market-change.positive { color: #10b981 !important; }
           .streamlit-market-grid.major .streamlit-market-change.negative { color: #f43f5e !important; }
+          .streamlit-sector-dashboard,
+          .streamlit-sector-visuals {
+            display: grid;
+            gap: 0.85rem;
+            margin: 0.5rem 0 1rem;
+          }
+          .streamlit-sector-summary-grid,
+          .streamlit-sector-insight-grid,
+          .streamlit-sector-macro-strip {
+            display: grid;
+            gap: 0.75rem;
+            grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+          }
+          .streamlit-sector-summary-tile,
+          .streamlit-sector-coverage-row,
+          .streamlit-sector-insight,
+          .streamlit-sector-chart-panel,
+          .streamlit-sector-macro-panel,
+          .streamlit-sector-macro-tile {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            padding: 0.8rem;
+          }
+          .streamlit-sector-summary-tile span,
+          .streamlit-sector-insight > span,
+          .streamlit-sector-meta {
+            color: #64748b !important;
+            font-size: 0.68rem;
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+          }
+          .streamlit-sector-summary-tile strong {
+            color: #0f172a !important;
+            display: block;
+            font-size: 1.2rem;
+          }
+          .streamlit-sector-summary-tile p,
+          .streamlit-sector-insight p {
+            margin: 0;
+          }
+          .streamlit-sector-coverage-bars {
+            display: grid;
+            gap: 0.65rem;
+          }
+          .streamlit-sector-coverage-row {
+            display: grid;
+            gap: 0.45rem;
+            grid-template-columns: minmax(0, 1fr) auto;
+          }
+          .streamlit-sector-coverage-row h4,
+          .streamlit-sector-insight h4,
+          .streamlit-sector-macro-tile h4,
+          .streamlit-sector-chart-panel h4,
+          .streamlit-sector-macro-panel h4 {
+            color: #12312f !important;
+            margin: 0 0 0.2rem;
+          }
+          .streamlit-sector-coverage-row span {
+            color: #64748b !important;
+            display: block;
+            font-size: 0.82rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .streamlit-sector-coverage-row strong {
+            color: #0f766e !important;
+          }
+          .streamlit-sector-weight-track {
+            background: #e2e8f0;
+            border-radius: 999px;
+            grid-column: 1 / -1;
+            height: 0.55rem;
+            overflow: hidden;
+          }
+          .streamlit-sector-weight-track i {
+            background: linear-gradient(90deg, #0f766e, #2563eb);
+            display: block;
+            height: 100%;
+          }
+          .streamlit-sector-matrix {
+            background: #ffffff;
+            border: 1px solid #dbe3ef;
+            border-radius: 0.5rem;
+            height: 15.5rem;
+            overflow: hidden;
+            position: relative;
+          }
+          .streamlit-sector-matrix.empty,
+          .streamlit-sector-empty {
+            border: 1px dashed #cbd5e1;
+            border-radius: 0.5rem;
+            color: #64748b !important;
+            padding: 1rem;
+          }
+          .streamlit-sector-axis {
+            background: #e2e8f0;
+            position: absolute;
+          }
+          .streamlit-sector-axis.x { height: 1px; left: 1rem; right: 1rem; top: 50%; }
+          .streamlit-sector-axis.y { bottom: 1rem; left: 50%; top: 1rem; width: 1px; }
+          .streamlit-sector-dot {
+            align-items: center;
+            border: 2px solid #ffffff;
+            border-radius: 999px;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.16);
+            color: #ffffff !important;
+            display: inline-flex;
+            font-size: 0.62rem;
+            font-weight: 900;
+            height: 2.1rem;
+            justify-content: center;
+            position: absolute;
+            transform: translate(-50%, 50%);
+            width: 2.1rem;
+          }
+          .streamlit-sector-dot.tone-focus { background: #0f766e; }
+          .streamlit-sector-dot.tone-watch { background: #f59e0b; }
+          .streamlit-sector-dot.tone-wait { background: #dc2626; }
+          .streamlit-sector-dot.tone-note { background: #2563eb; }
+          .streamlit-sector-matrix-label {
+            color: #64748b !important;
+            font-size: 0.68rem;
+            font-weight: 900;
+            position: absolute;
+            text-transform: uppercase;
+          }
+          .streamlit-sector-matrix-label.left { bottom: 0.5rem; left: 0.75rem; }
+          .streamlit-sector-matrix-label.right { bottom: 0.5rem; right: 0.75rem; }
+          .streamlit-sector-matrix-label.top { right: 0.75rem; top: 0.5rem; }
+          .streamlit-sector-insight {
+            border-left: 4px solid #f59e0b;
+            display: grid;
+            gap: 0.45rem;
+          }
+          .streamlit-sector-insight.tone-focus { border-left-color: #0f766e; }
+          .streamlit-sector-insight.tone-wait { border-left-color: #dc2626; }
+          .streamlit-sector-insight.tone-note { border-left-color: #2563eb; }
+          .streamlit-sector-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+          }
+          .streamlit-sector-chip-row span {
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            border-radius: 999px;
+            color: #334155 !important;
+            font-size: 0.72rem;
+            font-weight: 900;
+            padding: 0.2rem 0.45rem;
+          }
+          .streamlit-sector-line-chart {
+            display: grid;
+            gap: 0.6rem;
+          }
+          .streamlit-sector-line-chart svg {
+            background: #fbfdff;
+            border: 1px solid #eef2f7;
+            border-radius: 0.5rem;
+            width: 100%;
+          }
+          .streamlit-sector-line-chart polyline {
+            fill: none;
+            stroke: var(--series-color);
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-width: 3;
+          }
+          .streamlit-sector-line-chart .zero-line {
+            stroke: #cbd5e1;
+            stroke-dasharray: 4 5;
+          }
+          .streamlit-sector-chart-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem 0.8rem;
+          }
+          .streamlit-sector-chart-legend span {
+            align-items: center;
+            color: #475569 !important;
+            display: inline-flex;
+            font-size: 0.78rem;
+            font-weight: 800;
+            gap: 0.3rem;
+          }
+          .streamlit-sector-chart-legend span::before {
+            background: var(--series-color);
+            border-radius: 999px;
+            content: "";
+            height: 0.5rem;
+            width: 0.5rem;
+          }
+          .streamlit-sector-macro-tile {
+            align-items: center;
+            border-left: 4px solid #0f766e;
+            display: grid;
+            gap: 0.6rem;
+            grid-template-columns: 1fr 7rem;
+          }
+          .streamlit-sector-macro-tile.negative {
+            border-left-color: #dc2626;
+          }
+          .streamlit-sector-macro-tile strong {
+            color: #059669 !important;
+          }
+          .streamlit-sector-macro-tile.negative strong {
+            color: #dc2626 !important;
+          }
+          .streamlit-sector-sparkline {
+            height: 2.6rem;
+            width: 100%;
+          }
+          .streamlit-sector-sparkline polyline {
+            fill: none;
+            stroke: #059669;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-width: 3;
+          }
+          .streamlit-sector-sparkline.negative polyline {
+            stroke: #dc2626;
+          }
+          .streamlit-sector-sparkline.empty {
+            background: repeating-linear-gradient(90deg, #e2e8f0 0 4px, transparent 4px 9px);
+            border-radius: 0.4rem;
+            display: block;
+            opacity: 0.55;
+          }
           .streamlit-news-card.with-image {
             grid-template-columns: 9rem 1fr;
           }
@@ -5314,8 +5644,21 @@ def render_pattern_analysis(report: Any) -> None:
         row_height=40,
         height=dataframe_height(len(report.pattern_summary), row_height=40),
     )
-    st.subheader("5-Min Heatmap")
-    st.caption("Average percent from open by 5-minute ET bucket. Negative values mark below-open periods.")
+    st.subheader("By Theme")
+    st.caption("Average percent from open by 5-minute ET bucket, grouped by watchlist theme.")
+    theme_frame = theme_heatmap_frame(report)
+    if theme_frame.empty:
+        st.info("No theme heatmap data was returned.")
+    else:
+        st.dataframe(
+            theme_frame,
+            use_container_width=True,
+            hide_index=True,
+            row_height=40,
+            height=dataframe_height(len(theme_frame), row_height=40),
+        )
+    st.subheader("Ticker Intraday Heatmap")
+    st.caption("Average percent from open by 5-minute ET bucket for each ticker. Negative values mark below-open periods.")
     heatmap_frame = pattern_heatmap_frame(report)
     st.dataframe(
         heatmap_frame,
@@ -5324,17 +5667,27 @@ def render_pattern_analysis(report: Any) -> None:
         row_height=40,
         height=dataframe_height(len(heatmap_frame), row_height=40),
     )
-    st.subheader("Per-Ticker Detail")
-    for ticker in sorted({detail.ticker for detail in report.pattern_details}):
-        rows = [detail for detail in report.pattern_details if detail.ticker == ticker]
-        with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
-            st.dataframe(
-                pattern_detail_frame(rows),
-                use_container_width=True,
-                hide_index=True,
-                row_height=40,
-                height=dataframe_height(len(rows), row_height=40),
-            )
+    st.subheader("Daily Pattern Evidence")
+    st.caption(
+        "Morning low is the lowest percent-from-open in the 9:00-10:55 AM MT window. "
+        "Recovery is close percent minus that morning low."
+    )
+    details_by_theme: dict[str, list[Any]] = {}
+    for detail in report.pattern_details:
+        details_by_theme.setdefault(getattr(detail, "theme", None) or getattr(detail, "sector", None) or "Other", []).append(detail)
+    for theme, theme_details in sorted(details_by_theme.items()):
+        tickers = sorted({detail.ticker for detail in theme_details})
+        with st.expander(f"{theme} - {len(tickers)} ticker{'s' if len(tickers) != 1 else ''}", expanded=False):
+            for ticker in tickers:
+                rows = [detail for detail in theme_details if detail.ticker == ticker]
+                with st.expander(f"{ticker} - {len(rows)} days", expanded=False):
+                    st.dataframe(
+                        pattern_detail_frame(rows),
+                        use_container_width=True,
+                        hide_index=True,
+                        row_height=40,
+                        height=dataframe_height(len(rows), row_height=40),
+                    )
     st.subheader("Key Takeaways")
     if report.takeaways:
         for takeaway in report.takeaways:
@@ -5351,49 +5704,293 @@ def render_sector_analytics(report: SectorAnalyticsResponse) -> None:
     pattern_notes = [warning for warning in report.warnings if warning.startswith("No pattern data was returned for ")]
     render_scanner_global_notes("pattern data note(s)", pattern_notes)
 
+    rows = sorted_sector_analytics_rows(report.sector_rows)
+    view = normalize_sector_view(st.session_state.get("sector_view"))
+
     st.subheader("Sector Coverage")
-    if report.sector_rows:
-        coverage_cards = []
-        for row in report.sector_rows:
-            coverage_cards.append(
-                (
-                    '<article class="streamlit-market-tile">'
-                    f"<h4>{escape(row.sector)}</h4>"
-                    f'<div class="streamlit-market-price">{row.weight_percent:.1f}%</div>'
-                    f'<div class="streamlit-market-change">{row.ticker_count} ticker{"s" if row.ticker_count != 1 else ""}: '
-                    f"{escape(', '.join(row.tickers))}</div>"
-                    "</article>"
-                )
-            )
-        st.markdown(f'<div class="streamlit-market-grid">{"".join(coverage_cards)}</div>', unsafe_allow_html=True)
+    if rows:
+        st.markdown(streamlit_sector_dashboard_html(report, rows), unsafe_allow_html=True)
     else:
         st.info("No sector coverage was returned.")
 
     st.subheader("Recommendations")
     if report.recommendations:
-        for item in report.recommendations:
-            tickers = f" ({', '.join(item.tickers)})" if item.tickers else ""
-            st.markdown(
-                f'<div class="streamlit-takeaway"><strong>{escape(item.title)}</strong>{escape(tickers)}<br>{escape(item.message)}</div>',
-                unsafe_allow_html=True,
-            )
+        st.markdown(streamlit_sector_recommendations_html(report.recommendations), unsafe_allow_html=True)
     else:
         st.info("No sector recommendations were returned.")
 
-    st.subheader("Sector Trends")
-    if report.sector_rows:
+    if view != "patterns":
+        st.subheader("Sector Trends")
+        st.markdown(streamlit_sector_visuals_html(report, rows, view), unsafe_allow_html=True)
+
+    if view in {"overview", "details"} and rows:
+        st.subheader("Sector Detail")
         st.dataframe(
             sector_analytics_frame(report),
             use_container_width=True,
             hide_index=True,
-            row_height=40,
-            height=dataframe_height(len(report.sector_rows), row_height=40),
+            row_height=38,
+            height=dataframe_height(len(rows), row_height=38),
         )
-    else:
-        st.info("No sector trend rows were returned.")
 
-    st.subheader("Intraday Pattern Analysis")
-    render_pattern_analysis(report)
+    if view in {"overview", "patterns", "details"}:
+        st.subheader("Intraday Pattern Analysis")
+        render_pattern_analysis(report)
+
+
+def sorted_sector_analytics_rows(rows: list[SectorAnalyticsRow]) -> list[SectorAnalyticsRow]:
+    """Return sector analytics rows ordered by the selected dashboard sort."""
+    sort = normalize_sector_sort(st.session_state.get("sector_sort"))
+
+    def value_for(row: SectorAnalyticsRow) -> float:
+        if sort == "trend":
+            return row.trend_change_percent if row.trend_change_percent is not None else -999
+        if sort == "relative":
+            return row.trend_rs_vs_spy_percent if row.trend_rs_vs_spy_percent is not None else -999
+        if sort == "setup":
+            return row.average_setup_score if row.average_setup_score is not None else -999
+        return row.weight_percent
+
+    return sorted(rows, key=lambda row: (-value_for(row), row.sector))
+
+
+def streamlit_sector_dashboard_html(report: SectorAnalyticsResponse, rows: list[SectorAnalyticsRow]) -> str:
+    """Return Streamlit sector coverage, participation, and matrix HTML."""
+    strongest = next((row for row in rows if row.trend_rs_vs_spy_percent is not None), None)
+    if strongest is not None:
+        strongest = max((row for row in rows if row.trend_rs_vs_spy_percent is not None), key=lambda row: row.trend_rs_vs_spy_percent or -999)
+    concentrated = next((row for row in rows if row.weight_percent > 50), None)
+    summary = "".join(
+        [
+            streamlit_sector_summary_tile("Sectors", str(len(rows)), "Covered groups"),
+            streamlit_sector_summary_tile(
+                "Trend Leader",
+                strongest.sector if strongest else "-",
+                signed_pct_fmt(strongest.trend_rs_vs_spy_percent) if strongest else "No trend",
+            ),
+            streamlit_sector_summary_tile(
+                "Concentration",
+                concentrated.sector if concentrated else "Balanced",
+                pct_fmt(concentrated.weight_percent) if concentrated else "No sector over 50%",
+            ),
+        ]
+    )
+    bars = "".join(streamlit_sector_coverage_bar(row) for row in rows)
+    return (
+        '<div class="streamlit-sector-dashboard">'
+        f'<div class="streamlit-sector-summary-grid">{summary}</div>'
+        f'<div class="streamlit-sector-coverage-bars">{bars}</div>'
+        f"{streamlit_sector_strength_matrix(rows)}"
+        f'<div class="streamlit-sector-meta">{escape(format_chart_option(report.trend_range))} {escape(report.trend_interval)}</div>'
+        "</div>"
+    )
+
+
+def streamlit_sector_summary_tile(label: str, value: str, subtext: str) -> str:
+    return (
+        '<article class="streamlit-sector-summary-tile">'
+        f"<span>{escape(label)}</span>"
+        f"<strong>{escape(value)}</strong>"
+        f"<p>{escape(subtext)}</p>"
+        "</article>"
+    )
+
+
+def streamlit_sector_coverage_bar(row: SectorAnalyticsRow) -> str:
+    width = max(0, min(100, row.weight_percent))
+    tickers = ", ".join(row.tickers)
+    return (
+        '<article class="streamlit-sector-coverage-row">'
+        f"<div><h4>{escape(row.sector)}</h4><span>{escape(row.etf or 'No ETF')} · {escape(tickers)}</span></div>"
+        f"<strong>{pct_fmt(row.weight_percent)}</strong>"
+        f'<div class="streamlit-sector-weight-track"><i style="width:{width:.1f}%"></i></div>'
+        "</article>"
+    )
+
+
+def streamlit_sector_recommendations_html(items: list[Any]) -> str:
+    cards = []
+    for item in items:
+        tickers = "".join(f"<span>{escape(ticker)}</span>" for ticker in item.tickers)
+        chips = f'<div class="streamlit-sector-chip-row">{tickers}</div>' if tickers else ""
+        cards.append(
+            '<article class="streamlit-sector-insight '
+            f'tone-{escape(item.tone or "watch")}">'
+            f"<span>{escape(item.tone or 'watch')}</span>"
+            f"<h4>{escape(item.title or 'Sector note')}</h4>"
+            f"<p>{escape(item.message or '')}</p>"
+            f"{chips}"
+            "</article>"
+        )
+    return f'<div class="streamlit-sector-insight-grid">{"".join(cards)}</div>'
+
+
+def streamlit_sector_strength_matrix(rows: list[SectorAnalyticsRow]) -> str:
+    metric = normalize_sector_visual_metric(st.session_state.get("sector_visual_metric"))
+    points = [
+        (row, row.trend_rs_vs_spy_percent, streamlit_sector_metric_value(row, metric))
+        for row in rows
+        if row.trend_rs_vs_spy_percent is not None and streamlit_sector_metric_value(row, metric) is not None
+    ]
+    if not points:
+        return '<div class="streamlit-sector-matrix empty">No trend matrix data returned.</div>'
+    y_values = [float(point[2]) for point in points if point[2] is not None]
+    y_min = min([0, *y_values])
+    y_max = max([1, *y_values])
+    y_range = y_max - y_min or 1
+    dots = []
+    for row, x_value, y_value in points:
+        assert x_value is not None and y_value is not None
+        left = max(3, min(97, 50 + float(x_value) * 3))
+        bottom = max(5, min(95, ((float(y_value) - y_min) / y_range) * 86 + 7))
+        dots.append(
+            f'<span class="streamlit-sector-dot tone-{escape(row.recommendation_tone)}" '
+            f'style="left:{left:.1f}%;bottom:{bottom:.1f}%;" '
+            f'title="{escape(row.sector)} {signed_pct_fmt(row.trend_rs_vs_spy_percent)}">'
+            f"{escape(row.sector[:3])}</span>"
+        )
+    return (
+        '<div class="streamlit-sector-matrix" role="img" aria-label="Sector strength matrix">'
+        '<div class="streamlit-sector-axis x"></div><div class="streamlit-sector-axis y"></div>'
+        f"{''.join(dots)}"
+        '<span class="streamlit-sector-matrix-label left">Lagging SPY</span>'
+        '<span class="streamlit-sector-matrix-label right">Leading SPY</span>'
+        f'<span class="streamlit-sector-matrix-label top">{escape(sector_option_label(metric))}</span>'
+        "</div>"
+    )
+
+
+def streamlit_sector_metric_value(row: SectorAnalyticsRow, metric: str) -> float | None:
+    if metric == "performance":
+        return row.trend_change_percent
+    if metric == "setup":
+        return row.average_setup_score
+    if metric == "pattern":
+        return row.average_pattern_consistency_percent
+    return row.average_rs_vs_spy_percent
+
+
+def streamlit_sector_visuals_html(report: SectorAnalyticsResponse, rows: list[SectorAnalyticsRow], view: str) -> str:
+    """Return Streamlit sector trend and macro visuals."""
+    series = streamlit_sector_rotation_series(report, rows)
+    macro = "" if view == "details" else streamlit_sector_macro_strip(report.macro_trend_series)
+    chart = "" if view == "details" else streamlit_sector_trend_chart(series)
+    if not chart and not macro:
+        return '<div class="streamlit-sector-empty">No sector trend rows were returned.</div>'
+    return f'<div class="streamlit-sector-visuals">{chart}{macro}</div>'
+
+
+def streamlit_sector_rotation_series(report: SectorAnalyticsResponse, rows: list[SectorAnalyticsRow]) -> list[Any]:
+    sectors = {row.sector for row in rows[:5]}
+    selected = [
+        series
+        for series in report.sector_trend_series
+        if series.kind == "watchlist_sector" and series.sector in sectors
+    ][:5]
+    return [*selected, *report.benchmark_trend_series[:1]]
+
+
+def streamlit_sector_trend_chart(series: list[Any]) -> str:
+    valid = [item for item in series if any(point.change_percent is not None for point in item.points)]
+    if not valid:
+        return '<div class="streamlit-sector-empty">No trend series returned.</div>'
+    chart = streamlit_trend_line_chart(valid)
+    return (
+        '<section class="streamlit-sector-chart-panel">'
+        "<h4>Sector Rotation</h4>"
+        f"{chart}"
+        "</section>"
+    )
+
+
+def streamlit_sector_macro_strip(series: list[Any]) -> str:
+    if not series:
+        return '<div class="streamlit-sector-empty">No macro trend data returned.</div>'
+    tiles = []
+    for item in series:
+        tone = "negative" if item.change_percent is not None and item.change_percent < 0 else "positive"
+        tiles.append(
+            f'<article class="streamlit-sector-macro-tile {tone}">'
+            f"<div><h4>{escape(item.label or item.symbol)}</h4><strong>{signed_pct_fmt(item.change_percent)}</strong></div>"
+            f"{streamlit_trend_sparkline(item.points)}"
+            "</article>"
+        )
+    return (
+        '<section class="streamlit-sector-macro-panel">'
+        "<h4>Macro Context</h4>"
+        f'<div class="streamlit-sector-macro-strip">{"".join(tiles)}</div>'
+        "</section>"
+    )
+
+
+def streamlit_trend_line_chart(series: list[Any]) -> str:
+    colors = ("#0f766e", "#2563eb", "#dc2626", "#ca8a04", "#7c3aed", "#0891b2")
+    width, height = 760, 280
+    left, right, top, bottom = 42, 22, 18, 32
+    values = [
+        float(point.change_percent)
+        for item in series
+        for point in item.points
+        if point.change_percent is not None
+    ]
+    min_value = min([0, *values])
+    max_value = max([0, *values])
+    if min_value == max_value:
+        min_value -= 1
+        max_value += 1
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+
+    def y_for(value: float) -> float:
+        return top + (1 - ((value - min_value) / (max_value - min_value))) * plot_height
+
+    lines = []
+    legend = []
+    for index, item in enumerate(series):
+        color = colors[index % len(colors)]
+        points = list(item.points)
+        coords = []
+        for point_index, point in enumerate(points):
+            if point.change_percent is None:
+                continue
+            x = left + (plot_width / 2 if len(points) <= 1 else (point_index / (len(points) - 1)) * plot_width)
+            coords.append(f"{x:.2f},{y_for(float(point.change_percent)):.2f}")
+        if coords:
+            lines.append(f'<polyline points="{" ".join(coords)}" style="--series-color:{color}"></polyline>')
+            legend.append(
+                f'<span style="--series-color:{color}">{escape(item.label)} <strong>{signed_pct_fmt(item.change_percent)}</strong></span>'
+            )
+    zero = y_for(0)
+    return (
+        '<div class="streamlit-sector-line-chart">'
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Normalized sector trend chart">'
+        f'<line class="zero-line" x1="{left}" x2="{width - right}" y1="{zero:.2f}" y2="{zero:.2f}"></line>'
+        f"{''.join(lines)}</svg>"
+        f'<div class="streamlit-sector-chart-legend">{"".join(legend)}</div>'
+        "</div>"
+    )
+
+
+def streamlit_trend_sparkline(points: list[Any]) -> str:
+    values = [float(point.change_percent) for point in points if point.change_percent is not None]
+    if not values:
+        return '<span class="streamlit-sector-sparkline empty"></span>'
+    width, height = 116, 42
+    min_value, max_value = min(values), max(values)
+    if min_value == max_value:
+        min_value -= 1
+        max_value += 1
+    coords = []
+    for index, value in enumerate(values):
+        x = width / 2 if len(values) <= 1 else (index / (len(values) - 1)) * width
+        y = height - ((value - min_value) / (max_value - min_value)) * height
+        coords.append(f"{x:.2f},{y:.2f}")
+    tone = "negative" if values[-1] < 0 else "positive"
+    return (
+        f'<svg class="streamlit-sector-sparkline {tone}" viewBox="0 0 {width} {height}" aria-hidden="true" focusable="false">'
+        f'<polyline points="{" ".join(coords)}"></polyline>'
+        "</svg>"
+    )
 
 
 def dataframe_height(row_count: int, row_height: int = 40, min_height: int = 160, max_height: int = 520) -> int:
@@ -5899,6 +6496,7 @@ def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
+                "Theme": getattr(row, "theme", None) or row.sector,
                 "Sector": row.sector,
                 "Ticker": row.ticker,
                 "Days": row.total_days,
@@ -5922,6 +6520,12 @@ def sector_analytics_frame(report: SectorAnalyticsResponse) -> pd.DataFrame:
                 "ETF": row.etf or "-",
                 "Weight": f"{row.weight_percent:.1f}%",
                 "Tickers": ", ".join(row.tickers),
+                "Trend": signed_pct_fmt(row.trend_change_percent),
+                "ETF Trend": signed_pct_fmt(row.sector_etf_trend_change_percent),
+                "Trend RS": signed_pct_fmt(row.trend_rs_vs_spy_percent),
+                "Up/Down": f"{row.up_ticker_count}/{row.down_ticker_count}",
+                "Leaders": ", ".join(row.leader_tickers) or "-",
+                "Laggards": ", ".join(row.laggard_tickers) or "-",
                 "Avg Day": signed_pct_fmt(row.average_day_change_percent),
                 "ETF Day": signed_pct_fmt(row.sector_etf_day_change_percent),
                 "RS vs SPY": signed_pct_fmt(row.average_rs_vs_spy_percent),
@@ -5939,6 +6543,22 @@ def sector_analytics_frame(report: SectorAnalyticsResponse) -> pd.DataFrame:
             for row in report.sector_rows
         ]
     )
+
+
+def theme_heatmap_frame(report: ScannerResponse) -> pd.DataFrame:
+    """Build a wide heatmap frame aggregated by watchlist theme."""
+    labels = report.pattern_bucket_labels or report.pattern_buckets
+    rows = []
+    for row in getattr(report, "theme_heatmap", []):
+        display = {
+            "Theme": row.theme,
+            "Tickers": row.ticker_count,
+            "Contributors": ", ".join(row.tickers),
+        }
+        for label, value in zip(labels, row.values, strict=False):
+            display[label.replace(" ET", "")] = "" if value is None else f"{value:.2f}%"
+        rows.append(display)
+    return pd.DataFrame(rows)
 
 
 def pattern_heatmap_frame(report: ScannerResponse) -> pd.DataFrame:
@@ -5991,6 +6611,11 @@ def ensure_streamlit_settings() -> None:
     st.session_state["global-chart-type"] = settings["chart_type"]
     st.session_state.chart_range = settings["chart_range"]
     st.session_state.chart_interval = settings["chart_interval"]
+    st.session_state.sector_trend_range = settings["sector_trend_range"]
+    st.session_state.sector_trend_interval = settings["sector_trend_interval"]
+    st.session_state.sector_visual_metric = settings["sector_visual_metric"]
+    st.session_state.sector_sort = settings["sector_sort"]
+    st.session_state.sector_view = settings["sector_view"]
     st.session_state.auto_load_saved_watchlist = settings["auto_load"]
     st.session_state.auto_refresh_enabled = settings["auto_refresh"]
     st.session_state.news_per_ticker = settings["news_per_ticker"]
@@ -6000,6 +6625,7 @@ def ensure_streamlit_settings() -> None:
 def current_streamlit_settings() -> dict[str, Any]:
     """Return normalized settings from the current Streamlit session."""
     chart_range = normalize_chart_range(st.session_state.get("chart_range"))
+    sector_trend_range = normalize_sector_trend_range(st.session_state.get("sector_trend_range"))
     return normalize_streamlit_settings(
         {
             "default_view": st.session_state.get("active_view", LEVELS_VIEW),
@@ -6010,11 +6636,28 @@ def current_streamlit_settings() -> dict[str, Any]:
             "chart_type": st.session_state.get("global-chart-type", "Line"),
             "chart_range": chart_range,
             "chart_interval": st.session_state.get("chart_interval", CHART_DEFAULT_INTERVAL_BY_RANGE[chart_range]),
+            "sector_trend_range": sector_trend_range,
+            "sector_trend_interval": st.session_state.get(
+                "sector_trend_interval",
+                sector_default_interval(sector_trend_range),
+            ),
+            "sector_visual_metric": st.session_state.get("sector_visual_metric", STREAMLIT_DEFAULT_SETTINGS["sector_visual_metric"]),
+            "sector_sort": st.session_state.get("sector_sort", STREAMLIT_DEFAULT_SETTINGS["sector_sort"]),
+            "sector_view": st.session_state.get("sector_view", STREAMLIT_DEFAULT_SETTINGS["sector_view"]),
             "auto_load": st.session_state.get("auto_load_saved_watchlist", True),
             "auto_refresh": st.session_state.get("auto_refresh_enabled", True),
             "news_per_ticker": st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT),
         }
     )
+
+
+def current_sector_trend_settings() -> tuple[ChartRange, ChartInterval]:
+    """Return normalized sector analytics chart settings from session state."""
+    trend_range = normalize_sector_trend_range(st.session_state.get("sector_trend_range"))
+    trend_interval = normalize_sector_trend_interval(trend_range, st.session_state.get("sector_trend_interval"))
+    st.session_state.sector_trend_range = trend_range
+    st.session_state.sector_trend_interval = trend_interval
+    return trend_range, trend_interval
 
 
 def persist_session_settings() -> None:
@@ -6319,7 +6962,13 @@ def load_streamlit_data(tickers: tuple[str, ...], metrics: tuple[MetricName, ...
     st.session_state.report = build_report(tickers, metrics, refresh_token=refresh_token)
     st.session_state.scanner = build_scanner(tickers, refresh_token=refresh_token)
     record_streamlit_score_history(st.session_state.report, st.session_state.scanner)
-    st.session_state.sector_analytics = build_sector_analytics(tickers, refresh_token=refresh_token)
+    sector_range, sector_interval = current_sector_trend_settings()
+    st.session_state.sector_analytics = build_sector_analytics(
+        tickers,
+        sector_range,
+        sector_interval,
+        refresh_token=refresh_token,
+    )
     st.session_state.market_snapshot = build_market_snapshot(tickers, refresh_token=refresh_token)
     st.session_state.news = build_news(
         tickers,
@@ -6427,8 +7076,11 @@ def load_streamlit_data_with_banner(
         record_streamlit_score_history(scanner=st.session_state.scanner)
 
     def load_analytics() -> None:
+        sector_range, sector_interval = current_sector_trend_settings()
         st.session_state.sector_analytics = build_sector_analytics(
             tickers,
+            sector_range,
+            sector_interval,
             refresh_token=dataset_refresh_token("sector_analytics"),
         )
 
@@ -6505,6 +7157,70 @@ def render_streamlit_chart_controls() -> tuple[str, ChartRange, ChartInterval]:
         chart_interval = st.selectbox("Interval", CHART_INTERVALS_BY_RANGE[chart_range], key="chart_interval")
     persist_session_settings()
     return chart_type, chart_range, chart_interval
+
+
+def render_streamlit_sector_controls() -> bool:
+    """Render Sector Analytics controls and return whether trend data should refresh."""
+    settings = current_streamlit_settings()
+    if "sector_trend_range" not in st.session_state:
+        st.session_state.sector_trend_range = STREAMLIT_DEFAULT_SETTINGS["sector_trend_range"]
+    if "sector_trend_interval" not in st.session_state:
+        st.session_state.sector_trend_interval = STREAMLIT_DEFAULT_SETTINGS["sector_trend_interval"]
+
+    trend_col, interval_col, metric_col, sort_col, view_col = st.columns([1, 1, 1, 1, 1.2])
+    with trend_col:
+        trend_range = st.selectbox(
+            "Range",
+            SECTOR_TREND_RANGE_OPTIONS,
+            key="sector_trend_range",
+            format_func=format_chart_option,
+        )
+    if st.session_state.sector_trend_interval not in CHART_INTERVALS_BY_RANGE[trend_range]:
+        st.session_state.sector_trend_interval = sector_default_interval(trend_range)
+    with interval_col:
+        st.selectbox(
+            "Interval",
+            CHART_INTERVALS_BY_RANGE[trend_range],
+            key="sector_trend_interval",
+            format_func=format_chart_option,
+        )
+    with metric_col:
+        st.selectbox(
+            "Metric",
+            SECTOR_VISUAL_METRICS,
+            key="sector_visual_metric",
+            format_func=sector_option_label,
+        )
+    with sort_col:
+        st.selectbox(
+            "Sort",
+            SECTOR_SORT_OPTIONS,
+            key="sector_sort",
+            format_func=sector_option_label,
+        )
+    with view_col:
+        st.radio(
+            "View",
+            SECTOR_VIEW_OPTIONS,
+            horizontal=True,
+            key="sector_view",
+            format_func=sector_option_label,
+        )
+
+    current = current_streamlit_settings()
+    changed = any(settings[key] != current[key] for key in (
+        "sector_trend_range",
+        "sector_trend_interval",
+        "sector_visual_metric",
+        "sector_sort",
+        "sector_view",
+    ))
+    if changed:
+        persist_session_settings()
+    return (
+        settings["sector_trend_range"] != current["sector_trend_range"]
+        or settings["sector_trend_interval"] != current["sector_trend_interval"]
+    )
 
 
 def report_layout_options() -> tuple[str, ...]:
@@ -6948,6 +7664,8 @@ def main() -> None:
                 st.title("Sector Analytics")
             with action_col:
                 refresh_analytics = st.button("Refresh Analytics", type="primary", use_container_width=True)
+            sector_trend_changed = render_streamlit_sector_controls()
+            refresh_analytics = refresh_analytics or sector_trend_changed
         generate = False
         refresh_news = False
         report_slot = None
@@ -7039,8 +7757,11 @@ def main() -> None:
         refresh_token = bump_streamlit_refresh_token("Refreshing sector analytics", datasets=("sector_analytics",))
 
         def refresh_sector_analytics() -> None:
+            sector_range, sector_interval = current_sector_trend_settings()
             st.session_state.sector_analytics = build_sector_analytics(
                 tuple(request.tickers),
+                sector_range,
+                sector_interval,
                 refresh_token=dataset_refresh_token("sector_analytics"),
             )
 

@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import math
 from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from app.models import (
+    ChartInterval,
+    ChartRange,
     EarningsGap,
     PatternDayDetail,
     PatternHeatmapRow,
@@ -20,8 +23,12 @@ from app.models import (
     SectorAnalyticsRecommendation,
     SectorAnalyticsResponse,
     SectorAnalyticsRow,
+    SectorTrendPoint,
+    SectorTrendSeries,
+    ThemeHeatmapRow,
+    TickerChartHistory,
 )
-from app.services.market_data import EASTERN, MARKET_CLOSE, MARKET_OPEN, MarketDataService
+from app.services.market_data import EASTERN, MARKET_CLOSE, MARKET_OPEN, MARKET_SNAPSHOT_INSTRUMENTS, MarketDataService
 from app.services.display import level_type_weight
 
 MOUNTAIN = ZoneInfo("America/Denver")
@@ -75,6 +82,55 @@ TICKER_ETF = {
     "HD": "XLY",
     "SPY": "SPY",
     "QQQ": "QQQ",
+}
+
+THEME_OVERRIDES = {
+    "RKLB": "Space",
+    "BKSY": "Space",
+    "ASTS": "Space",
+    "LUNR": "Space",
+    "RDW": "Space",
+    "PL": "Space",
+    "SPIR": "Space",
+    "IRDM": "Space",
+    "GSAT": "Space",
+    "VSAT": "Space",
+    "SATL": "Space",
+    "SIDU": "Space",
+    "MNTS": "Space",
+    "LLAP": "Space",
+    "NVDA": "Semiconductors",
+    "AMD": "Semiconductors",
+    "MU": "Semiconductors",
+    "AVGO": "Semiconductors",
+    "TSM": "Semiconductors",
+    "ASML": "Semiconductors",
+    "INTC": "Semiconductors",
+    "QCOM": "Semiconductors",
+    "ARM": "Semiconductors",
+    "MRVL": "Semiconductors",
+    "LRCX": "Semiconductors",
+    "AMAT": "Semiconductors",
+    "AAPL": "Mega-cap Tech",
+    "MSFT": "Mega-cap Tech",
+    "GOOGL": "Mega-cap Tech",
+    "META": "Mega-cap Tech",
+    "AMZN": "Mega-cap Tech",
+    "XOM": "Energy",
+    "CVX": "Energy",
+    "OXY": "Energy",
+    "SLB": "Energy",
+    "JPM": "Financials",
+    "GS": "Financials",
+    "BAC": "Financials",
+    "MS": "Financials",
+    "WFC": "Financials",
+    "PWR": "Infrastructure",
+    "NVT": "Infrastructure",
+    "STRL": "Infrastructure",
+    "GEV": "Infrastructure",
+    "MYRG": "Infrastructure",
+    "FIX": "Infrastructure",
 }
 
 SIGNAL_PRIORITY = ["VWAP", "PM High", "Prev High", "Prev Low", "R1", "S1", "Pivot"]
@@ -160,6 +216,7 @@ class ScannerLevelData(TypedDict, total=False):
     swing_highs: list[float]
     swing_lows: list[float]
     sector: str
+    theme: str
     etf: str | None
     stock_pct: float | None
     sector_pct: float | None
@@ -243,6 +300,7 @@ class ScannerService:
             pattern_summary=sorted(pattern_summary, key=lambda row: (row.sector, row.ticker)),
             pattern_buckets=BUCKETS_ET,
             pattern_bucket_labels=BUCKET_LABELS,
+            theme_heatmap=self._theme_heatmap_rows(pattern_heatmap),
             pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector, row.ticker)),
             pattern_details=pattern_details,
             takeaways=self._takeaways(pattern_summary),
@@ -254,6 +312,8 @@ class ScannerService:
         tickers: list[str],
         *,
         pattern_lookback_days: int = LOOKBACK_DAYS,
+        trend_range: ChartRange = "3M",
+        trend_interval: ChartInterval = "1d",
     ) -> SectorAnalyticsResponse:
         """Return sector aggregates plus intraday pattern analysis for a watchlist."""
         watchlist = [ticker.upper().strip() for ticker in tickers if ticker.strip()]
@@ -286,15 +346,28 @@ class ScannerService:
                 warnings.append(f"Pattern analysis failed for {symbol}: {exc}")
 
         sector_rows = self._sector_rows(watchlist, sector_inputs, pattern_summary)
+        sector_trend_series, benchmark_trend_series, macro_trend_series, trend_warnings = self._build_sector_trends(
+            watchlist,
+            sector_rows,
+            trend_range,
+            trend_interval,
+        )
+        warnings.extend(trend_warnings)
         recommendations = self._sector_recommendations(sector_rows, len(watchlist))
         takeaways = self._sector_takeaways(sector_rows) + self._takeaways(pattern_summary)
         return SectorAnalyticsResponse(
             generated_at=datetime.now(timezone.utc),
             watchlist=watchlist,
+            trend_range=trend_range,
+            trend_interval=trend_interval,
             sector_rows=sector_rows,
+            sector_trend_series=sector_trend_series,
+            benchmark_trend_series=benchmark_trend_series,
+            macro_trend_series=macro_trend_series,
             pattern_summary=sorted(pattern_summary, key=lambda row: (row.sector, row.ticker)),
             pattern_buckets=BUCKETS_ET,
             pattern_bucket_labels=BUCKET_LABELS,
+            theme_heatmap=self._theme_heatmap_rows(pattern_heatmap),
             pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector, row.ticker)),
             pattern_details=pattern_details,
             recommendations=recommendations,
@@ -312,6 +385,7 @@ class ScannerService:
         pattern_summary: list[PatternSummaryRow] = []
         pattern_heatmap: list[PatternHeatmapRow] = []
         pattern_details: list[PatternDayDetail] = []
+        theme_heatmap: list[ThemeHeatmapRow] = []
         warnings: list[str] = []
         pattern_buckets: list[str] = []
         pattern_bucket_labels: list[str] = []
@@ -320,6 +394,7 @@ class ScannerService:
             setup_rows.extend(response.setup_rows)
             pattern_summary.extend(response.pattern_summary)
             pattern_heatmap.extend(response.pattern_heatmap)
+            theme_heatmap.extend(response.theme_heatmap)
             pattern_details.extend(response.pattern_details)
             warnings.extend(response.warnings)
             if response.pattern_buckets and not pattern_buckets:
@@ -345,6 +420,7 @@ class ScannerService:
             pattern_summary=sorted(pattern_summary, key=lambda row: (row.sector or "", row.ticker)),
             pattern_buckets=pattern_buckets or list(BUCKETS_ET),
             pattern_bucket_labels=pattern_bucket_labels or list(BUCKET_LABELS),
+            theme_heatmap=theme_heatmap or cls._theme_heatmap_rows(pattern_heatmap),
             pattern_heatmap=sorted(pattern_heatmap, key=lambda row: (row.sector or "", row.ticker)),
             pattern_details=ordered_details,
             takeaways=cls._takeaways(pattern_summary),
@@ -405,6 +481,7 @@ class ScannerService:
         opening = self.market_data.opening_range(minute, warnings)
         swing_levels = self.market_data.swing_levels(daily, warnings)
         etf, sector = self._sector_etf(symbol)
+        theme = self._ticker_theme(symbol, sector)
 
         stock_pct = self.market_data.pct_from(price, previous.close)
         spy_pct = self._benchmark_pct("SPY", benchmark_cache)
@@ -443,6 +520,7 @@ class ScannerService:
             "swing_highs": swing_levels.highs,
             "swing_lows": swing_levels.lows,
             "sector": sector,
+            "theme": theme,
             "etf": etf,
             "stock_pct": stock_pct,
             "sector_pct": sector_pct,
@@ -483,6 +561,12 @@ class ScannerService:
         except Exception:
             pass
         return None, "Other"
+
+    @staticmethod
+    def _ticker_theme(symbol: str, sector: str | None = None) -> str:
+        """Return the user-facing analytics theme for a ticker."""
+        clean_symbol = symbol.upper().strip()
+        return THEME_OVERRIDES.get(clean_symbol) or sector or "Other"
 
     def _setup_row(self, scan_data: TickerScanData) -> ScannerSetupRow:
         data = scan_data.data
@@ -573,6 +657,256 @@ class ScannerService:
         return sorted(rows, key=lambda row: (-row.weight_percent, row.sector))
 
     @classmethod
+    def _theme_heatmap_rows(cls, rows: list[PatternHeatmapRow]) -> list[ThemeHeatmapRow]:
+        """Aggregate ticker-level intraday heatmap rows into user-facing themes."""
+        grouped: dict[str, list[PatternHeatmapRow]] = {}
+        for row in rows:
+            grouped.setdefault(row.theme or row.sector or "Other", []).append(row)
+
+        heatmap_rows: list[ThemeHeatmapRow] = []
+        for theme, theme_rows in grouped.items():
+            max_len = max((len(row.values) for row in theme_rows), default=0)
+            values: list[float | None] = []
+            for index in range(max_len):
+                bucket_values = [
+                    row.values[index]
+                    for row in theme_rows
+                    if index < len(row.values) and row.values[index] is not None
+                ]
+                values.append(cls._avg(bucket_values))
+            tickers = sorted({row.ticker for row in theme_rows})
+            heatmap_rows.append(
+                ThemeHeatmapRow(
+                    theme=theme,
+                    ticker_count=len(tickers),
+                    tickers=tickers,
+                    values=values,
+                )
+            )
+        return sorted(heatmap_rows, key=lambda row: (-row.ticker_count, row.theme))
+
+    def _build_sector_trends(
+        self,
+        watchlist: list[str],
+        sector_rows: list[SectorAnalyticsRow],
+        trend_range: ChartRange,
+        trend_interval: ChartInterval,
+    ) -> tuple[list[SectorTrendSeries], list[SectorTrendSeries], list[SectorTrendSeries], list[str]]:
+        """Return normalized sector, benchmark, and macro trend series."""
+        if not watchlist:
+            return [], [], [], []
+
+        sector_etfs = [row.etf for row in sector_rows if row.etf]
+        macro_symbols = [symbol for symbol, _ in MARKET_SNAPSHOT_INSTRUMENTS]
+        symbols = list(dict.fromkeys([*watchlist, *sector_etfs, "SPY", *macro_symbols]))
+        warnings: list[str] = []
+
+        try:
+            response = self.market_data.build_chart_history(symbols, trend_range, trend_interval)
+        except Exception as exc:
+            return [], [], [], [f"Trend history was unavailable for sector analytics: {exc}"]
+
+        warnings.extend(response.warnings)
+        charts = {chart.ticker: chart for chart in response.charts}
+        ticker_series: dict[str, SectorTrendSeries] = {}
+        ticker_changes: dict[str, float | None] = {}
+
+        for ticker in watchlist:
+            series = self._trend_series_from_chart(
+                charts.get(ticker),
+                kind="watchlist_sector",
+                symbol=ticker,
+                label=ticker,
+                trend_range=trend_range,
+                trend_interval=trend_interval,
+            )
+            ticker_series[ticker] = series
+            ticker_changes[ticker] = series.change_percent
+            warnings.extend(series.warnings)
+
+        benchmark = self._trend_series_from_chart(
+            charts.get("SPY"),
+            kind="benchmark",
+            symbol="SPY",
+            label="SPY Benchmark",
+            trend_range=trend_range,
+            trend_interval=trend_interval,
+        )
+        warnings.extend(benchmark.warnings)
+
+        sector_series: list[SectorTrendSeries] = []
+        for row in sector_rows:
+            aggregate = self._aggregate_sector_trend(row, ticker_series, trend_range, trend_interval)
+            sector_series.append(aggregate)
+
+            etf_series: SectorTrendSeries | None = None
+            if row.etf:
+                etf_series = self._trend_series_from_chart(
+                    charts.get(row.etf),
+                    kind="sector_etf",
+                    symbol=row.etf,
+                    label=f"{row.sector} ETF ({row.etf})",
+                    trend_range=trend_range,
+                    trend_interval=trend_interval,
+                    sector=row.sector,
+                )
+                sector_series.append(etf_series)
+                warnings.extend(etf_series.warnings)
+
+            self._enrich_sector_row_from_trends(row, aggregate, etf_series, benchmark, ticker_changes)
+
+        macro_series: list[SectorTrendSeries] = []
+        for symbol, label in MARKET_SNAPSHOT_INSTRUMENTS:
+            series = self._trend_series_from_chart(
+                charts.get(symbol),
+                kind="macro",
+                symbol=symbol,
+                label=label,
+                trend_range=trend_range,
+                trend_interval=trend_interval,
+            )
+            macro_series.append(series)
+            warnings.extend(series.warnings)
+
+        return sector_series, [benchmark], macro_series, list(dict.fromkeys(warnings))
+
+    @classmethod
+    def _trend_series_from_chart(
+        cls,
+        chart: TickerChartHistory | None,
+        *,
+        kind: str,
+        symbol: str,
+        label: str,
+        trend_range: ChartRange,
+        trend_interval: ChartInterval,
+        sector: str | None = None,
+    ) -> SectorTrendSeries:
+        """Normalize one OHLC chart to percent change from its first valid close."""
+        warnings: list[str] = []
+        if chart is None:
+            return SectorTrendSeries(
+                kind=kind,  # type: ignore[arg-type]
+                symbol=symbol,
+                label=label,
+                range=trend_range,
+                interval=trend_interval,
+                sector=sector,
+                warnings=[f"No trend chart was returned for {label}."],
+            )
+
+        warnings.extend(chart.warnings)
+        first_close = next((cls._finite_float(point.close) for point in chart.points if cls._finite_float(point.close)), None)
+        if first_close is None or first_close == 0:
+            warnings.append(f"No valid trend close was returned for {label}.")
+            first_close = None
+
+        points: list[SectorTrendPoint] = []
+        for point in chart.points:
+            close = cls._finite_float(point.close)
+            change = round(((close - first_close) / first_close) * 100, 2) if close is not None and first_close else None
+            points.append(SectorTrendPoint(timestamp=point.timestamp, close=close, change_percent=change))
+
+        return SectorTrendSeries(
+            kind=kind,  # type: ignore[arg-type]
+            symbol=symbol,
+            label=label,
+            range=trend_range,
+            interval=trend_interval,
+            sector=sector,
+            points=points,
+            change_percent=cls._last_change_percent(points),
+            warnings=warnings,
+        )
+
+    @classmethod
+    def _aggregate_sector_trend(
+        cls,
+        row: SectorAnalyticsRow,
+        ticker_series: dict[str, SectorTrendSeries],
+        trend_range: ChartRange,
+        trend_interval: ChartInterval,
+    ) -> SectorTrendSeries:
+        """Average normalized ticker trend points into one watchlist-sector line."""
+        values_by_timestamp: dict[datetime, list[float]] = {}
+        for ticker in row.tickers:
+            for point in ticker_series.get(ticker, SectorTrendSeries(
+                kind="watchlist_sector",
+                symbol=ticker,
+                label=ticker,
+                range=trend_range,
+                interval=trend_interval,
+            )).points:
+                if point.change_percent is not None:
+                    values_by_timestamp.setdefault(point.timestamp, []).append(point.change_percent)
+
+        points = [
+            SectorTrendPoint(timestamp=timestamp, change_percent=cls._avg(values))
+            for timestamp, values in sorted(values_by_timestamp.items())
+        ]
+        return SectorTrendSeries(
+            kind="watchlist_sector",
+            symbol=row.sector,
+            label=f"{row.sector} Watchlist",
+            range=trend_range,
+            interval=trend_interval,
+            sector=row.sector,
+            points=points,
+            change_percent=cls._last_change_percent(points),
+            warnings=[] if points else [f"No trend points were available for {row.sector} watchlist tickers."],
+        )
+
+    @classmethod
+    def _enrich_sector_row_from_trends(
+        cls,
+        row: SectorAnalyticsRow,
+        aggregate: SectorTrendSeries,
+        etf_series: SectorTrendSeries | None,
+        benchmark: SectorTrendSeries,
+        ticker_changes: dict[str, float | None],
+    ) -> None:
+        """Stamp longer-range trend metrics onto an existing sector aggregate row."""
+        row.trend_change_percent = aggregate.change_percent
+        row.sector_etf_trend_change_percent = etf_series.change_percent if etf_series else None
+        row.trend_rs_vs_spy_percent = (
+            round(aggregate.change_percent - benchmark.change_percent, 2)
+            if aggregate.change_percent is not None and benchmark.change_percent is not None
+            else None
+        )
+
+        ranked = [
+            (ticker, change)
+            for ticker in row.tickers
+            if (change := ticker_changes.get(ticker)) is not None
+        ]
+        row.up_ticker_count = sum(1 for _, change in ranked if change > 0)
+        row.down_ticker_count = sum(1 for _, change in ranked if change < 0)
+        row.leader_tickers = [ticker for ticker, _ in sorted(ranked, key=lambda item: item[1], reverse=True)[:3]]
+        row.laggard_tickers = [ticker for ticker, _ in sorted(ranked, key=lambda item: item[1])[:3]]
+        row.recommendation_tone = cls._sector_tone(
+            row.average_rs_vs_spy_percent,
+            row.average_setup_score,
+            row.average_recovery_percent,
+            row.trend_rs_vs_spy_percent,
+        )
+        row.recommendation_text = cls._sector_recommendation_text(row)
+
+    @staticmethod
+    def _finite_float(value: object) -> float | None:
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    @classmethod
+    def _last_change_percent(cls, points: list[SectorTrendPoint]) -> float | None:
+        for point in reversed(points):
+            if point.change_percent is not None:
+                return point.change_percent
+        return None
+
+    @classmethod
     def _sector_recommendations(
         cls,
         sector_rows: list[SectorAnalyticsRow],
@@ -620,6 +954,12 @@ class ScannerService:
             takeaways.append(
                 f"{strongest.sector} has the strongest average watchlist RS vs SPY at {strongest.average_rs_vs_spy_percent:+.2f}%."
             )
+        trend_leaders = [row for row in sector_rows if row.trend_rs_vs_spy_percent is not None]
+        if trend_leaders:
+            strongest_trend = max(trend_leaders, key=lambda row: row.trend_rs_vs_spy_percent or -999)
+            takeaways.append(
+                f"{strongest_trend.sector} leads SPY over the selected trend range by {strongest_trend.trend_rs_vs_spy_percent:+.2f}%."
+            )
         return takeaways
 
     @staticmethod
@@ -632,16 +972,18 @@ class ScannerService:
         average_rs_vs_spy: float | None,
         average_setup_score: float | None,
         average_recovery: float | None,
+        trend_rs_vs_spy: float | None = None,
     ) -> str:
         if (
             (average_rs_vs_spy is not None and average_rs_vs_spy > 0)
+            or (trend_rs_vs_spy is not None and trend_rs_vs_spy > 0.75)
             or (average_setup_score is not None and average_setup_score >= 5)
             or (average_recovery is not None and average_recovery >= 0.5)
         ):
             return "focus"
         if (
-            average_rs_vs_spy is not None
-            and average_rs_vs_spy < 0
+            ((average_rs_vs_spy is not None and average_rs_vs_spy < 0)
+            or (trend_rs_vs_spy is not None and trend_rs_vs_spy < -0.75))
             and (average_setup_score is None or average_setup_score < 3)
             and (average_recovery is None or average_recovery < 0.25)
         ):
@@ -650,16 +992,27 @@ class ScannerService:
 
     @staticmethod
     def _sector_recommendation_text(row: SectorAnalyticsRow) -> str:
+        trend = (
+            f" Longer trend RS versus SPY is {row.trend_rs_vs_spy_percent:+.2f}%."
+            if row.trend_rs_vs_spy_percent is not None
+            else ""
+        )
+        participation = (
+            f" Participation: {row.up_ticker_count} up, {row.down_ticker_count} down."
+            if row.up_ticker_count or row.down_ticker_count
+            else ""
+        )
         if row.recommendation_tone == "focus":
             return (
                 f"{row.sector} is showing better readiness through relative strength, setup quality, "
-                "or pattern recovery across the covered tickers."
+                f"or pattern recovery across the covered tickers.{trend}{participation}"
             )
         if row.recommendation_tone == "wait":
             return (
                 f"{row.sector} is lagging on relative strength and does not yet show broad setup confirmation."
+                f"{trend}{participation}"
             )
-        return f"{row.sector} is mixed; keep it on watch until relative strength or setup quality becomes clearer."
+        return f"{row.sector} is mixed; relative strength or setup quality is not broadly confirmed yet.{trend}{participation}"
 
     @staticmethod
     def _common_low_times(rows: list[PatternSummaryRow]) -> list[str]:
@@ -1153,6 +1506,8 @@ class ScannerService:
         if len(trading_days) < 5:
             return None
 
+        sector = self._sector_etf(symbol)[1]
+        theme = self._ticker_theme(symbol, sector)
         bucket_values: dict[str, list[float]] = {bucket: [] for bucket in BUCKETS_ET}
         details: list[PatternDayDetail] = []
         for session_date in trading_days:
@@ -1183,6 +1538,8 @@ class ScannerService:
             details.append(
                 PatternDayDetail(
                     ticker=symbol,
+                    sector=sector,
+                    theme=theme,
                     date=session_date,
                     morning_low_percent=morning_low_pct,
                     morning_low_time=morning_low_index.astimezone(MOUNTAIN).strftime("%I:%M %p MT").lstrip("0"),
@@ -1198,13 +1555,13 @@ class ScannerService:
 
         dip_details = [detail for detail in details if detail.dip_in_window]
         top_times = [f"{time} ({count}x)" for time, count in Counter(detail.morning_low_time for detail in dip_details).most_common(3)]
-        sector = self._sector_etf(symbol)[1]
         avg_bucket = [
             round(sum(values) / len(values), 2) if values else None
             for values in (bucket_values[bucket] for bucket in BUCKETS_ET)
         ]
         summary = PatternSummaryRow(
             sector=sector,
+            theme=theme,
             ticker=symbol,
             total_days=len(details),
             dip_days=len(dip_details),
@@ -1220,7 +1577,7 @@ class ScannerService:
             common_low_time=top_times[0].split(" (", 1)[0] if top_times else None,
             top_low_times=top_times,
         )
-        heatmap = PatternHeatmapRow(ticker=symbol, sector=sector, values=avg_bucket)
+        heatmap = PatternHeatmapRow(ticker=symbol, sector=sector, theme=theme, values=avg_bucket)
         return summary, heatmap, details
 
     @staticmethod
