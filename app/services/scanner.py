@@ -133,6 +133,16 @@ THEME_OVERRIDES = {
     "FIX": "Infrastructure",
 }
 
+THEME_TREND_BASKET_LIMIT = 8
+THEME_TREND_BASKETS: dict[str, tuple[str, ...]] = {
+    "Space": ("RKLB", "ASTS", "BKSY", "LUNR", "RDW", "PL", "IRDM", "GSAT"),
+    "Semiconductors": ("NVDA", "AMD", "MU", "AVGO", "TSM", "ASML", "QCOM", "ARM"),
+    "Mega-cap Tech": ("AAPL", "MSFT", "GOOGL", "META", "AMZN"),
+    "Infrastructure": ("PWR", "NVT", "STRL", "GEV", "MYRG", "FIX"),
+    "Energy": ("XOM", "CVX", "OXY", "SLB"),
+    "Financials": ("JPM", "GS", "BAC", "MS", "WFC"),
+}
+
 SIGNAL_PRIORITY = ["VWAP", "PM High", "Prev High", "Prev Low", "R1", "S1", "Pivot"]
 
 
@@ -346,7 +356,13 @@ class ScannerService:
                 warnings.append(f"Pattern analysis failed for {symbol}: {exc}")
 
         sector_rows = self._sector_rows(watchlist, sector_inputs, pattern_summary)
-        sector_trend_series, benchmark_trend_series, macro_trend_series, trend_warnings = self._build_sector_trends(
+        (
+            sector_trend_series,
+            benchmark_trend_series,
+            macro_trend_series,
+            theme_trend_series,
+            trend_warnings,
+        ) = self._build_sector_trends(
             watchlist,
             sector_rows,
             trend_range,
@@ -362,6 +378,7 @@ class ScannerService:
             trend_interval=trend_interval,
             sector_rows=sector_rows,
             sector_trend_series=sector_trend_series,
+            theme_trend_series=theme_trend_series,
             benchmark_trend_series=benchmark_trend_series,
             macro_trend_series=macro_trend_series,
             pattern_summary=sorted(pattern_summary, key=lambda row: (row.sector, row.ticker)),
@@ -691,38 +708,57 @@ class ScannerService:
         sector_rows: list[SectorAnalyticsRow],
         trend_range: ChartRange,
         trend_interval: ChartInterval,
-    ) -> tuple[list[SectorTrendSeries], list[SectorTrendSeries], list[SectorTrendSeries], list[str]]:
-        """Return normalized sector, benchmark, and macro trend series."""
+    ) -> tuple[
+        list[SectorTrendSeries],
+        list[SectorTrendSeries],
+        list[SectorTrendSeries],
+        list[SectorTrendSeries],
+        list[str],
+    ]:
+        """Return normalized sector, theme, benchmark, and macro trend series."""
         if not watchlist:
-            return [], [], [], []
+            return [], [], [], [], []
 
         sector_etfs = [row.etf for row in sector_rows if row.etf]
+        theme_groups = self._watchlist_theme_groups(watchlist, sector_rows)
+        theme_basket_symbols = [
+            symbol
+            for theme in theme_groups
+            for symbol in self._theme_basket_symbols(theme)
+        ]
         macro_symbols = [symbol for symbol, _ in MARKET_SNAPSHOT_INSTRUMENTS]
-        symbols = list(dict.fromkeys([*watchlist, *sector_etfs, "SPY", *macro_symbols]))
+        symbols = list(dict.fromkeys([*watchlist, *sector_etfs, *theme_basket_symbols, "SPY", *macro_symbols]))
         warnings: list[str] = []
 
         try:
             response = self.market_data.build_chart_history(symbols, trend_range, trend_interval)
         except Exception as exc:
-            return [], [], [], [f"Trend history was unavailable for sector analytics: {exc}"]
+            return [], [], [], [], [f"Trend history was unavailable for sector analytics: {exc}"]
 
         warnings.extend(response.warnings)
         charts = {chart.ticker: chart for chart in response.charts}
-        ticker_series: dict[str, SectorTrendSeries] = {}
-        ticker_changes: dict[str, float | None] = {}
-
-        for ticker in watchlist:
-            series = self._trend_series_from_chart(
-                charts.get(ticker),
-                kind="watchlist_sector",
-                symbol=ticker,
-                label=ticker,
+        symbol_series = {
+            symbol: self._trend_series_from_chart(
+                charts.get(symbol),
+                kind="watchlist_theme" if symbol in watchlist else "theme_basket",
+                symbol=symbol,
+                label=symbol,
                 trend_range=trend_range,
                 trend_interval=trend_interval,
             )
-            ticker_series[ticker] = series
-            ticker_changes[ticker] = series.change_percent
-            warnings.extend(series.warnings)
+            for symbol in symbols
+        }
+        for symbol in list(dict.fromkeys([*watchlist, *theme_basket_symbols])):
+            warnings.extend(symbol_series.get(symbol, SectorTrendSeries(
+                kind="theme_basket",
+                symbol=symbol,
+                label=symbol,
+                range=trend_range,
+                interval=trend_interval,
+            )).warnings)
+
+        ticker_series = {ticker: symbol_series[ticker] for ticker in watchlist if ticker in symbol_series}
+        ticker_changes = {ticker: series.change_percent for ticker, series in ticker_series.items()}
 
         benchmark = self._trend_series_from_chart(
             charts.get("SPY"),
@@ -768,7 +804,76 @@ class ScannerService:
             macro_series.append(series)
             warnings.extend(series.warnings)
 
-        return sector_series, [benchmark], macro_series, list(dict.fromkeys(warnings))
+        theme_series = self._build_theme_trends(
+            theme_groups,
+            symbol_series,
+            trend_range,
+            trend_interval,
+        )
+        for series in theme_series:
+            warnings.extend(series.warnings)
+
+        return sector_series, [benchmark], macro_series, theme_series, list(dict.fromkeys(warnings))
+
+    @classmethod
+    def _watchlist_theme_groups(
+        cls,
+        watchlist: list[str],
+        sector_rows: list[SectorAnalyticsRow],
+    ) -> dict[str, list[str]]:
+        """Group watchlist tickers by user-facing analytics theme."""
+        ticker_sector = {
+            ticker: row.sector
+            for row in sector_rows
+            for ticker in row.tickers
+        }
+        groups: dict[str, list[str]] = {}
+        for ticker in watchlist:
+            theme = cls._ticker_theme(ticker, ticker_sector.get(ticker))
+            groups.setdefault(theme, []).append(ticker)
+        return groups
+
+    @staticmethod
+    def _theme_basket_symbols(theme: str) -> list[str]:
+        """Return capped representative symbols for broader theme trend context."""
+        return list(dict.fromkeys(THEME_TREND_BASKETS.get(theme, ())))[:THEME_TREND_BASKET_LIMIT]
+
+    @classmethod
+    def _build_theme_trends(
+        cls,
+        theme_groups: dict[str, list[str]],
+        symbol_series: dict[str, SectorTrendSeries],
+        trend_range: ChartRange,
+        trend_interval: ChartInterval,
+    ) -> list[SectorTrendSeries]:
+        """Return watchlist and broader basket trend lines for covered themes."""
+        theme_series: list[SectorTrendSeries] = []
+        for theme, tickers in theme_groups.items():
+            theme_series.append(
+                cls._aggregate_theme_trend(
+                    theme,
+                    tickers,
+                    symbol_series,
+                    trend_range,
+                    trend_interval,
+                    kind="watchlist_theme",
+                    label=f"{theme} Watchlist",
+                )
+            )
+            basket_symbols = cls._theme_basket_symbols(theme)
+            if basket_symbols:
+                theme_series.append(
+                    cls._aggregate_theme_trend(
+                        theme,
+                        basket_symbols,
+                        symbol_series,
+                        trend_range,
+                        trend_interval,
+                        kind="theme_basket",
+                        label=f"{theme} Basket",
+                    )
+                )
+        return theme_series
 
     @classmethod
     def _trend_series_from_chart(
@@ -781,6 +886,7 @@ class ScannerService:
         trend_range: ChartRange,
         trend_interval: ChartInterval,
         sector: str | None = None,
+        theme: str | None = None,
     ) -> SectorTrendSeries:
         """Normalize one OHLC chart to percent change from its first valid close."""
         warnings: list[str] = []
@@ -792,6 +898,7 @@ class ScannerService:
                 range=trend_range,
                 interval=trend_interval,
                 sector=sector,
+                theme=theme,
                 warnings=[f"No trend chart was returned for {label}."],
             )
 
@@ -814,6 +921,7 @@ class ScannerService:
             range=trend_range,
             interval=trend_interval,
             sector=sector,
+            theme=theme,
             points=points,
             change_percent=cls._last_change_percent(points),
             warnings=warnings,
@@ -854,6 +962,50 @@ class ScannerService:
             points=points,
             change_percent=cls._last_change_percent(points),
             warnings=[] if points else [f"No trend points were available for {row.sector} watchlist tickers."],
+        )
+
+    @classmethod
+    def _aggregate_theme_trend(
+        cls,
+        theme: str,
+        symbols: list[str],
+        symbol_series: dict[str, SectorTrendSeries],
+        trend_range: ChartRange,
+        trend_interval: ChartInterval,
+        *,
+        kind: str,
+        label: str,
+    ) -> SectorTrendSeries:
+        """Average normalized ticker trend points into one theme line."""
+        values_by_timestamp: dict[datetime, list[float]] = {}
+        for symbol in symbols:
+            fallback = SectorTrendSeries(
+                kind=kind,  # type: ignore[arg-type]
+                symbol=symbol,
+                label=symbol,
+                range=trend_range,
+                interval=trend_interval,
+                theme=theme,
+            )
+            for point in symbol_series.get(symbol, fallback).points:
+                if point.change_percent is not None:
+                    values_by_timestamp.setdefault(point.timestamp, []).append(point.change_percent)
+
+        points = [
+            SectorTrendPoint(timestamp=timestamp, change_percent=cls._avg(values))
+            for timestamp, values in sorted(values_by_timestamp.items())
+        ]
+        source = "watchlist tickers" if kind == "watchlist_theme" else "basket tickers"
+        return SectorTrendSeries(
+            kind=kind,  # type: ignore[arg-type]
+            symbol=theme,
+            label=label,
+            range=trend_range,
+            interval=trend_interval,
+            theme=theme,
+            points=points,
+            change_percent=cls._last_change_percent(points),
+            warnings=[] if points else [f"No trend points were available for {theme} {source}."],
         )
 
     @classmethod

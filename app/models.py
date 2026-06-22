@@ -24,7 +24,7 @@ NewsAnalysisStatus = Literal["pending", "analyzed", "failed", "skipped"]
 RecommendationTone = Literal["focus", "watch", "wait", "note"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 ChartInterval = Literal["1m", "2m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
-SectorTrendSeriesKind = Literal["watchlist_sector", "sector_etf", "benchmark", "macro"]
+SectorTrendSeriesKind = Literal["watchlist_sector", "sector_etf", "watchlist_theme", "theme_basket", "benchmark", "macro"]
 DisplayRowKind = Literal["price", "percent", "date", "text"]
 DisplayRowEmphasis = Literal["normal", "priority", "current"]
 ReportLayoutName = Literal["grid", "price_ladder", "compact", "compare"]
@@ -643,6 +643,7 @@ class SectorTrendSeries(BaseModel):
     range: ChartRange
     interval: ChartInterval
     sector: str | None = None
+    theme: str | None = None
     points: list[SectorTrendPoint] = Field(default_factory=list)
     change_percent: float | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -657,6 +658,7 @@ class SectorAnalyticsResponse(BaseModel):
     trend_interval: ChartInterval = "1d"
     sector_rows: list[SectorAnalyticsRow] = Field(default_factory=list)
     sector_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
+    theme_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
     benchmark_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
     macro_trend_series: list[SectorTrendSeries] = Field(default_factory=list)
     pattern_summary: list[PatternSummaryRow] = Field(default_factory=list)

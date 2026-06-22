@@ -142,6 +142,23 @@ def test_sector_analytics_response_accepts_rows_and_recommendations():
                 change_percent=2.5,
             )
         ],
+        theme_trend_series=[
+            SectorTrendSeries(
+                kind="theme_basket",
+                symbol="Space",
+                label="Space Basket",
+                range="3M",
+                interval="1d",
+                theme="Space",
+                points=[
+                    SectorTrendPoint(
+                        timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                        change_percent=3.5,
+                    )
+                ],
+                change_percent=3.5,
+            )
+        ],
         theme_heatmap=[
             ThemeHeatmapRow(
                 theme="Space",
@@ -155,6 +172,8 @@ def test_sector_analytics_response_accepts_rows_and_recommendations():
     assert response.sector_rows[0].sector == "Technology"
     assert response.recommendations[0].tone == "focus"
     assert response.sector_trend_series[0].change_percent == 2.5
+    assert response.theme_trend_series[0].kind == "theme_basket"
+    assert response.theme_trend_series[0].theme == "Space"
     assert response.theme_heatmap[0].theme == "Space"
 
 

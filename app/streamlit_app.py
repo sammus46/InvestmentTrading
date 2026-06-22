@@ -1279,7 +1279,8 @@ def render_app_chrome() -> str:
           }
           .streamlit-sector-summary-grid,
           .streamlit-sector-insight-grid,
-          .streamlit-sector-macro-strip {
+          .streamlit-sector-macro-strip,
+          .streamlit-pattern-theme-grid {
             display: grid;
             gap: 0.75rem;
             grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
@@ -1289,7 +1290,8 @@ def render_app_chrome() -> str:
           .streamlit-sector-insight,
           .streamlit-sector-chart-panel,
           .streamlit-sector-macro-panel,
-          .streamlit-sector-macro-tile {
+          .streamlit-sector-macro-tile,
+          .streamlit-pattern-theme-card {
             background: #ffffff;
             border: 1px solid #dbe3ef;
             border-radius: 0.5rem;
@@ -1297,20 +1299,23 @@ def render_app_chrome() -> str:
           }
           .streamlit-sector-summary-tile span,
           .streamlit-sector-insight > span,
-          .streamlit-sector-meta {
+          .streamlit-sector-meta,
+          .streamlit-pattern-theme-card > span {
             color: #64748b !important;
             font-size: 0.68rem;
             font-weight: 900;
             letter-spacing: 0.05em;
             text-transform: uppercase;
           }
-          .streamlit-sector-summary-tile strong {
+          .streamlit-sector-summary-tile strong,
+          .streamlit-pattern-theme-card strong {
             color: #0f172a !important;
             display: block;
             font-size: 1.2rem;
           }
           .streamlit-sector-summary-tile p,
-          .streamlit-sector-insight p {
+          .streamlit-sector-insight p,
+          .streamlit-pattern-theme-card p {
             margin: 0;
           }
           .streamlit-sector-coverage-bars {
@@ -1357,7 +1362,7 @@ def render_app_chrome() -> str:
             background: #ffffff;
             border: 1px solid #dbe3ef;
             border-radius: 0.5rem;
-            height: 15.5rem;
+            height: 19rem;
             overflow: hidden;
             position: relative;
           }
@@ -1372,8 +1377,8 @@ def render_app_chrome() -> str:
             background: #e2e8f0;
             position: absolute;
           }
-          .streamlit-sector-axis.x { height: 1px; left: 1rem; right: 1rem; top: 50%; }
-          .streamlit-sector-axis.y { bottom: 1rem; left: 50%; top: 1rem; width: 1px; }
+          .streamlit-sector-axis.x { height: 1px; left: 1.35rem; right: 1.35rem; top: 50%; }
+          .streamlit-sector-axis.y { bottom: 1.35rem; left: 50%; top: 1.35rem; width: 1px; }
           .streamlit-sector-dot {
             align-items: center;
             border: 2px solid #ffffff;
@@ -1383,11 +1388,12 @@ def render_app_chrome() -> str:
             display: inline-flex;
             font-size: 0.62rem;
             font-weight: 900;
-            height: 2.1rem;
+            height: var(--dot-size, 2.1rem);
             justify-content: center;
             position: absolute;
             transform: translate(-50%, 50%);
-            width: 2.1rem;
+            width: var(--dot-size, 2.1rem);
+            z-index: 2;
           }
           .streamlit-sector-dot.tone-focus { background: #0f766e; }
           .streamlit-sector-dot.tone-watch { background: #f59e0b; }
@@ -1403,6 +1409,19 @@ def render_app_chrome() -> str:
           .streamlit-sector-matrix-label.left { bottom: 0.5rem; left: 0.75rem; }
           .streamlit-sector-matrix-label.right { bottom: 0.5rem; right: 0.75rem; }
           .streamlit-sector-matrix-label.top { right: 0.75rem; top: 0.5rem; }
+          .streamlit-sector-quadrant {
+            color: #94a3b8 !important;
+            font-size: 0.68rem;
+            font-weight: 900;
+            max-width: 9.5rem;
+            position: absolute;
+            text-transform: uppercase;
+            z-index: 1;
+          }
+          .streamlit-sector-quadrant.top-left { left: 1rem; top: 1rem; }
+          .streamlit-sector-quadrant.top-right { right: 1rem; text-align: right; top: 1rem; }
+          .streamlit-sector-quadrant.bottom-left { bottom: 1.75rem; left: 1rem; }
+          .streamlit-sector-quadrant.bottom-right { bottom: 1.75rem; right: 1rem; text-align: right; }
           .streamlit-sector-insight {
             border-left: 4px solid #f59e0b;
             display: grid;
@@ -1442,6 +1461,10 @@ def render_app_chrome() -> str:
             stroke-linejoin: round;
             stroke-width: 3;
           }
+          .streamlit-sector-line-chart polyline.series-sector_etf,
+          .streamlit-sector-line-chart polyline.series-theme_basket {
+            stroke-dasharray: 7 5;
+          }
           .streamlit-sector-line-chart .zero-line {
             stroke: #cbd5e1;
             stroke-dasharray: 4 5;
@@ -1465,6 +1488,19 @@ def render_app_chrome() -> str:
             content: "";
             height: 0.5rem;
             width: 0.5rem;
+          }
+          .streamlit-trend-source {
+            background: #eef2f7;
+            border: 1px solid #dbe3ef;
+            border-radius: 999px;
+            color: #475569 !important;
+            display: inline-flex;
+            font-size: 0.62rem;
+            font-style: normal;
+            font-weight: 900;
+            line-height: 1;
+            padding: 0.18rem 0.38rem;
+            text-transform: uppercase;
           }
           .streamlit-sector-macro-tile {
             align-items: center;
@@ -1501,6 +1537,39 @@ def render_app_chrome() -> str:
             border-radius: 0.4rem;
             display: block;
             opacity: 0.55;
+          }
+          .streamlit-pattern-theme-grid {
+            margin: 0.25rem 0 0.75rem;
+          }
+          .streamlit-pattern-theme-card {
+            display: grid;
+            gap: 0.45rem;
+          }
+          .streamlit-pattern-theme-card strong {
+            color: #0f766e !important;
+          }
+          .streamlit-pattern-theme-card dl {
+            display: grid;
+            gap: 0.35rem;
+            margin: 0;
+          }
+          .streamlit-pattern-theme-card dl div {
+            align-items: center;
+            display: flex;
+            gap: 0.5rem;
+            justify-content: space-between;
+          }
+          .streamlit-pattern-theme-card dt {
+            color: #64748b !important;
+            font-size: 0.74rem;
+            font-weight: 800;
+          }
+          .streamlit-pattern-theme-card dd {
+            color: #0f172a !important;
+            font-size: 0.78rem;
+            font-weight: 900;
+            margin: 0;
+            text-align: right;
           }
           .streamlit-news-card.with-image {
             grid-template-columns: 9rem 1fr;
@@ -5637,6 +5706,7 @@ def render_pattern_analysis(report: Any) -> None:
         st.info("No intraday pattern analysis was returned.")
         return
     st.subheader("Pattern Summary")
+    st.markdown(streamlit_pattern_theme_cards(report.pattern_summary), unsafe_allow_html=True)
     st.dataframe(
         pattern_summary_frame(report),
         use_container_width=True,
@@ -5834,24 +5904,36 @@ def streamlit_sector_strength_matrix(rows: list[SectorAnalyticsRow]) -> str:
     ]
     if not points:
         return '<div class="streamlit-sector-matrix empty">No trend matrix data returned.</div>'
-    y_values = [float(point[2]) for point in points if point[2] is not None]
-    y_min = min([0, *y_values])
-    y_max = max([1, *y_values])
-    y_range = y_max - y_min or 1
+    max_abs_x = max([1, *[abs(float(point[1])) for point in points if point[1] is not None]])
+    max_abs_y = max([1, *[abs(float(point[2])) for point in points if point[2] is not None]])
     dots = []
     for row, x_value, y_value in points:
         assert x_value is not None and y_value is not None
-        left = max(3, min(97, 50 + float(x_value) * 3))
-        bottom = max(5, min(95, ((float(y_value) - y_min) / y_range) * 86 + 7))
+        left = max(7, min(93, 50 + (float(x_value) / max_abs_x) * 42))
+        bottom = max(8, min(92, 50 + (float(y_value) / max_abs_y) * 42))
+        dot_size = max(30, min(54, 28 + (max(0, row.weight_percent) ** 0.5) * 2.5))
+        title = " | ".join(
+            [
+                row.sector,
+                f"Trend RS: {signed_pct_fmt(row.trend_rs_vs_spy_percent)}",
+                f"{sector_option_label(metric)}: {streamlit_matrix_metric_value(row, metric)}",
+                f"Weight: {pct_fmt(row.weight_percent)}",
+                f"Tickers: {', '.join(row.tickers) or '-'}",
+            ]
+        )
         dots.append(
             f'<span class="streamlit-sector-dot tone-{escape(row.recommendation_tone)}" '
-            f'style="left:{left:.1f}%;bottom:{bottom:.1f}%;" '
-            f'title="{escape(row.sector)} {signed_pct_fmt(row.trend_rs_vs_spy_percent)}">'
+            f'style="left:{left:.1f}%;bottom:{bottom:.1f}%;--dot-size:{dot_size:.0f}px;" '
+            f'title="{escape(title)}">'
             f"{escape(row.sector[:3])}</span>"
         )
     return (
         '<div class="streamlit-sector-matrix" role="img" aria-label="Sector strength matrix">'
         '<div class="streamlit-sector-axis x"></div><div class="streamlit-sector-axis y"></div>'
+        '<span class="streamlit-sector-quadrant top-left">Strong read, weak trend</span>'
+        '<span class="streamlit-sector-quadrant top-right">Leading + confirming</span>'
+        '<span class="streamlit-sector-quadrant bottom-left">Lagging + soft</span>'
+        '<span class="streamlit-sector-quadrant bottom-right">Leading, needs confirmation</span>'
         f"{''.join(dots)}"
         '<span class="streamlit-sector-matrix-label left">Lagging SPY</span>'
         '<span class="streamlit-sector-matrix-label right">Leading SPY</span>'
@@ -5870,34 +5952,77 @@ def streamlit_sector_metric_value(row: SectorAnalyticsRow, metric: str) -> float
     return row.average_rs_vs_spy_percent
 
 
+def streamlit_matrix_metric_value(row: SectorAnalyticsRow, metric: str) -> str:
+    value = streamlit_sector_metric_value(row, metric)
+    if metric == "setup":
+        return f"{value:.2f}" if value is not None else "-"
+    if metric == "pattern":
+        return pct_fmt(value)
+    return signed_pct_fmt(value)
+
+
 def streamlit_sector_visuals_html(report: SectorAnalyticsResponse, rows: list[SectorAnalyticsRow], view: str) -> str:
     """Return Streamlit sector trend and macro visuals."""
     series = streamlit_sector_rotation_series(report, rows)
+    theme_series = streamlit_theme_trend_series(report)
     macro = "" if view == "details" else streamlit_sector_macro_strip(report.macro_trend_series)
-    chart = "" if view == "details" else streamlit_sector_trend_chart(series)
+    chart = "" if view == "details" else (
+        streamlit_sector_trend_chart(series, "Sector Trends")
+        + streamlit_sector_trend_chart(theme_series, "Theme Trends")
+    )
     if not chart and not macro:
         return '<div class="streamlit-sector-empty">No sector trend rows were returned.</div>'
     return f'<div class="streamlit-sector-visuals">{chart}{macro}</div>'
 
 
 def streamlit_sector_rotation_series(report: SectorAnalyticsResponse, rows: list[SectorAnalyticsRow]) -> list[Any]:
-    sectors = {row.sector for row in rows[:5]}
-    selected = [
-        series
-        for series in report.sector_trend_series
-        if series.kind == "watchlist_sector" and series.sector in sectors
-    ][:5]
+    selected = []
+    for row in rows[:4]:
+        watchlist_series = next(
+            (series for series in report.sector_trend_series if series.kind == "watchlist_sector" and series.sector == row.sector),
+            None,
+        )
+        etf_series = next(
+            (series for series in report.sector_trend_series if series.kind == "sector_etf" and series.sector == row.sector),
+            None,
+        )
+        if watchlist_series is not None:
+            selected.append(watchlist_series)
+        if etf_series is not None:
+            selected.append(etf_series)
     return [*selected, *report.benchmark_trend_series[:1]]
 
 
-def streamlit_sector_trend_chart(series: list[Any]) -> str:
+def streamlit_theme_trend_series(report: SectorAnalyticsResponse) -> list[Any]:
+    themes = []
+    for series in report.theme_trend_series:
+        if series.theme and series.theme not in themes:
+            themes.append(series.theme)
+    selected = []
+    for theme in themes[:5]:
+        watchlist_series = next(
+            (series for series in report.theme_trend_series if series.kind == "watchlist_theme" and series.theme == theme),
+            None,
+        )
+        basket_series = next(
+            (series for series in report.theme_trend_series if series.kind == "theme_basket" and series.theme == theme),
+            None,
+        )
+        if watchlist_series is not None:
+            selected.append(watchlist_series)
+        if basket_series is not None:
+            selected.append(basket_series)
+    return selected
+
+
+def streamlit_sector_trend_chart(series: list[Any], title: str) -> str:
     valid = [item for item in series if any(point.change_percent is not None for point in item.points)]
     if not valid:
         return '<div class="streamlit-sector-empty">No trend series returned.</div>'
     chart = streamlit_trend_line_chart(valid)
     return (
         '<section class="streamlit-sector-chart-panel">'
-        "<h4>Sector Rotation</h4>"
+        f"<h4>{escape(title)}</h4>"
         f"{chart}"
         "</section>"
     )
@@ -5911,7 +6036,7 @@ def streamlit_sector_macro_strip(series: list[Any]) -> str:
         tone = "negative" if item.change_percent is not None and item.change_percent < 0 else "positive"
         tiles.append(
             f'<article class="streamlit-sector-macro-tile {tone}">'
-            f"<div><h4>{escape(item.label or item.symbol)}</h4><strong>{signed_pct_fmt(item.change_percent)}</strong></div>"
+            f'<div><span class="streamlit-trend-source">Macro</span><h4>{escape(item.label or item.symbol)}</h4><strong>{signed_pct_fmt(item.change_percent)}</strong></div>'
             f"{streamlit_trend_sparkline(item.points)}"
             "</article>"
         )
@@ -5956,9 +6081,14 @@ def streamlit_trend_line_chart(series: list[Any]) -> str:
             x = left + (plot_width / 2 if len(points) <= 1 else (point_index / (len(points) - 1)) * plot_width)
             coords.append(f"{x:.2f},{y_for(float(point.change_percent)):.2f}")
         if coords:
-            lines.append(f'<polyline points="{" ".join(coords)}" style="--series-color:{color}"></polyline>')
+            lines.append(
+                f'<polyline class="{escape(streamlit_trend_series_class(item))}" '
+                f'points="{" ".join(coords)}" style="--series-color:{color}"></polyline>'
+            )
             legend.append(
-                f'<span style="--series-color:{color}">{escape(item.label)} <strong>{signed_pct_fmt(item.change_percent)}</strong></span>'
+                f'<span style="--series-color:{color}"><em class="streamlit-trend-source">'
+                f"{escape(streamlit_trend_source_label(item))}</em>{escape(item.label)} "
+                f"<strong>{signed_pct_fmt(item.change_percent)}</strong></span>"
             )
     zero = y_for(0)
     return (
@@ -5969,6 +6099,24 @@ def streamlit_trend_line_chart(series: list[Any]) -> str:
         f'<div class="streamlit-sector-chart-legend">{"".join(legend)}</div>'
         "</div>"
     )
+
+
+def streamlit_trend_series_class(item: Any) -> str:
+    kind = "".join(ch for ch in str(getattr(item, "kind", "series")) if ch.isalnum() or ch in {"_", "-"})
+    return f"series-{kind}"
+
+
+def streamlit_trend_source_label(item: Any) -> str:
+    kind = getattr(item, "kind", "")
+    if kind == "sector_etf":
+        return "ETF"
+    if kind == "theme_basket":
+        return "Basket"
+    if kind == "benchmark":
+        return "SPY" if getattr(item, "symbol", "") == "SPY" else "Benchmark"
+    if kind == "macro":
+        return "Macro"
+    return "Watchlist"
 
 
 def streamlit_trend_sparkline(points: list[Any]) -> str:
@@ -6491,6 +6639,60 @@ def scanner_setup_html(report: ScannerResponse, scanner_view: str = "auto") -> s
     )
 
 
+def streamlit_pattern_theme_cards(summary: list[Any]) -> str:
+    """Return compact theme-level intraday pattern summaries."""
+    grouped: dict[str, list[Any]] = {}
+    for row in summary:
+        theme = getattr(row, "theme", None) or getattr(row, "sector", None) or "Other"
+        grouped.setdefault(theme, []).append(row)
+
+    cards = []
+    for theme, rows in sorted(grouped.items()):
+        consistency = average_streamlit_values([getattr(row, "consistency_percent", None) for row in rows])
+        dips = [float(row.average_dip_percent) for row in rows if getattr(row, "average_dip_percent", None) is not None]
+        recoveries = [
+            float(row.average_recovery_percent)
+            for row in rows
+            if getattr(row, "average_recovery_percent", None) is not None
+        ]
+        tickers = sorted({str(getattr(row, "ticker", "")) for row in rows if getattr(row, "ticker", "")})
+        cards.append(
+            '<article class="streamlit-pattern-theme-card">'
+            f"<span>{escape(theme)}</span>"
+            f"<strong>{pct_fmt(consistency)}</strong>"
+            f"<p>Consistency across {len(tickers)} ticker{'s' if len(tickers) != 1 else ''}</p>"
+            "<dl>"
+            f"<div><dt>Deepest avg dip</dt><dd>{pct_fmt(min(dips) if dips else None)}</dd></div>"
+            f"<div><dt>Best recovery</dt><dd>{signed_pct_fmt(max(recoveries) if recoveries else None)}</dd></div>"
+            f"<div><dt>Common low</dt><dd>{escape(streamlit_common_low_window(rows) or '-')}</dd></div>"
+            "</dl>"
+            "</article>"
+        )
+    return f'<div class="streamlit-pattern-theme-grid">{"".join(cards)}</div>'
+
+
+def average_streamlit_values(values: list[Any]) -> float | None:
+    numbers = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        numbers.append(number)
+    return round(sum(numbers) / len(numbers), 2) if numbers else None
+
+
+def streamlit_common_low_window(rows: list[Any]) -> str:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for item in getattr(row, "top_low_times", []) or []:
+            label = str(item).split(" (", 1)[0]
+            counts[label] = counts.get(label, 0) + 1
+    if not counts:
+        return ""
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
 def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
     """Build a display frame for pattern summary rows."""
     return pd.DataFrame(
@@ -6655,8 +6857,6 @@ def current_sector_trend_settings() -> tuple[ChartRange, ChartInterval]:
     """Return normalized sector analytics chart settings from session state."""
     trend_range = normalize_sector_trend_range(st.session_state.get("sector_trend_range"))
     trend_interval = normalize_sector_trend_interval(trend_range, st.session_state.get("sector_trend_interval"))
-    st.session_state.sector_trend_range = trend_range
-    st.session_state.sector_trend_interval = trend_interval
     return trend_range, trend_interval
 
 

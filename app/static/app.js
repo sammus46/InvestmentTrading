@@ -2074,10 +2074,10 @@ function renderSectorCoverage(rows, analytics) {
       ${renderSectorSummaryTile("Trend Leader", strongest?.sector || "-", strongest ? formatSignedPercent(strongest.trend_rs_vs_spy_percent) : "No trend")}
       ${renderSectorSummaryTile("Concentration", concentrated?.sector || "Balanced", concentrated ? formatPercent(concentrated.weight_percent) : "No sector over 50%")}
     </div>
+    ${renderSectorStrengthMatrix(rows)}
     <div class="sector-coverage-bars">
       ${rows.map(renderSectorCoverageBar).join("")}
     </div>
-    ${renderSectorStrengthMatrix(rows)}
   `;
 }
 
@@ -2176,20 +2176,31 @@ function renderSectorStrengthMatrix(rows) {
     y: Number(sectorMetricValue(row, metric)),
   })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   if (!points.length) return '<div class="sector-strength-matrix empty">No trend matrix data returned.</div>';
-  const yValues = points.map((point) => point.y);
-  const yMin = Math.min(...yValues, 0);
-  const yMax = Math.max(...yValues, 1);
-  const yRange = yMax === yMin ? 1 : yMax - yMin;
+  const maxAbsX = Math.max(1, ...points.map((point) => Math.abs(point.x)));
+  const maxAbsY = Math.max(1, ...points.map((point) => Math.abs(point.y)));
   return `
     <div class="sector-strength-matrix" role="img" aria-label="Sector strength matrix">
       <div class="matrix-axis x"></div>
       <div class="matrix-axis y"></div>
+      <span class="matrix-quadrant-label top-left">Strong read, weak trend</span>
+      <span class="matrix-quadrant-label top-right">Leading + confirming</span>
+      <span class="matrix-quadrant-label bottom-left">Lagging + soft</span>
+      <span class="matrix-quadrant-label bottom-right">Leading, needs confirmation</span>
       ${points.map(({ row, x, y }) => {
-        const left = Math.max(3, Math.min(97, 50 + x * 3));
-        const bottom = Math.max(5, Math.min(95, ((y - yMin) / yRange) * 86 + 7));
+        const left = Math.max(7, Math.min(93, 50 + (x / maxAbsX) * 42));
+        const bottom = Math.max(8, Math.min(92, 50 + (y / maxAbsY) * 42));
+        const dotSize = Math.max(30, Math.min(54, 28 + Math.sqrt(Math.max(0, Number(row.weight_percent) || 0)) * 2.5));
+        const label = String(row.sector || "?").slice(0, 3);
+        const title = [
+          row.sector || "Other",
+          `Trend RS: ${formatSignedPercent(row.trend_rs_vs_spy_percent)}`,
+          `${formatSectorOption(metric)}: ${formatMatrixMetricValue(row, metric)}`,
+          `Weight: ${formatPercent(row.weight_percent)}`,
+          `Tickers: ${(row.tickers || []).join(", ") || "-"}`,
+        ].join(" | ");
         return `
-          <span class="matrix-dot tone-${escapeHtml(row.recommendation_tone || "watch")}" style="left:${left.toFixed(1)}%;bottom:${bottom.toFixed(1)}%;" title="${escapeHtml(row.sector)} ${formatSignedPercent(row.trend_rs_vs_spy_percent)}">
-            ${escapeHtml(String(row.sector || "?").slice(0, 3))}
+          <span class="matrix-dot tone-${escapeHtml(row.recommendation_tone || "watch")}" style="left:${left.toFixed(1)}%;bottom:${bottom.toFixed(1)}%;--dot-size:${dotSize.toFixed(0)}px;" title="${escapeHtml(title)}">
+            ${escapeHtml(label)}
           </span>
         `;
       }).join("")}
@@ -2201,22 +2212,45 @@ function renderSectorStrengthMatrix(rows) {
 }
 
 function renderSectorRotationPanel(analytics, rows) {
+  const sectorSeries = sectorRotationSeries(analytics, rows);
+  const themeSeries = themeTrendSeries(analytics);
   return `
     <section class="sector-chart-panel">
       <div class="section-heading">
-        <h3>Sector Rotation</h3>
+        <h3>Sector Trends</h3>
       </div>
-      ${renderTrendLineChart(sectorRotationSeries(analytics, rows), "sector-rotation-chart")}
+      ${renderTrendLineChart(sectorSeries, "sector-rotation-chart")}
+    </section>
+    <section class="sector-chart-panel">
+      <div class="section-heading">
+        <h3>Theme Trends</h3>
+      </div>
+      ${renderTrendLineChart(themeSeries, "sector-rotation-chart")}
     </section>
   `;
 }
 
 function sectorRotationSeries(analytics, rows) {
-  const sectors = new Set(rows.slice(0, 5).map((row) => row.sector));
-  const selected = (analytics.sector_trend_series || [])
-    .filter((series) => series.kind === "watchlist_sector" && sectors.has(series.sector))
-    .slice(0, 5);
+  const selected = [];
+  for (const row of rows.slice(0, 4)) {
+    const sector = row.sector;
+    const watchlistSeries = (analytics.sector_trend_series || [])
+      .find((series) => series.kind === "watchlist_sector" && series.sector === sector);
+    const etfSeries = (analytics.sector_trend_series || [])
+      .find((series) => series.kind === "sector_etf" && series.sector === sector);
+    if (watchlistSeries) selected.push(watchlistSeries);
+    if (etfSeries) selected.push(etfSeries);
+  }
   return [...selected, ...(analytics.benchmark_trend_series || []).slice(0, 1)];
+}
+
+function themeTrendSeries(analytics) {
+  const series = analytics.theme_trend_series || [];
+  const themes = [...new Set(series.map((item) => item.theme).filter(Boolean))].slice(0, 5);
+  return themes.flatMap((theme) => [
+    series.find((item) => item.kind === "watchlist_theme" && item.theme === theme),
+    series.find((item) => item.kind === "theme_basket" && item.theme === theme),
+  ].filter(Boolean));
 }
 
 function renderSectorMacroStrip(series) {
@@ -2230,6 +2264,7 @@ function renderSectorMacroStrip(series) {
         ${series.map((item) => `
           <article class="sector-macro-tile ${Number(item.change_percent) < 0 ? "negative" : "positive"}">
             <div>
+              <span class="trend-source-pill">Macro</span>
               <h4>${escapeHtml(item.label || item.symbol)}</h4>
               <strong>${formatSignedPercent(item.change_percent)}</strong>
             </div>
@@ -2309,7 +2344,7 @@ function renderTrendLineChart(series, cssClass) {
       return `${x.toFixed(2)},${yFor(value).toFixed(2)}`;
     }).join(" ");
     const color = SCORE_SERIES_COLORS[index % SCORE_SERIES_COLORS.length];
-    return `<polyline points="${coords}" style="--series-color:${color}"><title>${escapeHtml(item.label)} ${formatSignedPercent(item.change_percent)}</title></polyline>`;
+    return `<polyline class="${escapeHtml(trendSeriesClass(item))}" points="${coords}" style="--series-color:${color}"><title>${escapeHtml(item.label)} ${formatSignedPercent(item.change_percent)}</title></polyline>`;
   }).join("");
   return `
     <div class="${escapeHtml(cssClass)}">
@@ -2318,10 +2353,23 @@ function renderTrendLineChart(series, cssClass) {
         ${lines}
       </svg>
       <div class="sector-chart-legend">
-        ${normalized.map((item, index) => `<span style="--series-color:${SCORE_SERIES_COLORS[index % SCORE_SERIES_COLORS.length]}">${escapeHtml(item.label)} <strong>${formatSignedPercent(item.change_percent)}</strong></span>`).join("")}
+        ${normalized.map((item, index) => `<span style="--series-color:${SCORE_SERIES_COLORS[index % SCORE_SERIES_COLORS.length]}"><em class="trend-source-pill">${escapeHtml(trendSourceLabel(item))}</em>${escapeHtml(item.label)} <strong>${formatSignedPercent(item.change_percent)}</strong></span>`).join("")}
       </div>
     </div>
   `;
+}
+
+function trendSeriesClass(item) {
+  const kind = String(item.kind || "series").replace(/[^a-z0-9_-]/gi, "");
+  return `series-${kind}`;
+}
+
+function trendSourceLabel(item) {
+  if (item.kind === "sector_etf") return "ETF";
+  if (item.kind === "theme_basket") return "Basket";
+  if (item.kind === "benchmark") return item.symbol === "SPY" ? "SPY" : "Benchmark";
+  if (item.kind === "macro") return "Macro";
+  return "Watchlist";
 }
 
 function buildTrendSparkline(points) {
@@ -2371,6 +2419,13 @@ function sectorMetricValue(row, metric) {
   return row.average_rs_vs_spy_percent;
 }
 
+function formatMatrixMetricValue(row, metric) {
+  const value = sectorMetricValue(row, metric);
+  if (metric === "setup") return formatValue(value);
+  if (metric === "pattern") return formatPercent(value);
+  return formatSignedPercent(value);
+}
+
 function formatSectorOption(value) {
   const labels = {
     relative: "Relative",
@@ -2402,6 +2457,7 @@ function renderPatternAnalysis(scanner, targetEl) {
   targetEl.innerHTML = `
     <section class="scanner-subsection">
       <h3>Pattern Summary</h3>
+      ${renderPatternThemeCards(summary)}
       <div class="scanner-table-wrap">
         <table class="scanner-table compact">
           <thead><tr><th>Theme</th><th>Sector</th><th>Ticker</th><th>Days</th><th>Dip Days</th><th>Consistency</th><th>Avg Dip</th><th>Avg Recovery</th><th>Common Low Times</th></tr></thead>
@@ -2443,6 +2499,52 @@ function renderPatternAnalysis(scanner, targetEl) {
       <ul class="scanner-takeaways">${(scanner.takeaways || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
     </section>
   `;
+}
+
+function renderPatternThemeCards(summary) {
+  const groups = summary.reduce((acc, row) => {
+    const theme = row.theme || row.sector || "Other";
+    acc[theme] = acc[theme] || [];
+    acc[theme].push(row);
+    return acc;
+  }, {});
+  const cards = Object.entries(groups).map(([theme, rows]) => {
+    const averageConsistency = averageFinite(rows.map((row) => Number(row.consistency_percent)));
+    const deepestDip = Math.min(...rows.map((row) => Number(row.average_dip_percent)).filter(Number.isFinite));
+    const bestRecovery = Math.max(...rows.map((row) => Number(row.average_recovery_percent)).filter(Number.isFinite));
+    const lowWindow = commonLowWindow(rows);
+    const tickers = rows.map((row) => row.ticker).filter(Boolean).sort();
+    return `
+      <article class="pattern-theme-card">
+        <span>${escapeHtml(theme)}</span>
+        <strong>${formatPercent(averageConsistency)}</strong>
+        <p>Consistency across ${tickers.length} ticker${tickers.length === 1 ? "" : "s"}</p>
+        <dl>
+          <div><dt>Deepest avg dip</dt><dd>${formatPercent(Number.isFinite(deepestDip) ? deepestDip : null)}</dd></div>
+          <div><dt>Best recovery</dt><dd>${formatSignedPercent(Number.isFinite(bestRecovery) ? bestRecovery : null)}</dd></div>
+          <div><dt>Common low</dt><dd>${escapeHtml(lowWindow || "-")}</dd></div>
+        </dl>
+      </article>
+    `;
+  }).join("");
+  return `<div class="pattern-theme-card-grid">${cards}</div>`;
+}
+
+function averageFinite(values) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return null;
+  return Number((finite.reduce((sum, value) => sum + value, 0) / finite.length).toFixed(2));
+}
+
+function commonLowWindow(rows) {
+  const counts = {};
+  for (const row of rows) {
+    for (const item of row.top_low_times || []) {
+      const label = String(item).split(" (")[0];
+      counts[label] = (counts[label] || 0) + 1;
+    }
+  }
+  return Object.entries(counts).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] || "";
 }
 
 function buildThemeHeatmapRows(rows) {
