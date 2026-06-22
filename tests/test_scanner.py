@@ -6,6 +6,8 @@ import pandas as pd
 
 from app.main import generate_scanner, generate_sector_analytics
 from app.models import (
+    ChartHistoryResponse,
+    ChartOhlcPoint,
     PatternDayDetail,
     PatternHeatmapRow,
     PatternSummaryRow,
@@ -14,6 +16,8 @@ from app.models import (
     ScannerSetupRow,
     SectorAnalyticsRequest,
     SectorAnalyticsResponse,
+    SectorAnalyticsRow,
+    TickerChartHistory,
 )
 from app.services.market_data import MarketDataService
 from app.services.scanner import BUCKETS_ET, ScannerService
@@ -404,6 +408,95 @@ def test_sector_rows_group_tickers_and_compute_averages():
     assert technology.common_low_times == ["10:00 AM MT (2x)"]
 
 
+def test_sector_trends_normalize_and_enrich_rows():
+    timestamps = [
+        datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+    ]
+
+    class FakeMarketData:
+        def build_chart_history(self, symbols, chart_range, interval):
+            closes = {
+                "AAPL": (100, 115),
+                "MSFT": (100, 95),
+                "XLK": (100, 108),
+                "SPY": (100, 102),
+            }
+            charts = []
+            for symbol in symbols:
+                first, second = closes.get(symbol, (100, 101))
+                charts.append(
+                    TickerChartHistory(
+                        ticker=symbol,
+                        range=chart_range,
+                        interval=interval,
+                        points=[
+                            ChartOhlcPoint(timestamp=timestamps[0], open=first, high=first, low=first, close=first),
+                            ChartOhlcPoint(timestamp=timestamps[1], open=second, high=second, low=second, close=second),
+                        ],
+                    )
+                )
+            return ChartHistoryResponse(
+                generated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                range=chart_range,
+                interval=interval,
+                charts=charts,
+            )
+
+    service = ScannerService(FakeMarketData())  # type: ignore[arg-type]
+    row = SectorAnalyticsRow(
+        sector="Technology",
+        etf="XLK",
+        ticker_count=2,
+        weight_percent=100.0,
+        tickers=["AAPL", "MSFT"],
+        recommendation_text="",
+    )
+
+    sector_series, benchmark_series, macro_series, warnings = service._build_sector_trends(
+        ["AAPL", "MSFT"],
+        [row],
+        "3M",
+        "1d",
+    )
+
+    assert warnings == []
+    assert row.trend_change_percent == 5.0
+    assert row.sector_etf_trend_change_percent == 8.0
+    assert row.trend_rs_vs_spy_percent == 3.0
+    assert row.up_ticker_count == 1
+    assert row.down_ticker_count == 1
+    assert row.leader_tickers == ["AAPL", "MSFT"]
+    assert row.laggard_tickers == ["MSFT", "AAPL"]
+    assert {series.kind for series in sector_series} == {"watchlist_sector", "sector_etf"}
+    assert benchmark_series[0].symbol == "SPY"
+    assert macro_series
+
+
+def test_theme_overrides_group_space_names_without_changing_sector():
+    assert ScannerService()._sector_etf("RKLB") == ("XLI", "Industrials")
+    assert ScannerService._ticker_theme("RKLB", "Industrials") == "Space"
+    assert ScannerService._ticker_theme("AAPL", "Technology") == "Mega-cap Tech"
+    assert ScannerService._ticker_theme("UNH", "Healthcare") == "Healthcare"
+
+
+def test_theme_heatmap_rows_average_finite_bucket_values():
+    rows = ScannerService._theme_heatmap_rows(
+        [
+            PatternHeatmapRow(ticker="RKLB", sector="Industrials", theme="Space", values=[-1.0, None, 0.5]),
+            PatternHeatmapRow(ticker="ASTS", sector="Communication Services", theme="Space", values=[-3.0, 1.0, None]),
+            PatternHeatmapRow(ticker="AAPL", sector="Technology", theme="Mega-cap Tech", values=[2.0, 3.0, 4.0]),
+        ]
+    )
+
+    space = next(row for row in rows if row.theme == "Space")
+
+    assert space.ticker_count == 2
+    assert space.tickers == ["ASTS", "RKLB"]
+    assert space.values == [-2.0, 1.0, 0.5]
+    assert rows[0].theme == "Space"
+
+
 def test_sector_recommendations_include_concentration_and_tones():
     rows = ScannerService._sector_rows(
         ["AAPL", "MSFT", "TSLA"],
@@ -589,17 +682,22 @@ def test_scanner_endpoint_uses_shared_watchlist(monkeypatch):
 
 def test_sector_analytics_endpoint_uses_shared_watchlist(monkeypatch):
     class FakeScanner:
-        def build_sector_analytics(self, tickers, pattern_lookback_days=30):
+        def build_sector_analytics(self, tickers, pattern_lookback_days=30, trend_range="3M", trend_interval="1d"):
             del pattern_lookback_days
+            self.trend_range = trend_range
+            self.trend_interval = trend_interval
             return SectorAnalyticsResponse(
                 generated_at=datetime.now(EASTERN),
                 watchlist=tickers,
             )
 
-    monkeypatch.setattr("app.main.scanner_service", FakeScanner())
-    response = generate_sector_analytics(SectorAnalyticsRequest(tickers="aapl msft"))
+    fake = FakeScanner()
+    monkeypatch.setattr("app.main.scanner_service", fake)
+    response = generate_sector_analytics(SectorAnalyticsRequest(tickers="aapl msft", trend_range="1Y", trend_interval="1wk"))
 
     assert response.watchlist == ["AAPL", "MSFT"]
+    assert fake.trend_range == "1Y"
+    assert fake.trend_interval == "1wk"
 
 
 def test_scanner_can_request_setup_without_patterns(monkeypatch):

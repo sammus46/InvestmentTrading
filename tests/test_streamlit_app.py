@@ -334,6 +334,34 @@ def test_streamlit_settings_accept_sector_analytics_view():
     assert ANALYTICS_VIEW in STREAMLIT_VIEWS
 
 
+def test_streamlit_sector_analytics_controls_and_visuals_are_present():
+    source = Path("app/streamlit_app.py").read_text(encoding="utf-8")
+    settings = normalize_streamlit_settings(
+        {
+            "sector_trend_range": "1Y",
+            "sector_trend_interval": "1wk",
+            "sector_visual_metric": "setup",
+            "sector_sort": "relative",
+            "sector_view": "trends",
+        }
+    )
+
+    assert settings["sector_trend_range"] == "1Y"
+    assert settings["sector_trend_interval"] == "1wk"
+    assert settings["sector_visual_metric"] == "setup"
+    assert settings["sector_sort"] == "relative"
+    assert settings["sector_view"] == "trends"
+    assert "def render_streamlit_sector_controls()" in source
+    assert "def streamlit_sector_dashboard_html" in source
+    assert "def streamlit_sector_visuals_html" in source
+    assert "def theme_heatmap_frame" in source
+    assert "By Theme" in source
+    assert "Ticker Intraday Heatmap" in source
+    assert "Daily Pattern Evidence" in source
+    assert "Morning low is the lowest percent-from-open" in source
+    assert "streamlit-sector-matrix" in source
+
+
 def test_build_chart_history_payload_is_json_serializable(monkeypatch):
     class FakeMarketData:
         def build_chart_history(self, tickers, chart_range, interval):
@@ -441,11 +469,13 @@ def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
                 setup_rows=[ScannerSetupRow(ticker=tickers[0], score=7)],
             )
 
-        def build_sector_analytics(self, tickers):
+        def build_sector_analytics(self, tickers, trend_range="3M", trend_interval="1d"):
             return SectorAnalyticsResponse(
                 generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
                 watchlist=list(tickers),
-                warnings=["sector note"],
+                trend_range=trend_range,
+                trend_interval=trend_interval,
+                warnings=[f"sector note {trend_range} {trend_interval}"],
             )
 
     monkeypatch.setattr(streamlit_app_module, "market_data_service", lambda: FakeMarketData())
@@ -457,7 +487,7 @@ def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
         streamlit_app_module.build_market_snapshot_payload.__wrapped__(("AAPL",), refresh_token=1),
         streamlit_app_module.build_news_payload.__wrapped__(("AAPL",), per_ticker=3, general_count=4, refresh_token=1),
         streamlit_app_module.build_scanner_payload.__wrapped__(("AAPL",), refresh_token=1),
-        streamlit_app_module.build_sector_analytics_payload.__wrapped__(("AAPL",), refresh_token=1),
+        streamlit_app_module.build_sector_analytics_payload.__wrapped__(("AAPL",), "6M", "1wk", refresh_token=1),
     ]
 
     for payload in payloads:
@@ -468,7 +498,10 @@ def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
     assert MarketSnapshotResponse.model_validate(payloads[1]).warnings == ["AAPL"]
     assert NewsResponse.model_validate(payloads[2]).general_market[0].title == "Market update"
     assert ScannerResponse.model_validate(payloads[3]).setup_rows[0].score == 7
-    assert SectorAnalyticsResponse.model_validate(payloads[4]).warnings == ["sector note"]
+    sector_payload = SectorAnalyticsResponse.model_validate(payloads[4])
+    assert sector_payload.trend_range == "6M"
+    assert sector_payload.trend_interval == "1wk"
+    assert sector_payload.warnings == ["sector note 6M 1wk"]
 
 
 def test_save_streamlit_settings_preserves_watchlist(tmp_path):

@@ -113,6 +113,8 @@ def generate_sector_analytics(request: SectorAnalyticsRequest) -> SectorAnalytic
     return scanner_service.build_sector_analytics(
         request.tickers,
         pattern_lookback_days=request.pattern_lookback_days,
+        trend_range=request.trend_range,
+        trend_interval=request.trend_interval,
     )
 
 

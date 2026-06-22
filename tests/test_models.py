@@ -14,6 +14,9 @@ from app.models import (
     SectorAnalyticsResponse,
     SectorAnalyticsRow,
     SectorAnalyticsRecommendation,
+    SectorTrendPoint,
+    SectorTrendSeries,
+    ThemeHeatmapRow,
     TickerChartHistory,
     GenerateRequest,
     DEFAULT_METRICS,
@@ -84,6 +87,18 @@ def test_sector_analytics_request_reuses_watchlist_normalization():
     request = SectorAnalyticsRequest(tickers="aapl, msft\nAAPL $tsla brk.b")
 
     assert request.tickers == ["AAPL", "MSFT", "TSLA", "BRK-B"]
+    assert request.trend_range == "3M"
+    assert request.trend_interval == "1d"
+
+
+def test_sector_analytics_request_validates_trend_interval():
+    request = SectorAnalyticsRequest(tickers="aapl", trend_range="1Y", trend_interval="1wk")
+
+    assert request.trend_range == "1Y"
+    assert request.trend_interval == "1wk"
+
+    with pytest.raises(ValidationError):
+        SectorAnalyticsRequest(tickers="aapl", trend_range="3M", trend_interval="1m")
 
 
 def test_sector_analytics_response_accepts_rows_and_recommendations():
@@ -110,10 +125,37 @@ def test_sector_analytics_response_accepts_rows_and_recommendations():
                 tickers=["AAPL", "MSFT"],
             )
         ],
+        sector_trend_series=[
+            SectorTrendSeries(
+                kind="watchlist_sector",
+                symbol="Technology",
+                label="Technology Watchlist",
+                range="3M",
+                interval="1d",
+                sector="Technology",
+                points=[
+                    SectorTrendPoint(
+                        timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                        change_percent=2.5,
+                    )
+                ],
+                change_percent=2.5,
+            )
+        ],
+        theme_heatmap=[
+            ThemeHeatmapRow(
+                theme="Space",
+                ticker_count=2,
+                tickers=["ASTS", "RKLB"],
+                values=[-0.5, 0.25],
+            )
+        ],
     )
 
     assert response.sector_rows[0].sector == "Technology"
     assert response.recommendations[0].tone == "focus"
+    assert response.sector_trend_series[0].change_percent == 2.5
+    assert response.theme_heatmap[0].theme == "Space"
 
 
 def test_market_snapshot_row_accepts_intraday_sparkline_points():
