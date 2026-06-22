@@ -153,10 +153,18 @@ def test_static_sector_analytics_renders_visual_dashboard():
     assert "function renderSectorToolbar(analytics)" in js
     assert "function renderSectorStrengthMatrix(rows)" in js
     assert "function renderSectorRotationPanel(analytics, rows)" in js
+    assert "function themeTrendSeries(analytics)" in js
+    assert "function trendSourceLabel(item)" in js
+    assert "Leading + confirming" in js
+    assert "theme_trend_series" in js
     assert "function renderSectorMacroStrip(series)" in js
     assert "function renderSectorDetailTable(rows)" in js
+    assert "function renderPatternThemeCards(summary)" in js
     assert "function renderThemeHeatmap(rows, bucketLabels)" in js
     assert "function buildThemeHeatmapRows(rows)" in js
+    assert "Theme Trends" in js
+    assert "Basket" in js
+    assert "Watchlist" in js
     assert "By Theme" in js
     assert "Ticker Intraday Heatmap" in js
     assert "Daily Pattern Evidence" in js
@@ -164,6 +172,9 @@ def test_static_sector_analytics_renders_visual_dashboard():
     assert ".sector-dashboard-toolbar" in css
     assert ".sector-rotation-chart" in css
     assert ".sector-strength-matrix" in css
+    assert ".matrix-quadrant-label" in css
+    assert ".trend-source-pill" in css
+    assert ".pattern-theme-card" in css
     assert ".sector-macro-strip" in css
     assert ".sector-detail-table" in css
     assert ".pattern-help" in css

@@ -354,12 +354,32 @@ def test_streamlit_sector_analytics_controls_and_visuals_are_present():
     assert "def render_streamlit_sector_controls()" in source
     assert "def streamlit_sector_dashboard_html" in source
     assert "def streamlit_sector_visuals_html" in source
+    assert "def streamlit_theme_trend_series" in source
+    assert "def streamlit_trend_source_label" in source
+    assert "def streamlit_pattern_theme_cards" in source
+    assert "Leading + confirming" in source
     assert "def theme_heatmap_frame" in source
+    assert "Theme Trends" in source
+    assert "Basket" in source
+    assert "Watchlist" in source
     assert "By Theme" in source
     assert "Ticker Intraday Heatmap" in source
     assert "Daily Pattern Evidence" in source
     assert "Morning low is the lowest percent-from-open" in source
     assert "streamlit-sector-matrix" in source
+    assert "streamlit-trend-source" in source
+    assert "streamlit-pattern-theme-card" in source
+
+
+def test_current_sector_trend_settings_does_not_rewrite_widget_state(monkeypatch):
+    monkeypatch.setitem(streamlit_app_module.st.session_state, "sector_trend_range", "invalid")
+    monkeypatch.setitem(streamlit_app_module.st.session_state, "sector_trend_interval", "invalid")
+
+    trend_range, trend_interval = streamlit_app_module.current_sector_trend_settings()
+
+    assert (trend_range, trend_interval) == ("3M", "1d")
+    assert streamlit_app_module.st.session_state["sector_trend_range"] == "invalid"
+    assert streamlit_app_module.st.session_state["sector_trend_interval"] == "invalid"
 
 
 def test_build_chart_history_payload_is_json_serializable(monkeypatch):

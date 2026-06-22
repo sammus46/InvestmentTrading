@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+import app.services.scanner as scanner_module
 from app.main import generate_scanner, generate_sector_analytics
 from app.models import (
     ChartHistoryResponse,
@@ -453,7 +454,7 @@ def test_sector_trends_normalize_and_enrich_rows():
         recommendation_text="",
     )
 
-    sector_series, benchmark_series, macro_series, warnings = service._build_sector_trends(
+    sector_series, benchmark_series, macro_series, theme_series, warnings = service._build_sector_trends(
         ["AAPL", "MSFT"],
         [row],
         "3M",
@@ -469,8 +470,121 @@ def test_sector_trends_normalize_and_enrich_rows():
     assert row.leader_tickers == ["AAPL", "MSFT"]
     assert row.laggard_tickers == ["MSFT", "AAPL"]
     assert {series.kind for series in sector_series} == {"watchlist_sector", "sector_etf"}
+    assert {series.kind for series in theme_series} == {"watchlist_theme", "theme_basket"}
+    assert next(series for series in theme_series if series.kind == "theme_basket").theme == "Mega-cap Tech"
     assert benchmark_series[0].symbol == "SPY"
     assert macro_series
+
+
+def test_sector_trends_include_capped_theme_basket_context_and_dedupe_symbols(monkeypatch):
+    timestamps = [
+        datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+    ]
+
+    monkeypatch.setattr(
+        scanner_module,
+        "THEME_TREND_BASKETS",
+        {"Space": ("RKLB", "ASTS", "BKSY", "LUNR", "RDW")},
+    )
+    monkeypatch.setattr(scanner_module, "THEME_TREND_BASKET_LIMIT", 4)
+
+    class FakeMarketData:
+        symbols: list[str] = []
+
+        def build_chart_history(self, symbols, chart_range, interval):
+            self.symbols = list(symbols)
+            return ChartHistoryResponse(
+                generated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                range=chart_range,
+                interval=interval,
+                charts=[
+                    TickerChartHistory(
+                        ticker=symbol,
+                        range=chart_range,
+                        interval=interval,
+                        points=[
+                            ChartOhlcPoint(timestamp=timestamps[0], open=100, high=100, low=100, close=100),
+                            ChartOhlcPoint(timestamp=timestamps[1], open=101, high=101, low=101, close=101),
+                        ],
+                    )
+                    for symbol in symbols
+                ],
+            )
+
+    fake_market_data = FakeMarketData()
+    service = ScannerService(fake_market_data)  # type: ignore[arg-type]
+    row = SectorAnalyticsRow(
+        sector="Industrials",
+        etf="XLI",
+        ticker_count=2,
+        weight_percent=100.0,
+        tickers=["RKLB", "BKSY"],
+        recommendation_text="",
+    )
+
+    _, _, _, theme_series, warnings = service._build_sector_trends(
+        ["RKLB", "BKSY"],
+        [row],
+        "3M",
+        "1d",
+    )
+
+    assert warnings == []
+    assert fake_market_data.symbols.count("RKLB") == 1
+    assert fake_market_data.symbols.count("BKSY") == 1
+    assert "ASTS" in fake_market_data.symbols
+    assert "LUNR" in fake_market_data.symbols
+    assert "RDW" not in fake_market_data.symbols
+    assert len(fake_market_data.symbols) == len(set(fake_market_data.symbols))
+    assert next(series for series in theme_series if series.kind == "watchlist_theme").theme == "Space"
+    assert next(series for series in theme_series if series.kind == "theme_basket").label == "Space Basket"
+
+
+def test_sector_trends_keep_theme_basket_failures_as_warnings(monkeypatch):
+    timestamps = [
+        datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+    ]
+
+    monkeypatch.setattr(scanner_module, "THEME_TREND_BASKETS", {"Space": ("RKLB", "ASTS")})
+
+    class FakeMarketData:
+        def build_chart_history(self, symbols, chart_range, interval):
+            charts = [
+                TickerChartHistory(
+                    ticker=symbol,
+                    range=chart_range,
+                    interval=interval,
+                    points=[
+                        ChartOhlcPoint(timestamp=timestamps[0], open=100, high=100, low=100, close=100),
+                        ChartOhlcPoint(timestamp=timestamps[1], open=101, high=101, low=101, close=101),
+                    ],
+                )
+                for symbol in symbols
+                if symbol != "ASTS"
+            ]
+            return ChartHistoryResponse(
+                generated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                range=chart_range,
+                interval=interval,
+                charts=charts,
+            )
+
+    service = ScannerService(FakeMarketData())  # type: ignore[arg-type]
+    row = SectorAnalyticsRow(
+        sector="Industrials",
+        etf="XLI",
+        ticker_count=1,
+        weight_percent=100.0,
+        tickers=["RKLB"],
+        recommendation_text="",
+    )
+
+    _, _, _, theme_series, warnings = service._build_sector_trends(["RKLB"], [row], "3M", "1d")
+
+    assert any("No trend chart was returned for ASTS" in warning for warning in warnings)
+    assert next(series for series in theme_series if series.kind == "theme_basket").change_percent == 1.0
 
 
 def test_theme_overrides_group_space_names_without_changing_sector():
