@@ -43,6 +43,9 @@ from app.models import (
     NewsArticle,
     NewsRequest,
     NewsResponse,
+    PatternDayDetail,
+    PatternHeatmapRow,
+    PatternSummaryRow,
     ScannerRequest,
     ScannerResponse,
     SectorAnalyticsRow,
@@ -146,6 +149,14 @@ STREAMLIT_REPORT_BATCH_SIZE = 3
 REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
 STREAMLIT_DATASETS = ("report", "scanner", "sector_analytics", "news", "market_snapshot", "chart")
+STREAMLIT_DATASET_SCHEMA_VERSIONS = {"sector_analytics": 2}
+SECTOR_ANALYTICS_EMPTY_TRENDS_WARNING = (
+    "Sector analytics trend data is missing; refresh analytics to rebuild trend context after the latest deploy."
+)
+SECTOR_ANALYTICS_LEGACY_TREND_WARNING = (
+    "Sector analytics trend controls are unavailable in the active scanner service; deploy the latest scanner service "
+    "if trend panels stay empty."
+)
 LIGHTWEIGHT_CHARTS_BUNDLE_PATH = (
     Path(__file__).parent / "static" / "vendor" / "lightweight-charts" / "lightweight-charts.standalone.production.js"
 )
@@ -424,10 +435,23 @@ def build_sector_analytics_payload(
     del refresh_token
     try:
         builder = scanner_service().build_sector_analytics
-        return builder(
+        trend_kwargs = sector_analytics_service_kwargs(builder, trend_range, trend_interval)
+        response = builder(
             list(tickers),
-            **sector_analytics_service_kwargs(builder, trend_range, trend_interval),
-        ).model_dump(mode="json")
+            **trend_kwargs,
+        )
+        if {"trend_range", "trend_interval"} - set(trend_kwargs):
+            warnings = list(response.warnings)
+            if SECTOR_ANALYTICS_LEGACY_TREND_WARNING not in warnings:
+                warnings.append(SECTOR_ANALYTICS_LEGACY_TREND_WARNING)
+            response = response.model_copy(
+                update={
+                    "trend_range": trend_range,
+                    "trend_interval": trend_interval,
+                    "warnings": warnings,
+                }
+            )
+        return response.model_dump(mode="json")
     except Exception as exc:
         watchlist = normalize_ticker_list(list(tickers))
         return SectorAnalyticsResponse(
@@ -5727,6 +5751,88 @@ def render_scanner(report: ScannerResponse) -> None:
     st.markdown(scanner_setup_html(sorted_scanner_response(report), scanner_view), unsafe_allow_html=True)
 
 
+def streamlit_resolved_pattern_theme(ticker: object, theme: object, sector: object) -> str:
+    """Return a useful display theme for older pattern rows with missing theme labels."""
+    candidate = str(theme or "").strip()
+    if candidate and candidate != "Other":
+        return candidate
+    return ScannerService._ticker_theme(str(ticker or ""), str(sector or "") or None)
+
+
+def streamlit_repair_pattern_summary_row(row: PatternSummaryRow) -> PatternSummaryRow:
+    theme = streamlit_resolved_pattern_theme(row.ticker, row.theme, row.sector)
+    return row if theme == row.theme else row.model_copy(update={"theme": theme})
+
+
+def streamlit_repair_pattern_heatmap_row(row: PatternHeatmapRow) -> PatternHeatmapRow:
+    theme = streamlit_resolved_pattern_theme(row.ticker, row.theme, row.sector)
+    return row if theme == row.theme else row.model_copy(update={"theme": theme})
+
+
+def streamlit_repair_pattern_detail(row: PatternDayDetail) -> PatternDayDetail:
+    theme = streamlit_resolved_pattern_theme(row.ticker, row.theme, row.sector)
+    return row if theme == row.theme else row.model_copy(update={"theme": theme})
+
+
+def streamlit_should_rebuild_theme_heatmap(report: SectorAnalyticsResponse, pattern_heatmap: list[PatternHeatmapRow]) -> bool:
+    """Return whether theme heatmap rows should be rebuilt from repaired ticker rows."""
+    if not pattern_heatmap:
+        return False
+    if not report.theme_heatmap:
+        return True
+    if len(report.theme_heatmap) != 1:
+        return False
+    theme = str(report.theme_heatmap[0].theme or "").strip()
+    if theme and theme != "Other":
+        return False
+    return any(row.theme and row.theme != "Other" for row in pattern_heatmap)
+
+
+def streamlit_trend_context_available(report: SectorAnalyticsResponse) -> bool:
+    """Return whether any sector analytics trend context has usable percent-change points."""
+    series_groups = (
+        report.sector_trend_series,
+        report.theme_trend_series,
+        report.benchmark_trend_series,
+        report.macro_trend_series,
+    )
+    return any(
+        point.change_percent is not None
+        for series_group in series_groups
+        for series in series_group
+        for point in series.points
+    )
+
+
+def repair_sector_analytics_response(report: SectorAnalyticsResponse) -> SectorAnalyticsResponse:
+    """Repair legacy or partial analytics payloads before Streamlit renders them."""
+    pattern_summary = [streamlit_repair_pattern_summary_row(row) for row in report.pattern_summary]
+    pattern_heatmap = [streamlit_repair_pattern_heatmap_row(row) for row in report.pattern_heatmap]
+    pattern_details = [streamlit_repair_pattern_detail(row) for row in report.pattern_details]
+    theme_heatmap = (
+        ScannerService._theme_heatmap_rows(pattern_heatmap)
+        if streamlit_should_rebuild_theme_heatmap(report, pattern_heatmap)
+        else report.theme_heatmap
+    )
+    warnings = list(report.warnings)
+    if report.sector_rows and not streamlit_trend_context_available(report):
+        if SECTOR_ANALYTICS_EMPTY_TRENDS_WARNING not in warnings:
+            warnings.append(SECTOR_ANALYTICS_EMPTY_TRENDS_WARNING)
+
+    updates: dict[str, Any] = {}
+    if pattern_summary != report.pattern_summary:
+        updates["pattern_summary"] = pattern_summary
+    if pattern_heatmap != report.pattern_heatmap:
+        updates["pattern_heatmap"] = pattern_heatmap
+    if pattern_details != report.pattern_details:
+        updates["pattern_details"] = pattern_details
+    if theme_heatmap != report.theme_heatmap:
+        updates["theme_heatmap"] = theme_heatmap
+    if warnings != report.warnings:
+        updates["warnings"] = warnings
+    return report.model_copy(update=updates) if updates else report
+
+
 def render_pattern_analysis(report: Any) -> None:
     """Render intraday pattern sections shared by analytics surfaces."""
     if not report.pattern_summary:
@@ -5795,6 +5901,7 @@ def render_pattern_analysis(report: Any) -> None:
 
 def render_sector_analytics(report: SectorAnalyticsResponse) -> None:
     """Render sector analytics and intraday pattern sections."""
+    report = repair_sector_analytics_response(report)
     for warning in report.warnings:
         if not warning.startswith("No pattern data was returned for "):
             st.warning(warning)
@@ -6670,7 +6777,11 @@ def streamlit_pattern_theme_cards(summary: list[Any]) -> str:
     """Return compact theme-level intraday pattern summaries."""
     grouped: dict[str, list[Any]] = {}
     for row in summary:
-        theme = getattr(row, "theme", None) or getattr(row, "sector", None) or "Other"
+        theme = streamlit_resolved_pattern_theme(
+            getattr(row, "ticker", ""),
+            getattr(row, "theme", None),
+            getattr(row, "sector", None),
+        )
         grouped.setdefault(theme, []).append(row)
 
     cards = []
@@ -6725,7 +6836,7 @@ def pattern_summary_frame(report: ScannerResponse) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "Theme": getattr(row, "theme", None) or row.sector,
+                "Theme": streamlit_resolved_pattern_theme(row.ticker, getattr(row, "theme", None), row.sector),
                 "Sector": row.sector,
                 "Ticker": row.ticker,
                 "Days": row.total_days,
@@ -6777,6 +6888,8 @@ def sector_analytics_frame(report: SectorAnalyticsResponse) -> pd.DataFrame:
 def theme_heatmap_frame(report: ScannerResponse) -> pd.DataFrame:
     """Build a wide heatmap frame aggregated by watchlist theme."""
     labels = report.pattern_bucket_labels or report.pattern_buckets
+    if isinstance(report, SectorAnalyticsResponse):
+        report = repair_sector_analytics_response(report)
     rows = []
     for row in getattr(report, "theme_heatmap", []):
         display = {
@@ -7232,9 +7345,11 @@ def run_refresh_steps(refresh_slot: Any, title: str, steps: list[RefreshStep]) -
         st.session_state.pop("refresh_banner_title", None)
 
 
-def streamlit_data_key(dataset: str, tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> tuple[tuple[str, ...], tuple[MetricName, ...], int]:
+def streamlit_data_key(dataset: str, tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> tuple[Any, ...]:
     """Return the loaded-state key for one Streamlit dataset."""
-    return (tuple(tickers), tuple(metrics), dataset_refresh_token(dataset))
+    key: tuple[Any, ...] = (tuple(tickers), tuple(metrics), dataset_refresh_token(dataset))
+    schema_version = STREAMLIT_DATASET_SCHEMA_VERSIONS.get(dataset)
+    return (*key, schema_version) if schema_version is not None else key
 
 
 def streamlit_dataset_current(dataset: str, tickers: tuple[str, ...], metrics: tuple[MetricName, ...]) -> bool:

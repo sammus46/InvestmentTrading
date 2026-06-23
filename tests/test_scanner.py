@@ -587,6 +587,114 @@ def test_sector_trends_keep_theme_basket_failures_as_warnings(monkeypatch):
     assert next(series for series in theme_series if series.kind == "theme_basket").change_percent == 1.0
 
 
+def test_sector_analytics_exact_watchlist_returns_trends_and_theme_heatmap(monkeypatch):
+    watchlist = ["RKLB", "SPCX", "FIX", "STRL", "PWR", "AMD", "INTC", "MU", "PLTR"]
+    sectors = {
+        "RKLB": ("Industrials", "XLI"),
+        "SPCX": ("Industrials", "XLI"),
+        "FIX": ("Industrials", "XLI"),
+        "STRL": ("Industrials", "XLI"),
+        "PWR": ("Industrials", "XLI"),
+        "AMD": ("Technology", "XLK"),
+        "INTC": ("Technology", "XLK"),
+        "MU": ("Technology", "XLK"),
+        "PLTR": ("Technology", "XLK"),
+    }
+    timestamps = [
+        datetime(2026, 6, 1, tzinfo=timezone.utc),
+        datetime(2026, 6, 2, tzinfo=timezone.utc),
+    ]
+
+    class FakeMarketData:
+        def prefetch_scanner_downloads(self, tickers, include_setup=True, include_patterns=True):
+            del tickers, include_setup, include_patterns
+
+        def build_chart_history(self, symbols, chart_range, interval):
+            return ChartHistoryResponse(
+                generated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                range=chart_range,
+                interval=interval,
+                charts=[
+                    TickerChartHistory(
+                        ticker=symbol,
+                        range=chart_range,
+                        interval=interval,
+                        points=[
+                            ChartOhlcPoint(timestamp=timestamps[0], open=100, high=100, low=100, close=100),
+                            ChartOhlcPoint(timestamp=timestamps[1], open=105, high=105, low=105, close=105),
+                        ],
+                    )
+                    for symbol in symbols
+                ],
+            )
+
+    service = ScannerService(FakeMarketData())  # type: ignore[arg-type]
+
+    def fake_load_ticker_data(symbol, benchmark_cache, include_earnings=False):
+        del benchmark_cache, include_earnings
+        sector, etf = sectors[symbol]
+        return scanner_module.TickerScanData(
+            symbol=symbol,
+            data={
+                "ticker": symbol,
+                "sector": sector,
+                "etf": etf,
+                "stock_pct": 0.5,
+                "sector_pct": 0.2,
+                "rs_vs_spy": 0.3,
+                "rs_vs_sector": 0.1,
+            },
+            daily=pd.DataFrame(),
+            minute=pd.DataFrame(),
+            five_minute=pd.DataFrame(),
+            warnings=[],
+        )
+
+    def fake_pattern_analysis(symbol, lookback_days):
+        del lookback_days
+        sector, _ = sectors[symbol]
+        theme = ScannerService._ticker_theme(symbol, sector)
+        summary = PatternSummaryRow(
+            sector=sector,
+            theme=theme,
+            ticker=symbol,
+            total_days=10,
+            dip_days=6,
+            consistency_percent=60,
+            average_dip_percent=-2.0,
+            average_recovery_percent=1.0,
+        )
+        heatmap = PatternHeatmapRow(ticker=symbol, sector=sector, theme=theme, values=[-1.0, 0.5])
+        detail = PatternDayDetail(
+            ticker=symbol,
+            sector=sector,
+            theme=theme,
+            date=date(2026, 6, 2),
+            morning_low_percent=-1.0,
+            morning_low_time="9:30 AM MT",
+            recovery_to_close_percent=1.0,
+            dip_in_window=True,
+            day_low_percent=-1.2,
+            day_low_time="9:35 AM MT",
+            close_from_open_percent=0.2,
+        )
+        return summary, heatmap, [detail]
+
+    monkeypatch.setattr(service, "_load_ticker_data", fake_load_ticker_data)
+    monkeypatch.setattr(service, "_pattern_analysis", fake_pattern_analysis)
+
+    response = service.build_sector_analytics(watchlist, trend_range="3M", trend_interval="1d")
+
+    assert {row.sector for row in response.sector_rows} == {"Industrials", "Technology"}
+    assert any(series.kind == "watchlist_sector" for series in response.sector_trend_series)
+    assert any(series.kind == "sector_etf" for series in response.sector_trend_series)
+    assert response.benchmark_trend_series[0].symbol == "SPY"
+    assert response.macro_trend_series
+    assert any(series.kind == "watchlist_theme" for series in response.theme_trend_series)
+    assert any(series.kind == "theme_basket" for series in response.theme_trend_series)
+    assert {"Space", "Semiconductors", "Infrastructure", "Technology"} <= {row.theme for row in response.theme_heatmap}
+
+
 def test_sector_analytics_keeps_valid_response_when_prefetch_raises(monkeypatch):
     service = ScannerService()
 
