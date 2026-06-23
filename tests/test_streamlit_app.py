@@ -26,6 +26,7 @@ from app.models import (
     PremarketRange,
     ScannerResponse,
     ScannerSetupRow,
+    SectorAnalyticsRow,
     SectorAnalyticsResponse,
     ScoreHistoryAxis,
     ScoreHistoryAxisBucket,
@@ -522,6 +523,40 @@ def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
     assert sector_payload.trend_range == "6M"
     assert sector_payload.trend_interval == "1wk"
     assert sector_payload.warnings == ["sector note 6M 1wk"]
+
+
+def test_build_sector_analytics_payload_supports_legacy_scanner_signature(monkeypatch):
+    class LegacyScanner:
+        def build_sector_analytics(self, tickers):
+            return SectorAnalyticsResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                watchlist=list(tickers),
+                sector_rows=[
+                    SectorAnalyticsRow(
+                        sector="Technology",
+                        etf="XLK",
+                        ticker_count=1,
+                        weight_percent=100.0,
+                        tickers=list(tickers),
+                        recommendation_text="Legacy analytics returned.",
+                    )
+                ],
+                warnings=["legacy analytics"],
+            )
+
+    monkeypatch.setattr(streamlit_app_module, "scanner_service", lambda: LegacyScanner())
+
+    payload = streamlit_app_module.build_sector_analytics_payload.__wrapped__(
+        ("AAPL",),
+        "6M",
+        "1wk",
+        refresh_token=9,
+    )
+    response = SectorAnalyticsResponse.model_validate(payload)
+
+    assert response.watchlist == ["AAPL"]
+    assert response.sector_rows[0].sector == "Technology"
+    assert response.warnings == ["legacy analytics"]
 
 
 def test_build_sector_analytics_payload_returns_warning_payload_on_service_error(monkeypatch):

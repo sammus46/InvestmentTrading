@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import os
 import sys
@@ -396,6 +397,22 @@ def build_scanner(tickers: tuple[str, ...], refresh_token: int = 0) -> ScannerRe
     return ScannerResponse.model_validate(build_scanner_payload(tickers, refresh_token=refresh_token))
 
 
+def sector_analytics_service_kwargs(builder: Callable[..., Any], trend_range: ChartRange, trend_interval: ChartInterval) -> dict[str, Any]:
+    """Return trend kwargs supported by the current scanner service implementation."""
+    try:
+        parameters = inspect.signature(builder).parameters
+    except (TypeError, ValueError):
+        return {"trend_range": trend_range, "trend_interval": trend_interval}
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return {"trend_range": trend_range, "trend_interval": trend_interval}
+    kwargs: dict[str, Any] = {}
+    if "trend_range" in parameters:
+        kwargs["trend_range"] = trend_range
+    if "trend_interval" in parameters:
+        kwargs["trend_interval"] = trend_interval
+    return kwargs
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def build_sector_analytics_payload(
     tickers: tuple[str, ...],
@@ -406,10 +423,10 @@ def build_sector_analytics_payload(
     """Run sector analytics as cache-safe JSON-compatible data."""
     del refresh_token
     try:
-        return scanner_service().build_sector_analytics(
+        builder = scanner_service().build_sector_analytics
+        return builder(
             list(tickers),
-            trend_range=trend_range,
-            trend_interval=trend_interval,
+            **sector_analytics_service_kwargs(builder, trend_range, trend_interval),
         ).model_dump(mode="json")
     except Exception as exc:
         watchlist = normalize_ticker_list(list(tickers))
