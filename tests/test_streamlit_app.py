@@ -23,6 +23,9 @@ from app.models import (
     NewsResponse,
     OpeningRange,
     Ohlc,
+    PatternDayDetail,
+    PatternHeatmapRow,
+    PatternSummaryRow,
     PremarketRange,
     ScannerResponse,
     ScannerSetupRow,
@@ -556,7 +559,12 @@ def test_build_sector_analytics_payload_supports_legacy_scanner_signature(monkey
 
     assert response.watchlist == ["AAPL"]
     assert response.sector_rows[0].sector == "Technology"
-    assert response.warnings == ["legacy analytics"]
+    assert response.trend_range == "6M"
+    assert response.trend_interval == "1wk"
+    assert response.warnings == [
+        "legacy analytics",
+        streamlit_app_module.SECTOR_ANALYTICS_LEGACY_TREND_WARNING,
+    ]
 
 
 def test_build_sector_analytics_payload_returns_warning_payload_on_service_error(monkeypatch):
@@ -580,6 +588,92 @@ def test_build_sector_analytics_payload_returns_warning_payload_on_service_error
     assert response.trend_interval == "1d"
     assert response.sector_rows == []
     assert response.warnings == ["Sector analytics failed: TypeError: provider returned malformed sector data"]
+
+
+def test_repair_sector_analytics_response_resolves_legacy_other_themes():
+    report = SectorAnalyticsResponse(
+        generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        watchlist=["RKLB", "AMD", "MU", "INTC", "FIX", "PWR", "STRL", "PLTR"],
+        pattern_summary=[
+            PatternSummaryRow(
+                ticker=ticker,
+                sector=sector,
+                theme="Other",
+                total_days=10,
+                dip_days=6,
+                consistency_percent=60,
+                average_dip_percent=-2.5,
+                average_recovery_percent=1.2,
+            )
+            for ticker, sector in [
+                ("RKLB", "Industrials"),
+                ("AMD", "Technology"),
+                ("MU", "Technology"),
+                ("INTC", "Technology"),
+                ("FIX", "Industrials"),
+                ("PWR", "Industrials"),
+                ("STRL", "Industrials"),
+                ("PLTR", "Technology"),
+            ]
+        ],
+    )
+
+    repaired = streamlit_app_module.repair_sector_analytics_response(report)
+    themes = {row.theme for row in repaired.pattern_summary}
+    cards = streamlit_app_module.streamlit_pattern_theme_cards(report.pattern_summary)
+
+    assert {"Space", "Semiconductors", "Infrastructure", "Technology"} <= themes
+    assert "Other" not in themes
+    assert "Space" in cards
+    assert "Semiconductors" in cards
+    assert "Infrastructure" in cards
+    assert ">Other<" not in cards
+
+
+def test_theme_heatmap_frame_rebuilds_from_ticker_heatmap_when_empty():
+    report = SectorAnalyticsResponse(
+        generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        watchlist=["RKLB", "AMD", "FIX"],
+        pattern_buckets=["09:30", "09:35"],
+        pattern_bucket_labels=["9:30 AM ET", "9:35 AM ET"],
+        pattern_heatmap=[
+            PatternHeatmapRow(ticker="RKLB", sector="Industrials", theme="Other", values=[-1.0, 0.5]),
+            PatternHeatmapRow(ticker="AMD", sector="Technology", theme="Other", values=[-2.0, 1.5]),
+            PatternHeatmapRow(ticker="FIX", sector="Industrials", theme="Other", values=[-3.0, 2.5]),
+        ],
+    )
+
+    repaired = streamlit_app_module.repair_sector_analytics_response(report)
+    frame = streamlit_app_module.theme_heatmap_frame(report)
+
+    assert [(row.theme, row.ticker_count) for row in repaired.theme_heatmap] == [
+        ("Infrastructure", 1),
+        ("Semiconductors", 1),
+        ("Space", 1),
+    ]
+    assert set(frame["Theme"]) == {"Space", "Semiconductors", "Infrastructure"}
+    assert "9:30 AM" in frame.columns
+
+
+def test_repair_sector_analytics_response_warns_when_sector_trends_missing():
+    report = SectorAnalyticsResponse(
+        generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        watchlist=["AAPL"],
+        sector_rows=[
+            SectorAnalyticsRow(
+                sector="Technology",
+                etf="XLK",
+                ticker_count=1,
+                weight_percent=100.0,
+                tickers=["AAPL"],
+                recommendation_text="",
+            )
+        ],
+    )
+
+    repaired = streamlit_app_module.repair_sector_analytics_response(report)
+
+    assert streamlit_app_module.SECTOR_ANALYTICS_EMPTY_TRENDS_WARNING in repaired.warnings
 
 
 def test_save_streamlit_settings_preserves_watchlist(tmp_path):
@@ -988,6 +1082,26 @@ def test_streamlit_loaded_state_tracks_datasets_independently():
     assert not streamlit_dataset_current("news", tickers, metrics)
     assert not streamlit_dataset_current("market_snapshot", tickers, metrics)
     assert dataset_refresh_token("report") == 0
+
+
+def test_sector_analytics_loaded_state_requires_schema_version(monkeypatch):
+    tickers = ("AAPL",)
+    metrics = ("previous_day",)
+    legacy_key = (tickers, metrics, dataset_refresh_token("sector_analytics"))
+
+    monkeypatch.setitem(streamlit_app_module.st.session_state, "loaded_data_keys", {"sector_analytics": legacy_key})
+
+    assert not streamlit_dataset_current("sector_analytics", tickers, metrics)
+
+    mark_streamlit_data_current(tickers, metrics, datasets=("sector_analytics",))
+
+    assert streamlit_dataset_current("sector_analytics", tickers, metrics)
+    assert streamlit_app_module.st.session_state.loaded_data_keys["sector_analytics"] == (
+        tickers,
+        metrics,
+        dataset_refresh_token("sector_analytics"),
+        streamlit_app_module.STREAMLIT_DATASET_SCHEMA_VERSIONS["sector_analytics"],
+    )
 
 
 def test_progressive_report_responses_batch_and_preserve_ticker_order():
