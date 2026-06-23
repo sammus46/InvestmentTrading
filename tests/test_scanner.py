@@ -587,6 +587,66 @@ def test_sector_trends_keep_theme_basket_failures_as_warnings(monkeypatch):
     assert next(series for series in theme_series if series.kind == "theme_basket").change_percent == 1.0
 
 
+def test_sector_analytics_keeps_valid_response_when_prefetch_raises(monkeypatch):
+    service = ScannerService()
+
+    def raise_prefetch(tickers, include_setup=True, include_patterns=True):
+        del tickers, include_setup, include_patterns
+        raise TypeError("batch download failed")
+
+    def raise_load_ticker_data(symbol, benchmark_cache, include_earnings=False):
+        del benchmark_cache, include_earnings
+        raise RuntimeError(f"{symbol} setup unavailable")
+
+    monkeypatch.setattr(service.market_data, "prefetch_scanner_downloads", raise_prefetch)
+    monkeypatch.setattr(service, "_load_ticker_data", raise_load_ticker_data)
+    monkeypatch.setattr(service, "_pattern_analysis", lambda symbol, lookback_days: None)
+    monkeypatch.setattr(service, "_build_sector_trends", lambda *args: ([], [], [], [], []))
+
+    response = service.build_sector_analytics(["AAPL"], trend_range="3M", trend_interval="1d")
+
+    assert response.watchlist == ["AAPL"]
+    assert response.sector_rows == []
+    assert "Sector analytics prefetch failed: TypeError: batch download failed" in response.warnings
+    assert "Sector setup analytics failed for AAPL: AAPL setup unavailable" in response.warnings
+
+
+def test_sector_analytics_keeps_sector_rows_when_trend_post_processing_raises(monkeypatch):
+    row = SectorAnalyticsRow(
+        sector="Technology",
+        etf="XLK",
+        ticker_count=1,
+        weight_percent=100.0,
+        tickers=["AAPL"],
+        recommendation_text="",
+    )
+
+    class MalformedChartHistoryMarketData:
+        def prefetch_scanner_downloads(self, tickers, include_setup=True, include_patterns=True):
+            del tickers, include_setup, include_patterns
+
+        def build_chart_history(self, symbols, chart_range, interval):
+            del symbols, chart_range, interval
+
+            class BadResponse:
+                warnings: list[str] = []
+                charts = None
+
+            return BadResponse()
+
+    service = ScannerService(MalformedChartHistoryMarketData())  # type: ignore[arg-type]
+    monkeypatch.setattr(service, "_load_ticker_data", lambda symbol, benchmark_cache, include_earnings=False: (_ for _ in ()).throw(RuntimeError("skip setup")))
+    monkeypatch.setattr(service, "_pattern_analysis", lambda symbol, lookback_days: None)
+    monkeypatch.setattr(service, "_sector_rows", lambda watchlist, sector_inputs, pattern_summary: [row])
+
+    response = service.build_sector_analytics(["AAPL"], trend_range="3M", trend_interval="1d")
+
+    assert response.sector_rows == [row]
+    assert response.sector_trend_series == []
+    assert response.theme_trend_series == []
+    assert any("Trend processing failed for sector analytics: TypeError" in warning for warning in response.warnings)
+
+
 def test_theme_overrides_group_space_names_without_changing_sector():
     assert ScannerService()._sector_etf("RKLB") == ("XLI", "Industrials")
     assert ScannerService._ticker_theme("RKLB", "Industrials") == "Space"

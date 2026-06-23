@@ -405,11 +405,21 @@ def build_sector_analytics_payload(
 ) -> dict[str, Any]:
     """Run sector analytics as cache-safe JSON-compatible data."""
     del refresh_token
-    return scanner_service().build_sector_analytics(
-        list(tickers),
-        trend_range=trend_range,
-        trend_interval=trend_interval,
-    ).model_dump(mode="json")
+    try:
+        return scanner_service().build_sector_analytics(
+            list(tickers),
+            trend_range=trend_range,
+            trend_interval=trend_interval,
+        ).model_dump(mode="json")
+    except Exception as exc:
+        watchlist = normalize_ticker_list(list(tickers))
+        return SectorAnalyticsResponse(
+            generated_at=datetime.now(timezone.utc),
+            watchlist=watchlist,
+            trend_range=trend_range,
+            trend_interval=trend_interval,
+            warnings=[f"Sector analytics failed: {type(exc).__name__}: {exc}"],
+        ).model_dump(mode="json")
 
 
 def build_sector_analytics(

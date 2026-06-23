@@ -524,6 +524,29 @@ def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
     assert sector_payload.warnings == ["sector note 6M 1wk"]
 
 
+def test_build_sector_analytics_payload_returns_warning_payload_on_service_error(monkeypatch):
+    class BrokenScanner:
+        def build_sector_analytics(self, tickers, trend_range="3M", trend_interval="1d"):
+            del tickers, trend_range, trend_interval
+            raise TypeError("provider returned malformed sector data")
+
+    monkeypatch.setattr(streamlit_app_module, "scanner_service", lambda: BrokenScanner())
+
+    payload = streamlit_app_module.build_sector_analytics_payload.__wrapped__(
+        ("aapl", "msft"),
+        "3M",
+        "1d",
+        refresh_token=7,
+    )
+    response = SectorAnalyticsResponse.model_validate(payload)
+
+    assert response.watchlist == ["AAPL", "MSFT"]
+    assert response.trend_range == "3M"
+    assert response.trend_interval == "1d"
+    assert response.sector_rows == []
+    assert response.warnings == ["Sector analytics failed: TypeError: provider returned malformed sector data"]
+
+
 def test_save_streamlit_settings_preserves_watchlist(tmp_path):
     path = tmp_path / "streamlit_state.json"
     save_streamlit_watchlist(["aapl", "msft"], path)
