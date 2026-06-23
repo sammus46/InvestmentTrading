@@ -31,6 +31,8 @@ from app.models import (
     ScannerSetupRow,
     SectorAnalyticsRow,
     SectorAnalyticsResponse,
+    SectorTrendPoint,
+    SectorTrendSeries,
     ScoreHistoryAxis,
     ScoreHistoryAxisBucket,
     ScoreHistoryPoint,
@@ -528,7 +530,55 @@ def test_cached_streamlit_payload_builders_are_json_serializable(monkeypatch):
     assert sector_payload.warnings == ["sector note 6M 1wk"]
 
 
-def test_build_sector_analytics_payload_supports_legacy_scanner_signature(monkeypatch):
+def test_build_sector_analytics_payload_retries_stale_legacy_scanner(monkeypatch):
+    class LegacyScanner:
+        def build_sector_analytics(self, tickers):
+            raise AssertionError("stale scanner should be reloaded before it is called")
+
+    class CurrentScanner:
+        def build_sector_analytics(self, tickers, trend_range="3M", trend_interval="1d"):
+            return SectorAnalyticsResponse(
+                generated_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                watchlist=list(tickers),
+                trend_range=trend_range,
+                trend_interval=trend_interval,
+                benchmark_trend_series=[
+                    SectorTrendSeries(
+                        kind="benchmark",
+                        symbol="SPY",
+                        label="SPY Benchmark",
+                        range=trend_range,
+                        interval=trend_interval,
+                        points=[
+                            SectorTrendPoint(
+                                timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                                change_percent=1.2,
+                            )
+                        ],
+                        change_percent=1.2,
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(streamlit_app_module, "scanner_service", lambda: LegacyScanner())
+    monkeypatch.setattr(streamlit_app_module, "reload_streamlit_scanner_service", lambda: CurrentScanner())
+
+    payload = streamlit_app_module.build_sector_analytics_payload.__wrapped__(
+        ("AAPL",),
+        "6M",
+        "1wk",
+        refresh_token=9,
+    )
+    response = SectorAnalyticsResponse.model_validate(payload)
+
+    assert response.watchlist == ["AAPL"]
+    assert response.trend_range == "6M"
+    assert response.trend_interval == "1wk"
+    assert response.benchmark_trend_series[0].change_percent == 1.2
+    assert response.warnings == []
+
+
+def test_build_sector_analytics_payload_warns_when_reloaded_scanner_is_still_legacy(monkeypatch):
     class LegacyScanner:
         def build_sector_analytics(self, tickers):
             return SectorAnalyticsResponse(
@@ -548,6 +598,7 @@ def test_build_sector_analytics_payload_supports_legacy_scanner_signature(monkey
             )
 
     monkeypatch.setattr(streamlit_app_module, "scanner_service", lambda: LegacyScanner())
+    monkeypatch.setattr(streamlit_app_module, "reload_streamlit_scanner_service", lambda: LegacyScanner())
 
     payload = streamlit_app_module.build_sector_analytics_payload.__wrapped__(
         ("AAPL",),
@@ -561,10 +612,11 @@ def test_build_sector_analytics_payload_supports_legacy_scanner_signature(monkey
     assert response.sector_rows[0].sector == "Technology"
     assert response.trend_range == "6M"
     assert response.trend_interval == "1wk"
-    assert response.warnings == [
-        "legacy analytics",
-        streamlit_app_module.SECTOR_ANALYTICS_LEGACY_TREND_WARNING,
-    ]
+    assert response.warnings[0] == "legacy analytics"
+    assert streamlit_app_module.SECTOR_ANALYTICS_LEGACY_TREND_WARNING in response.warnings[1]
+    assert "Active scanner:" in response.warnings[1]
+    assert "build_sector_analytics(tickers)" in response.warnings[1]
+    assert "module path:" in response.warnings[1]
 
 
 def test_build_sector_analytics_payload_returns_warning_payload_on_service_error(monkeypatch):

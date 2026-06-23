@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import inspect
 import json
 import os
@@ -150,6 +151,9 @@ REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
 STREAMLIT_DATASETS = ("report", "scanner", "sector_analytics", "news", "market_snapshot", "chart")
 STREAMLIT_DATASET_SCHEMA_VERSIONS = {"sector_analytics": 2}
+STREAMLIT_MARKET_DATA_SERVICE_CACHE_VERSION = 2
+STREAMLIT_SCANNER_SERVICE_CACHE_VERSION = 2
+SCANNER_MODULE_NAME = "app.services.scanner"
 SECTOR_ANALYTICS_EMPTY_TRENDS_WARNING = (
     "Sector analytics trend data is missing; refresh analytics to rebuild trend context after the latest deploy."
 )
@@ -231,10 +235,24 @@ st.set_page_config(
 )
 
 
+def scanner_service_class(*, reload_module: bool = False) -> type[Any]:
+    """Return the current ScannerService class, optionally reloading its module."""
+    module = importlib.import_module(SCANNER_MODULE_NAME)
+    if reload_module:
+        module = importlib.reload(module)
+    return getattr(module, "ScannerService")
+
+
 @st.cache_resource
+def cached_market_data_service(service_cache_version: int) -> MarketDataService:
+    """Return one market data service instance for a versioned Streamlit cache key."""
+    del service_cache_version
+    return MarketDataService()
+
+
 def market_data_service() -> MarketDataService:
     """Return one service instance per Streamlit worker process."""
-    return MarketDataService()
+    return cached_market_data_service(STREAMLIT_MARKET_DATA_SERVICE_CACHE_VERSION)
 
 
 @st.cache_resource
@@ -250,9 +268,16 @@ def news_service() -> NewsService:
 
 
 @st.cache_resource
+def cached_scanner_service(service_cache_version: int) -> ScannerService:
+    """Return one scanner service instance for a versioned Streamlit cache key."""
+    del service_cache_version
+    scanner_cls = scanner_service_class()
+    return scanner_cls(market_data_service())
+
+
 def scanner_service() -> ScannerService:
     """Return one scanner service instance per Streamlit worker process."""
-    return ScannerService(market_data_service())
+    return cached_scanner_service(STREAMLIT_SCANNER_SERVICE_CACHE_VERSION)
 
 
 @st.cache_resource
@@ -424,6 +449,44 @@ def sector_analytics_service_kwargs(builder: Callable[..., Any], trend_range: Ch
     return kwargs
 
 
+def sector_analytics_missing_trend_kwargs(kwargs: dict[str, Any]) -> bool:
+    """Return whether a scanner service call cannot receive trend controls."""
+    return bool({"trend_range", "trend_interval"} - set(kwargs))
+
+
+def sector_analytics_builder_diagnostic(builder: Callable[..., Any]) -> str:
+    """Return module path and signature details for a scanner analytics builder."""
+    try:
+        signature = str(inspect.signature(builder))
+    except (TypeError, ValueError):
+        signature = "(signature unavailable)"
+    owner = getattr(builder, "__self__", None)
+    module_name = getattr(getattr(owner, "__class__", None), "__module__", None) or getattr(builder, "__module__", "unknown")
+    method_name = getattr(builder, "__name__", "build_sector_analytics")
+    module = sys.modules.get(module_name)
+    module_path = getattr(module, "__file__", "unknown")
+    return f"{module_name}.{method_name}{signature}; module path: {module_path}"
+
+
+def sector_analytics_legacy_trend_warning(builder: Callable[..., Any]) -> str:
+    """Return a diagnostic warning for scanner services that still lack trend controls."""
+    return f"{SECTOR_ANALYTICS_LEGACY_TREND_WARNING} Active scanner: {sector_analytics_builder_diagnostic(builder)}."
+
+
+def clear_scanner_service_cache() -> None:
+    """Clear the Streamlit scanner service cache when the worker is holding a stale class."""
+    clear = getattr(cached_scanner_service, "clear", None)
+    if callable(clear):
+        clear()
+
+
+def reload_streamlit_scanner_service() -> ScannerService:
+    """Reload the scanner module and return an uncached scanner service instance."""
+    clear_scanner_service_cache()
+    scanner_cls = scanner_service_class(reload_module=True)
+    return scanner_cls(market_data_service())
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def build_sector_analytics_payload(
     tickers: tuple[str, ...],
@@ -436,14 +499,28 @@ def build_sector_analytics_payload(
     try:
         builder = scanner_service().build_sector_analytics
         trend_kwargs = sector_analytics_service_kwargs(builder, trend_range, trend_interval)
+        reload_warning: str | None = None
+        if sector_analytics_missing_trend_kwargs(trend_kwargs):
+            legacy_builder = builder
+            legacy_trend_kwargs = trend_kwargs
+            try:
+                builder = reload_streamlit_scanner_service().build_sector_analytics
+                trend_kwargs = sector_analytics_service_kwargs(builder, trend_range, trend_interval)
+            except Exception as exc:
+                builder = legacy_builder
+                trend_kwargs = legacy_trend_kwargs
+                reload_warning = f"Sector analytics scanner service reload failed: {type(exc).__name__}: {exc}"
         response = builder(
             list(tickers),
             **trend_kwargs,
         )
-        if {"trend_range", "trend_interval"} - set(trend_kwargs):
+        if sector_analytics_missing_trend_kwargs(trend_kwargs):
             warnings = list(response.warnings)
-            if SECTOR_ANALYTICS_LEGACY_TREND_WARNING not in warnings:
-                warnings.append(SECTOR_ANALYTICS_LEGACY_TREND_WARNING)
+            legacy_warning = sector_analytics_legacy_trend_warning(builder)
+            if legacy_warning not in warnings:
+                warnings.append(legacy_warning)
+            if reload_warning and reload_warning not in warnings:
+                warnings.append(reload_warning)
             response = response.model_copy(
                 update={
                     "trend_range": trend_range,
@@ -5756,7 +5833,7 @@ def streamlit_resolved_pattern_theme(ticker: object, theme: object, sector: obje
     candidate = str(theme or "").strip()
     if candidate and candidate != "Other":
         return candidate
-    return ScannerService._ticker_theme(str(ticker or ""), str(sector or "") or None)
+    return scanner_service_class()._ticker_theme(str(ticker or ""), str(sector or "") or None)
 
 
 def streamlit_repair_pattern_summary_row(row: PatternSummaryRow) -> PatternSummaryRow:
@@ -5810,7 +5887,7 @@ def repair_sector_analytics_response(report: SectorAnalyticsResponse) -> SectorA
     pattern_heatmap = [streamlit_repair_pattern_heatmap_row(row) for row in report.pattern_heatmap]
     pattern_details = [streamlit_repair_pattern_detail(row) for row in report.pattern_details]
     theme_heatmap = (
-        ScannerService._theme_heatmap_rows(pattern_heatmap)
+        scanner_service_class()._theme_heatmap_rows(pattern_heatmap)
         if streamlit_should_rebuild_theme_heatmap(report, pattern_heatmap)
         else report.theme_heatmap
     )
