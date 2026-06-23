@@ -333,7 +333,10 @@ class ScannerService:
         pattern_heatmap: list[PatternHeatmapRow] = []
         pattern_details: list[PatternDayDetail] = []
 
-        self.market_data.prefetch_scanner_downloads(watchlist, include_setup=True, include_patterns=True)
+        try:
+            self.market_data.prefetch_scanner_downloads(watchlist, include_setup=True, include_patterns=True)
+        except Exception as exc:
+            warnings.append(f"Sector analytics prefetch failed: {type(exc).__name__}: {exc}")
 
         benchmark_cache: dict[str, float | None] = {}
         for symbol in watchlist:
@@ -355,22 +358,48 @@ class ScannerService:
             except Exception as exc:
                 warnings.append(f"Pattern analysis failed for {symbol}: {exc}")
 
-        sector_rows = self._sector_rows(watchlist, sector_inputs, pattern_summary)
-        (
-            sector_trend_series,
-            benchmark_trend_series,
-            macro_trend_series,
-            theme_trend_series,
-            trend_warnings,
-        ) = self._build_sector_trends(
-            watchlist,
-            sector_rows,
-            trend_range,
-            trend_interval,
-        )
-        warnings.extend(trend_warnings)
-        recommendations = self._sector_recommendations(sector_rows, len(watchlist))
-        takeaways = self._sector_takeaways(sector_rows) + self._takeaways(pattern_summary)
+        try:
+            sector_rows = self._sector_rows(watchlist, sector_inputs, pattern_summary)
+        except Exception as exc:
+            sector_rows = []
+            warnings.append(f"Sector row aggregation failed: {type(exc).__name__}: {exc}")
+
+        try:
+            (
+                sector_trend_series,
+                benchmark_trend_series,
+                macro_trend_series,
+                theme_trend_series,
+                trend_warnings,
+            ) = self._build_sector_trends(
+                watchlist,
+                sector_rows,
+                trend_range,
+                trend_interval,
+            )
+            warnings.extend(trend_warnings)
+        except Exception as exc:
+            sector_trend_series = []
+            benchmark_trend_series = []
+            macro_trend_series = []
+            theme_trend_series = []
+            warnings.append(f"Trend analytics failed: {type(exc).__name__}: {exc}")
+
+        try:
+            recommendations = self._sector_recommendations(sector_rows, len(watchlist))
+        except Exception as exc:
+            recommendations = []
+            warnings.append(f"Sector recommendations failed: {type(exc).__name__}: {exc}")
+
+        takeaways: list[str] = []
+        try:
+            takeaways.extend(self._sector_takeaways(sector_rows))
+        except Exception as exc:
+            warnings.append(f"Sector takeaways failed: {type(exc).__name__}: {exc}")
+        try:
+            takeaways.extend(self._takeaways(pattern_summary))
+        except Exception as exc:
+            warnings.append(f"Pattern takeaways failed: {type(exc).__name__}: {exc}")
         return SectorAnalyticsResponse(
             generated_at=datetime.now(timezone.utc),
             watchlist=watchlist,
@@ -735,85 +764,89 @@ class ScannerService:
         except Exception as exc:
             return [], [], [], [], [f"Trend history was unavailable for sector analytics: {exc}"]
 
-        warnings.extend(response.warnings)
-        charts = {chart.ticker: chart for chart in response.charts}
-        symbol_series = {
-            symbol: self._trend_series_from_chart(
-                charts.get(symbol),
-                kind="watchlist_theme" if symbol in watchlist else "theme_basket",
-                symbol=symbol,
-                label=symbol,
-                trend_range=trend_range,
-                trend_interval=trend_interval,
-            )
-            for symbol in symbols
-        }
-        for symbol in list(dict.fromkeys([*watchlist, *theme_basket_symbols])):
-            warnings.extend(symbol_series.get(symbol, SectorTrendSeries(
-                kind="theme_basket",
-                symbol=symbol,
-                label=symbol,
-                range=trend_range,
-                interval=trend_interval,
-            )).warnings)
-
-        ticker_series = {ticker: symbol_series[ticker] for ticker in watchlist if ticker in symbol_series}
-        ticker_changes = {ticker: series.change_percent for ticker, series in ticker_series.items()}
-
-        benchmark = self._trend_series_from_chart(
-            charts.get("SPY"),
-            kind="benchmark",
-            symbol="SPY",
-            label="SPY Benchmark",
-            trend_range=trend_range,
-            trend_interval=trend_interval,
-        )
-        warnings.extend(benchmark.warnings)
-
-        sector_series: list[SectorTrendSeries] = []
-        for row in sector_rows:
-            aggregate = self._aggregate_sector_trend(row, ticker_series, trend_range, trend_interval)
-            sector_series.append(aggregate)
-
-            etf_series: SectorTrendSeries | None = None
-            if row.etf:
-                etf_series = self._trend_series_from_chart(
-                    charts.get(row.etf),
-                    kind="sector_etf",
-                    symbol=row.etf,
-                    label=f"{row.sector} ETF ({row.etf})",
+        try:
+            warnings.extend(response.warnings)
+            charts = {chart.ticker: chart for chart in response.charts}
+            symbol_series = {
+                symbol: self._trend_series_from_chart(
+                    charts.get(symbol),
+                    kind="watchlist_theme" if symbol in watchlist else "theme_basket",
+                    symbol=symbol,
+                    label=symbol,
                     trend_range=trend_range,
                     trend_interval=trend_interval,
-                    sector=row.sector,
                 )
-                sector_series.append(etf_series)
-                warnings.extend(etf_series.warnings)
+                for symbol in symbols
+            }
+            for symbol in list(dict.fromkeys([*watchlist, *theme_basket_symbols])):
+                warnings.extend(symbol_series.get(symbol, SectorTrendSeries(
+                    kind="theme_basket",
+                    symbol=symbol,
+                    label=symbol,
+                    range=trend_range,
+                    interval=trend_interval,
+                )).warnings)
 
-            self._enrich_sector_row_from_trends(row, aggregate, etf_series, benchmark, ticker_changes)
+            ticker_series = {ticker: symbol_series[ticker] for ticker in watchlist if ticker in symbol_series}
+            ticker_changes = {ticker: series.change_percent for ticker, series in ticker_series.items()}
 
-        macro_series: list[SectorTrendSeries] = []
-        for symbol, label in MARKET_SNAPSHOT_INSTRUMENTS:
-            series = self._trend_series_from_chart(
-                charts.get(symbol),
-                kind="macro",
-                symbol=symbol,
-                label=label,
+            benchmark = self._trend_series_from_chart(
+                charts.get("SPY"),
+                kind="benchmark",
+                symbol="SPY",
+                label="SPY Benchmark",
                 trend_range=trend_range,
                 trend_interval=trend_interval,
             )
-            macro_series.append(series)
-            warnings.extend(series.warnings)
+            warnings.extend(benchmark.warnings)
 
-        theme_series = self._build_theme_trends(
-            theme_groups,
-            symbol_series,
-            trend_range,
-            trend_interval,
-        )
-        for series in theme_series:
-            warnings.extend(series.warnings)
+            sector_series: list[SectorTrendSeries] = []
+            for row in sector_rows:
+                aggregate = self._aggregate_sector_trend(row, ticker_series, trend_range, trend_interval)
+                sector_series.append(aggregate)
 
-        return sector_series, [benchmark], macro_series, theme_series, list(dict.fromkeys(warnings))
+                etf_series: SectorTrendSeries | None = None
+                if row.etf:
+                    etf_series = self._trend_series_from_chart(
+                        charts.get(row.etf),
+                        kind="sector_etf",
+                        symbol=row.etf,
+                        label=f"{row.sector} ETF ({row.etf})",
+                        trend_range=trend_range,
+                        trend_interval=trend_interval,
+                        sector=row.sector,
+                    )
+                    sector_series.append(etf_series)
+                    warnings.extend(etf_series.warnings)
+
+                self._enrich_sector_row_from_trends(row, aggregate, etf_series, benchmark, ticker_changes)
+
+            macro_series: list[SectorTrendSeries] = []
+            for symbol, label in MARKET_SNAPSHOT_INSTRUMENTS:
+                series = self._trend_series_from_chart(
+                    charts.get(symbol),
+                    kind="macro",
+                    symbol=symbol,
+                    label=label,
+                    trend_range=trend_range,
+                    trend_interval=trend_interval,
+                )
+                macro_series.append(series)
+                warnings.extend(series.warnings)
+
+            theme_series = self._build_theme_trends(
+                theme_groups,
+                symbol_series,
+                trend_range,
+                trend_interval,
+            )
+            for series in theme_series:
+                warnings.extend(series.warnings)
+
+            return sector_series, [benchmark], macro_series, theme_series, list(dict.fromkeys(warnings))
+        except Exception as exc:
+            warnings.append(f"Trend processing failed for sector analytics: {type(exc).__name__}: {exc}")
+            return [], [], [], [], list(dict.fromkeys(warnings))
 
     @classmethod
     def _watchlist_theme_groups(
