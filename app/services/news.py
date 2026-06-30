@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlparse, urlencode
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 from lxml import html as lxml_html
 import yfinance as yf
@@ -30,6 +32,11 @@ class NewsSettings:
     finnhub_api_key: str | None = None
     finnhub_base_url: str = "https://finnhub.io/api/v1"
     finnhub_company_news_days: int = 14
+    rss_feeds: tuple[tuple[str, str], ...] = (
+        ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+        ("CNBC Markets", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+        ("Reuters Business", "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"),
+    )
     request_timeout: int = 10
     article_request_timeout: int = 4
     background_enrichment_enabled: bool = True
@@ -137,6 +144,49 @@ class NewsService:
             "beats estimates",
             "misses estimates",
         ),
+        "legal_regulatory": (
+            "sec",
+            "doj",
+            "ftc",
+            "fda",
+            "lawsuit",
+            "sues",
+            "sued",
+            "settlement",
+            "investigation",
+            "probe",
+            "regulator",
+            "regulatory",
+            "antitrust",
+            "recall",
+        ),
+        "ma": (
+            "acquisition",
+            "acquires",
+            "acquire",
+            "merger",
+            "takeover",
+            "buyout",
+            "to buy",
+            "deal talks",
+            "strategic review",
+            "spinoff",
+            "spin off",
+        ),
+        "macro_market": (
+            "stock market",
+            "market today",
+            "dow jones",
+            "nasdaq",
+            "s&p 500",
+            "federal reserve",
+            "fed",
+            "inflation",
+            "jobs report",
+            "treasury yields",
+            "oil prices",
+            "wall street",
+        ),
     }
 
     COMPANY_ALIASES: dict[str, tuple[str, ...]] = {
@@ -202,7 +252,7 @@ class NewsService:
         )
 
     def _cached_general_market_news(self, count: int, warnings: list[str]) -> list[NewsArticle]:
-        key = ("general", count, bool(self.settings.finnhub_api_key))
+        key = ("general", count, self.settings.rss_feeds, bool(self.settings.finnhub_api_key))
         cached = self._general_cache.get(key)
         if cached is not None and cached[0] > time.monotonic():
             return [article.model_copy(deep=True) for article in cached[1]]
@@ -223,17 +273,7 @@ class NewsService:
         return result
 
     def _general_market_news(self, count: int, warnings: list[str]) -> list[NewsArticle]:
-        if self.settings.finnhub_api_key:
-            try:
-                articles = self._normalize_finnhub_articles(
-                    self._fetch_finnhub("news", {"category": "general"}),
-                    limit=count,
-                )
-                if articles:
-                    return articles
-            except Exception as exc:
-                warnings.append(f"Finnhub general market news was unavailable: {exc}")
-
+        articles: list[NewsArticle] = []
         errors: list[str] = []
         for query in ["stock market", "S&P 500", "Dow Jones Nasdaq"]:
             try:
@@ -246,12 +286,35 @@ class NewsService:
                     raise_errors=False,
                 )
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(f"Yahoo Finance: {exc}")
                 continue
 
-            articles = self._normalize_articles(getattr(search, "news", []), limit=count)
-            if articles:
-                return articles
+            articles.extend(self._normalize_articles(getattr(search, "news", []), limit=self._provider_fetch_count(count)))
+
+        for source, url in self.settings.rss_feeds:
+            try:
+                articles.extend(self._normalize_rss_articles(self._fetch_rss_feed(url), source=source, limit=self._provider_fetch_count(count)))
+            except Exception as exc:
+                errors.append(f"{source}: {exc}")
+
+        ranked = self._rank_general_articles(self._dedupe_articles(articles), count)
+        if ranked:
+            return ranked
+
+        if self.settings.finnhub_api_key:
+            try:
+                ranked = self._rank_general_articles(
+                    self._normalize_finnhub_articles(
+                        self._fetch_finnhub("news", {"category": "general"}),
+                        limit=self._provider_fetch_count(count),
+                    ),
+                    count,
+                )
+                if ranked:
+                    warnings.append("General market news used Finnhub fallback after Yahoo/RSS returned no headlines.")
+                    return ranked
+            except Exception as exc:
+                errors.append(f"Finnhub: {exc}")
 
         if errors:
             warnings.append(f"General market news was unavailable: {errors[-1]}")
@@ -262,25 +325,7 @@ class NewsService:
     def _ticker_news(self, ticker: str, count: int) -> TickerNews:
         warnings: list[str] = []
         fetch_count = self._provider_fetch_count(count)
-        if self.settings.finnhub_api_key:
-            try:
-                articles = self._normalize_finnhub_articles(
-                    self._fetch_finnhub(
-                        "company-news",
-                        {
-                            "symbol": ticker,
-                            "from": (date.today() - timedelta(days=self.settings.finnhub_company_news_days)).isoformat(),
-                            "to": date.today().isoformat(),
-                        },
-                    ),
-                    limit=fetch_count,
-                )
-                articles = self._rank_ticker_articles(ticker, articles, count, provider_specific=True)
-                if articles:
-                    return TickerNews(ticker=ticker, articles=articles)
-            except Exception as exc:
-                warnings.append(f"Finnhub news was unavailable for {ticker}: {exc}")
-
+        articles: list[NewsArticle] = []
         try:
             raw_articles = yf.Ticker(ticker).get_news(count=fetch_count)
         except Exception as exc:
@@ -293,6 +338,33 @@ class NewsService:
             count,
             provider_specific=True,
         )
+        if articles:
+            return TickerNews(ticker=ticker, articles=articles, warnings=warnings)
+
+        if self.settings.finnhub_api_key:
+            try:
+                articles = self._rank_ticker_articles(
+                    ticker,
+                    self._normalize_finnhub_articles(
+                        self._fetch_finnhub(
+                            "company-news",
+                            {
+                                "symbol": ticker,
+                                "from": (date.today() - timedelta(days=self.settings.finnhub_company_news_days)).isoformat(),
+                                "to": date.today().isoformat(),
+                            },
+                        ),
+                        limit=fetch_count,
+                    ),
+                    count,
+                    provider_specific=True,
+                )
+                if articles:
+                    warnings.append(f"{ticker} news used Finnhub fallback after Yahoo returned no high-relevance headlines.")
+                    return TickerNews(ticker=ticker, articles=articles, warnings=warnings)
+            except Exception as exc:
+                warnings.append(f"Finnhub news was unavailable for {ticker}: {exc}")
+
         if not articles and not warnings:
             warnings.append(f"No high-relevance recent headlines were returned for {ticker}.")
         return TickerNews(ticker=ticker, articles=articles, warnings=warnings)
@@ -340,6 +412,30 @@ class NewsService:
         ranked.sort(key=lambda item: item[0], reverse=True)
         return [article for _, article in ranked[:count]]
 
+    def _rank_general_articles(self, articles: list[NewsArticle], count: int) -> list[NewsArticle]:
+        ranked: list[tuple[float, NewsArticle]] = []
+        for article in articles:
+            impact = self._article_impact_score(article)
+            freshness = self._freshness_score(article.published_at)
+            category = article.category
+            if category == "general" and any(term in f"{article.title} {article.summary or ''}".casefold() for term in self.BROAD_MARKET_TERMS):
+                category = "macro_market"
+            ranked.append(
+                (
+                    impact + freshness,
+                    article.model_copy(
+                        update={
+                            "category": category,
+                            "impact_score": round(impact, 2),
+                            "analysis_status": "skipped",
+                            "analysis_reason": "General market headline ranked with source-neutral deterministic scoring.",
+                        }
+                    ),
+                )
+            )
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [article for _, article in ranked[:count]]
+
     def _article_relevance_score(self, ticker: str, article: NewsArticle, *, provider_specific: bool = False) -> float:
         symbol = ticker.upper().strip()
         title = article.title or ""
@@ -380,11 +476,16 @@ class NewsService:
             ("partnership", 16.0),
             ("deal", 12.0),
             ("acquisition", 24.0),
+            ("acquires", 22.0),
             ("merger", 24.0),
+            ("takeover", 24.0),
             ("fda", 22.0),
             ("sec", 18.0),
+            ("doj", 18.0),
+            ("ftc", 18.0),
             ("lawsuit", 18.0),
             ("investigation", 18.0),
+            ("antitrust", 18.0),
             ("recall", 18.0),
             ("bankruptcy", 26.0),
             ("dividend", 10.0),
@@ -602,7 +703,7 @@ class NewsService:
             "analysis_reason": "Article body analyzed with deterministic scoring and capped LLM review.",
         }
         category = result.get("category")
-        if category in {"rating_changes", "contracts", "earnings", "general"}:
+        if category in {"rating_changes", "contracts", "earnings", "legal_regulatory", "ma", "macro_market", "general"}:
             updates["category"] = category
         for field in ("relevance_score", "impact_score", "category_confidence"):
             value = result.get(field)
@@ -635,6 +736,30 @@ class NewsService:
             if len(articles) == limit:
                 break
         return articles
+
+    @classmethod
+    def _dedupe_articles(cls, articles: list[NewsArticle]) -> list[NewsArticle]:
+        deduped: list[NewsArticle] = []
+        seen: set[str] = set()
+        for article in articles:
+            key = cls._article_identity_key(article)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(article)
+        return deduped
+
+    @classmethod
+    def _article_identity_key(cls, article: NewsArticle) -> str:
+        if article.url:
+            parsed = urlparse(article.url)
+            path = parsed.path.rstrip("/") or "/"
+            return f"url:{parsed.netloc.casefold()}{path.casefold()}"
+        return f"title:{cls._normalized_title(article.title)}"
+
+    @staticmethod
+    def _normalized_title(title: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
 
     @classmethod
     def _normalize_article(cls, raw: dict[str, Any]) -> NewsArticle | None:
@@ -688,6 +813,83 @@ class NewsService:
                 break
         return articles
 
+    def _fetch_rss_feed(self, url: str) -> bytes:
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/rss+xml, application/xml, text/xml",
+                "User-Agent": "InvestmentTradingNewsBot/0.1",
+            },
+        )
+        with urlopen(request, timeout=self.settings.request_timeout) as response:
+            return response.read(1_000_000)
+
+    @classmethod
+    def _normalize_rss_articles(cls, raw_feed: bytes | str, *, source: str, limit: int) -> list[NewsArticle]:
+        try:
+            root = ElementTree.fromstring(raw_feed)
+        except ElementTree.ParseError:
+            return []
+
+        articles: list[NewsArticle] = []
+        seen: set[str] = set()
+        for item in root.findall(".//item") + root.findall(".//{http://www.w3.org/2005/Atom}entry"):
+            title = cls._string(cls._xml_text(item, "title"))
+            if not title:
+                continue
+            summary = cls._string(
+                cls._xml_text(item, "description")
+                or cls._xml_text(item, "summary")
+                or cls._xml_text(item, "{http://www.w3.org/2005/Atom}summary")
+            )
+            url = cls._url(cls._xml_text(item, "link") or cls._atom_link(item))
+            category, category_confidence = cls._classify_article_with_confidence(title, summary)
+            article = NewsArticle(
+                title=title,
+                url=url,
+                publisher=source,
+                published_at=cls._published_at(cls._xml_text(item, "pubDate") or cls._xml_text(item, "published") or cls._xml_text(item, "{http://www.w3.org/2005/Atom}published")),
+                summary=summary,
+                thumbnail_url=cls._rss_thumbnail_url(item),
+                category=category,
+                category_confidence=category_confidence,
+            )
+            key = cls._article_identity_key(article)
+            if key in seen:
+                continue
+            seen.add(key)
+            articles.append(article)
+            if len(articles) == limit:
+                break
+        return articles
+
+    @staticmethod
+    def _xml_text(item: ElementTree.Element, tag: str) -> str | None:
+        found = item.find(tag)
+        if found is None:
+            found = item.find(f"{{*}}{tag}")
+        if found is None:
+            return None
+        return found.text
+
+    @staticmethod
+    def _atom_link(item: ElementTree.Element) -> str | None:
+        for link in item.findall("{http://www.w3.org/2005/Atom}link") + item.findall("link"):
+            href = link.attrib.get("href")
+            if href:
+                return href
+        return None
+
+    @classmethod
+    def _rss_thumbnail_url(cls, item: ElementTree.Element) -> str | None:
+        for element in item.iter():
+            tag = element.tag.split("}", 1)[-1].casefold()
+            if tag in {"thumbnail", "content"}:
+                url = cls._url(element.attrib.get("url"))
+                if url:
+                    return url
+        return None
+
     @classmethod
     def _classify_article(cls, title: str, summary: str | None = None) -> NewsCategory:
         """Group headlines into trader-friendly buckets from provider text."""
@@ -709,7 +911,14 @@ class NewsService:
 
         best_category: NewsCategory = "general"
         best_score = 0.0
-        priority: tuple[NewsCategory, ...] = ("earnings", "rating_changes", "contracts")
+        priority: tuple[NewsCategory, ...] = (
+            "earnings",
+            "rating_changes",
+            "ma",
+            "legal_regulatory",
+            "contracts",
+            "macro_market",
+        )
         for category in priority:
             score = scores.get(category, 0.0)
             if score > best_score:
@@ -760,7 +969,13 @@ class NewsService:
             try:
                 return datetime.fromisoformat(value.replace("Z", "+00:00"))
             except ValueError:
-                return None
+                try:
+                    parsed = parsedate_to_datetime(value)
+                except (TypeError, ValueError):
+                    return None
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
         return None
 
     @staticmethod

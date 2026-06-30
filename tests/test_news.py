@@ -6,7 +6,7 @@ from app.services.news import NewsService, NewsSettings
 
 
 def quiet_settings(**overrides):
-    values = {"background_enrichment_enabled": False}
+    values = {"background_enrichment_enabled": False, "rss_feeds": ()}
     values.update(overrides)
     return NewsSettings(**values)
 
@@ -57,7 +57,7 @@ def test_normalize_article_accepts_search_news_shape():
     assert article.url == "https://finance.yahoo.com/market-today"
     assert article.related_tickers == ["^GSPC", "AAPL"]
     assert article.thumbnail_url == "https://example.com/market.jpg"
-    assert article.category == "general"
+    assert article.category == "macro_market"
 
 
 def test_normalize_finnhub_article_shape():
@@ -115,6 +115,53 @@ def test_normalize_finnhub_article_drops_unsafe_urls():
     assert article.thumbnail_url is None
 
 
+def test_normalize_rss_articles_parses_feed_items_and_drops_unsafe_urls():
+    articles = NewsService._normalize_rss_articles(
+        """
+        <rss><channel>
+          <item>
+            <title>Stock market today: Nasdaq gains before Fed decision</title>
+            <link>https://example.com/market</link>
+            <description>Investors watch treasury yields.</description>
+            <pubDate>Tue, 09 Jun 2026 14:30:00 GMT</pubDate>
+            <media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://example.com/thumb.jpg" />
+          </item>
+          <item>
+            <title>Unsafe item</title>
+            <link>javascript:alert(1)</link>
+          </item>
+        </channel></rss>
+        """,
+        source="Example RSS",
+        limit=5,
+    )
+
+    assert len(articles) == 2
+    assert articles[0].publisher == "Example RSS"
+    assert articles[0].url == "https://example.com/market"
+    assert articles[0].thumbnail_url == "https://example.com/thumb.jpg"
+    assert articles[0].published_at is not None
+    assert articles[0].category == "macro_market"
+    assert articles[1].url is None
+
+
+def test_normalize_rss_articles_handles_malformed_feed():
+    assert NewsService._normalize_rss_articles("<rss><channel>", source="Broken", limit=5) == []
+
+
+def test_dedupe_articles_prefers_canonical_url_then_normalized_title():
+    articles = NewsService._dedupe_articles(
+        [
+            NewsArticle(title="Apple shares rise", url="https://example.com/apple/"),
+            NewsArticle(title="Different title", url="https://example.com/apple"),
+            NewsArticle(title="Nvidia wins AI deal!"),
+            NewsArticle(title="Nvidia wins AI deal"),
+        ]
+    )
+
+    assert [article.title for article in articles] == ["Apple shares rise", "Nvidia wins AI deal!"]
+
+
 def test_classify_article_groups_rating_changes():
     assert NewsService._classify_article("Apple upgraded as analyst raises price target") == "rating_changes"
     assert NewsService._classify_article("Tesla downgraded after margin concerns") == "rating_changes"
@@ -130,25 +177,46 @@ def test_classify_article_groups_earnings_reports():
     assert NewsService._classify_article("AMD lifts guidance as revenue improves") == "earnings"
 
 
+def test_classify_article_groups_legal_ma_and_macro_news():
+    assert NewsService._classify_article("Apple faces DOJ antitrust lawsuit") == "legal_regulatory"
+    assert NewsService._classify_article("Synopsys to buy Ansys in $35 billion acquisition") == "ma"
+    assert NewsService._classify_article("Stock market today: Nasdaq rises as Fed decision looms") == "macro_market"
+
+
 def test_classify_article_defaults_to_general():
-    assert NewsService._classify_article("Markets rise as investors await Fed decision") == "general"
+    assert NewsService._classify_article("Company announces annual meeting date") == "general"
 
 
-def test_build_news_prefers_finnhub_when_configured(monkeypatch):
+def test_build_news_uses_finnhub_only_after_yahoo_returns_no_relevant_headlines(monkeypatch):
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        def get_news(self, count=10):
+            return []
+
+    class FakeSearch:
+        news = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
     def fake_fetch(self, endpoint, params):
         if endpoint == "news":
             return [{"headline": "Market headline", "url": "https://example.com/market"}]
         assert endpoint == "company-news"
         return [{"headline": f"{params['symbol']} headline", "url": f"https://example.com/{params['symbol']}"}]
 
+    monkeypatch.setattr("app.services.news.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.services.news.yf.Search", FakeSearch)
     monkeypatch.setattr(NewsService, "_fetch_finnhub", fake_fetch)
 
     response = NewsService(quiet_settings(finnhub_api_key="test")).build_news(["AAPL"], per_ticker=2, general_count=3)
 
     assert [item.title for item in response.general_market] == ["Market headline"]
     assert response.ticker_news[0].articles[0].title == "AAPL headline"
-    assert response.warnings == []
-    assert response.ticker_news[0].warnings == []
+    assert response.warnings == ["General market news used Finnhub fallback after Yahoo/RSS returned no headlines."]
+    assert response.ticker_news[0].warnings == ["AAPL news used Finnhub fallback after Yahoo returned no high-relevance headlines."]
 
 
 def test_build_news_returns_warnings_without_failing(monkeypatch):
@@ -176,6 +244,45 @@ def test_build_news_returns_warnings_without_failing(monkeypatch):
     assert response.ticker_news[0].articles[0].title == "AAPL headline"
     assert response.ticker_news[1].ticker == "MSFT"
     assert response.ticker_news[1].warnings == ["News was unavailable for MSFT: rate limited"]
+
+
+def test_general_market_news_combines_yahoo_and_rss_with_dedupe(monkeypatch):
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        def get_news(self, count=10):
+            return []
+
+    class FakeSearch:
+        news = [
+            {"title": "Stock market today: Nasdaq gains", "link": "https://example.com/market"},
+            {"title": "Duplicate headline", "link": "https://example.com/duplicate"},
+        ]
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+    feed = """
+    <rss><channel>
+      <item><title>Duplicate headline</title><link>https://example.com/duplicate/</link></item>
+      <item><title>Fed decision moves treasury yields</title><link>https://example.com/fed</link></item>
+    </channel></rss>
+    """
+    monkeypatch.setattr("app.services.news.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.services.news.yf.Search", FakeSearch)
+    monkeypatch.setattr(NewsService, "_fetch_rss_feed", lambda self, url: feed)
+
+    response = NewsService(quiet_settings(rss_feeds=(("Example RSS", "https://example.com/rss"),))).build_news(
+        ["AAPL"],
+        per_ticker=2,
+        general_count=5,
+    )
+
+    titles = [article.title for article in response.general_market]
+    assert "Stock market today: Nasdaq gains" in titles
+    assert "Fed decision moves treasury yields" in titles
+    assert titles.count("Duplicate headline") == 1
 
 
 def test_build_news_falls_back_to_yahoo_when_finnhub_is_empty(monkeypatch):

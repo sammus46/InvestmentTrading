@@ -46,11 +46,14 @@ from app.models import (
 )
 from app.streamlit_app import (
     ANALYTICS_VIEW,
+    article_card_html,
     dataset_refresh_token,
     filter_report_metrics,
+    filter_ticker_news_articles,
     filter_ticker_news_groups,
     load_streamlit_watchlist,
     load_streamlit_settings,
+    load_streamlit_secrets_into_environment,
     mark_streamlit_data_current,
     merge_streamlit_datasets,
     metric_card_html,
@@ -60,6 +63,7 @@ from app.streamlit_app import (
     normalize_report_layout,
     normalize_streamlit_settings,
     normalize_ticker_list,
+    news_source_options,
     progressive_report_responses,
     report_layout_label,
     refresh_bucket,
@@ -294,6 +298,21 @@ def test_streamlit_settings_load_from_watchlist_only_state(tmp_path):
     assert settings["scanner_view"] == "auto"
     assert settings["news_per_ticker"] == 10
     assert settings["level_weights"] == {}
+
+
+def test_load_streamlit_secrets_into_environment_sets_missing_values(monkeypatch):
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    monkeypatch.setenv("TRADIER_TOKEN", "existing-token")
+    monkeypatch.setattr(
+        streamlit_app_module.st,
+        "secrets",
+        {"FINNHUB_API_KEY": " local-finnhub-key ", "TRADIER_TOKEN": "replacement-token"},
+    )
+
+    load_streamlit_secrets_into_environment(("FINNHUB_API_KEY", "TRADIER_TOKEN"))
+
+    assert streamlit_app_module.os.environ["FINNHUB_API_KEY"] == "local-finnhub-key"
+    assert streamlit_app_module.os.environ["TRADIER_TOKEN"] == "existing-token"
 
 
 def test_streamlit_settings_normalize_invalid_values():
@@ -1121,6 +1140,46 @@ def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
     assert "streamlit-news-toggle-arrow" in card
     assert "open" in ticker_news_card_html(group, expanded=True)
     assert "st.button" not in card
+
+
+def test_streamlit_news_article_card_renders_category_and_impact_chips():
+    html = article_card_html(
+        NewsArticle(
+            title="AAPL upgraded as analyst raises price target",
+            publisher="Yahoo Finance",
+            category="rating_changes",
+            impact_score=42,
+            relevance_score=88,
+        ),
+        compact=True,
+    )
+
+    assert "streamlit-news-chips" in html
+    assert "Price Rating Changes" in html
+    assert "Impact" in html
+    assert "Direct match" in html
+
+
+def test_streamlit_watchlist_news_filters_articles_by_category_and_source():
+    groups = [
+        TickerNews(
+            ticker="AAPL",
+            articles=[
+                NewsArticle(title="AAPL upgrade", publisher="Yahoo Finance", category="rating_changes"),
+                NewsArticle(title="AAPL earnings", publisher="Example RSS", category="earnings"),
+            ],
+        ),
+        TickerNews(
+            ticker="MSFT",
+            articles=[NewsArticle(title="MSFT deal", publisher="Yahoo Finance", category="contracts")],
+        ),
+    ]
+
+    assert news_source_options(groups) == ["Example RSS", "Yahoo Finance"]
+    filtered = filter_ticker_news_articles(groups, category="rating_changes", source="Yahoo Finance")
+
+    assert [group.ticker for group in filtered] == ["AAPL"]
+    assert [article.title for article in filtered[0].articles] == ["AAPL upgrade"]
 
 
 def test_streamlit_loaded_state_tracks_datasets_independently():

@@ -22,6 +22,9 @@ const NEWS_CATEGORY_LABELS = {
   rating_changes: "Price Rating Changes",
   contracts: "Company Contract Announcements",
   earnings: "Earnings Reports",
+  legal_regulatory: "Legal & Regulatory",
+  ma: "M&A",
+  macro_market: "Macro & Market",
   general: "General News",
 };
 
@@ -222,6 +225,8 @@ const newsGeneratedAtEl = document.querySelector("#news-generated-at");
 const marketNewsEl = document.querySelector("#market-news");
 const watchlistNewsEl = document.querySelector("#watchlist-news");
 const watchlistNewsSearchEl = document.querySelector("#watchlist-news-search");
+const watchlistNewsCategoryEl = document.querySelector("#watchlist-news-category");
+const watchlistNewsSourceEl = document.querySelector("#watchlist-news-source");
 const marketSnapshotEl = document.querySelector("#market-snapshot");
 const watchlistPerformanceEl = document.querySelector("#watchlist-performance");
 const xNewsEl = document.querySelector("#x-news");
@@ -461,6 +466,8 @@ watchlistNewsEl.addEventListener("click", (event) => {
 
 watchlistNewsSearchEl?.addEventListener("input", applyWatchlistNewsSearch);
 watchlistNewsSearchEl?.addEventListener("search", applyWatchlistNewsSearch);
+watchlistNewsCategoryEl?.addEventListener("change", applyWatchlistNewsSearch);
+watchlistNewsSourceEl?.addEventListener("change", applyWatchlistNewsSearch);
 
 scannerSetupEl.addEventListener("click", (event) => {
   const sortButton = event.target.closest("[data-scanner-sort]");
@@ -1824,6 +1831,7 @@ function renderNews(news, options = {}) {
   }
   newsGeneratedAtEl.textContent = `News refreshed ${new Date(news.generated_at).toLocaleString()}`;
   updateNewsInfoTooltips(news.generated_at);
+  updateNewsFilterControls(news);
   renderWarningStatus(news.warnings || []);
   renderMarketNews(news.general_market || []);
   renderWatchlistNews(news.ticker_news || []);
@@ -2735,8 +2743,12 @@ function renderWatchlistNews(tickerNews) {
   const terms = searchTickerTerms(watchlistNewsSearchEl?.value || "");
   if (!filteredNews.length) {
     watchlistNewsEl.className = "ticker-news-grid empty";
+    const category = watchlistNewsCategoryEl?.value || "all";
+    const source = watchlistNewsSourceEl?.value || "all";
     watchlistNewsEl.textContent = terms.length
       ? `No ticker matching "${terms.join(", ")}".`
+      : category !== "all" || source !== "all"
+        ? "No watchlist headlines match the selected filters."
       : "No watchlist news was returned.";
     return;
   }
@@ -2753,8 +2765,57 @@ function applyWatchlistNewsSearch(options = {}) {
 
 function filterTickerNewsGroups(tickerNews, query) {
   const terms = searchTickerTerms(query || "");
-  if (!terms.length) return tickerNews;
-  return tickerNews.filter((group) => terms.some((term) => String(group.ticker || "").toUpperCase().includes(term)));
+  const category = watchlistNewsCategoryEl?.value || "all";
+  const source = watchlistNewsSourceEl?.value || "all";
+  return tickerNews
+    .filter((group) => !terms.length || terms.some((term) => String(group.ticker || "").toUpperCase().includes(term)))
+    .map((group) => ({
+      ...group,
+      articles: (group.articles || []).filter((article) => articleMatchesNewsFilters(article, category, source)),
+    }))
+    .filter((group) => group.articles.length || (group.warnings || []).length);
+}
+
+function articleMatchesNewsFilters(article, category, source) {
+  const articleCategory = NEWS_CATEGORY_LABELS[article.category] ? article.category : "general";
+  if (category !== "all" && articleCategory !== category) return false;
+  if (source !== "all" && newsPublisherKey(article.publisher) !== source) return false;
+  return true;
+}
+
+function newsPublisherKey(value) {
+  return String(value || "Unknown").trim().toLowerCase();
+}
+
+function updateNewsFilterControls(news) {
+  if (watchlistNewsCategoryEl) {
+    const selected = watchlistNewsCategoryEl.value || "all";
+    watchlistNewsCategoryEl.innerHTML = [
+      '<option value="all">All</option>',
+      ...Object.entries(NEWS_CATEGORY_LABELS).map(([value, label]) => (
+        `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`
+      )),
+    ].join("");
+    watchlistNewsCategoryEl.value = NEWS_CATEGORY_LABELS[selected] ? selected : "all";
+  }
+
+  if (!watchlistNewsSourceEl) return;
+  const selectedSource = watchlistNewsSourceEl.value || "all";
+  const sources = new Map();
+  (news?.ticker_news || []).forEach((group) => {
+    (group.articles || []).forEach((article) => {
+      const label = String(article.publisher || "Unknown").trim() || "Unknown";
+      sources.set(newsPublisherKey(label), label);
+    });
+  });
+  const options = ['<option value="all">All</option>'];
+  [...sources.entries()]
+    .sort((left, right) => left[1].localeCompare(right[1]))
+    .forEach(([value, label]) => {
+      options.push(`<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`);
+    });
+  watchlistNewsSourceEl.innerHTML = options.join("");
+  watchlistNewsSourceEl.value = sources.has(selectedSource) ? selectedSource : "all";
 }
 
 function renderTickerNews(tickerGroup) {
@@ -2909,6 +2970,7 @@ function renderArticleCard(article, options = {}) {
   const related = article.related_tickers?.length
     ? `<div class="related-tickers">${article.related_tickers.slice(0, 6).map((ticker) => `<span>${escapeHtml(ticker)}</span>`).join("")}</div>`
     : "";
+  const chips = renderNewsChips(article);
   const imageUrl = safeUrl(article.thumbnail_url);
   const articleUrl = safeUrl(article.url);
   const image = imageUrl && !options.compact
@@ -2927,11 +2989,28 @@ function renderArticleCard(article, options = {}) {
           ${article.publisher ? `<span>${escapeHtml(article.publisher)}</span>` : ""}
           ${published ? `<time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time>` : ""}
         </div>
+        ${chips}
         ${article.summary && !options.compact ? `<p>${escapeHtml(article.summary)}</p>` : ""}
         ${related}
       </div>
     </article>
   `;
+}
+
+function renderNewsChips(article) {
+  const category = NEWS_CATEGORY_LABELS[article.category] || NEWS_CATEGORY_LABELS.general;
+  const impact = Number(article.impact_score || 0);
+  const relevance = Number(article.relevance_score || 0);
+  const chips = [`<span>${escapeHtml(category)}</span>`];
+  if (impact >= 50) {
+    chips.push("<span>High impact</span>");
+  } else if (impact >= 20) {
+    chips.push("<span>Impact</span>");
+  }
+  if (relevance >= 70) {
+    chips.push("<span>Direct match</span>");
+  }
+  return `<div class="news-chips">${chips.join("")}</div>`;
 }
 
 function safeUrl(value) {

@@ -119,6 +119,22 @@ def test_static_score_level_basis_stays_synced_with_level_filter():
     assert 'renderScoreSelect("Basis", "levelBasis", levelFilter' in js
 
 
+def test_static_news_filters_and_article_chips_are_wired():
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    js = Path("app/static/app.js").read_text(encoding="utf-8")
+    css = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert 'id="watchlist-news-category"' in html
+    assert 'id="watchlist-news-source"' in html
+    assert 'const watchlistNewsCategoryEl = document.querySelector("#watchlist-news-category");' in js
+    assert 'const watchlistNewsSourceEl = document.querySelector("#watchlist-news-source");' in js
+    assert "function updateNewsFilterControls(news)" in js
+    assert "function renderNewsChips(article)" in js
+    assert "articleMatchesNewsFilters(article, category, source)" in js
+    assert ".news-filter" in css
+    assert ".news-chips" in css
+
+
 def test_static_score_analytics_renders_heat_views():
     js = Path("app/static/app.js").read_text(encoding="utf-8")
     css = Path("app/static/styles.css").read_text(encoding="utf-8")
