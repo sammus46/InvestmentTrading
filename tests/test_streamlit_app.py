@@ -60,6 +60,7 @@ from app.streamlit_app import (
     metric_rows,
     normalize_level_search,
     normalize_level_weights,
+    normalize_news_view,
     normalize_report_layout,
     normalize_streamlit_settings,
     normalize_ticker_list,
@@ -75,6 +76,8 @@ from app.streamlit_app import (
     streamlit_autoload_datasets,
     streamlit_dataset_current,
     STREAMLIT_VIEWS,
+    ticker_news_grid_column_count,
+    ticker_news_list_card_html,
     ticker_news_body_html,
     ticker_news_card_html,
 )
@@ -297,6 +300,7 @@ def test_streamlit_settings_load_from_watchlist_only_state(tmp_path):
     assert settings["auto_refresh"] is True
     assert settings["scanner_view"] == "auto"
     assert settings["news_per_ticker"] == 10
+    assert settings["news_view"] == "cards_1"
     assert settings["level_weights"] == {}
 
 
@@ -328,6 +332,7 @@ def test_streamlit_settings_normalize_invalid_values():
             "auto_load": False,
             "auto_refresh": False,
             "news_per_ticker": 999,
+            "news_view": "bad",
             "level_weights": {"PM High": "19", "Bad Level": 40, "PM Low": 28, "Prev Close": 51},
         }
     )
@@ -342,6 +347,7 @@ def test_streamlit_settings_normalize_invalid_values():
     assert settings["auto_load"] is False
     assert settings["auto_refresh"] is False
     assert settings["news_per_ticker"] == 20
+    assert settings["news_view"] == "cards_1"
     assert settings["level_weights"] == {"PM High": 19, "Prev Close": 50}
 
 
@@ -1140,6 +1146,33 @@ def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
     assert "streamlit-news-toggle-arrow" in card
     assert "open" in ticker_news_card_html(group, expanded=True)
     assert "st.button" not in card
+
+
+def test_streamlit_watchlist_news_layout_helpers_cap_card_columns():
+    assert normalize_news_view(None) == "cards_1"
+    assert normalize_news_view("bad") == "cards_1"
+    assert normalize_news_view("cards_2") == "cards_2"
+    assert ticker_news_grid_column_count("cards_1", 5) == 1
+    assert ticker_news_grid_column_count("cards_2", 5) == 2
+    assert ticker_news_grid_column_count("cards_2", 1) == 1
+    assert ticker_news_grid_column_count("list", 5) == 1
+
+
+def test_streamlit_watchlist_news_compact_list_card_html():
+    group = TickerNews(
+        ticker="AAPL",
+        articles=[
+            NewsArticle(title="AAPL headline", publisher="Yahoo Finance", category="rating_changes", impact_score=30)
+        ],
+    )
+
+    html = ticker_news_list_card_html(group)
+
+    assert "streamlit-ticker-news-card list-view" in html
+    assert "streamlit-news-list" in html
+    assert "streamlit-news-list-item" in html
+    assert "AAPL headline" in html
+    assert "Price Rating Changes" in html
 
 
 def test_streamlit_news_article_card_renders_category_and_impact_chips():

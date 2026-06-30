@@ -126,13 +126,26 @@ def test_static_news_filters_and_article_chips_are_wired():
 
     assert 'id="watchlist-news-category"' in html
     assert 'id="watchlist-news-source"' in html
+    assert 'id="watchlist-news-view"' in html
+    assert "1-column cards" in html
+    assert "2-column cards" in html
+    assert "Compact list" in html
     assert 'const watchlistNewsCategoryEl = document.querySelector("#watchlist-news-category");' in js
     assert 'const watchlistNewsSourceEl = document.querySelector("#watchlist-news-source");' in js
+    assert 'const watchlistNewsViewEl = document.querySelector("#watchlist-news-view");' in js
+    assert 'newsView: "cards_1"' in js
+    assert "function normalizeNewsView(value)" in js
+    assert "updateSettings({ newsView: watchlistNewsViewEl.value });" in js
+    assert "function newsViewClass(view)" in js
+    assert "function renderTickerNewsList(tickerGroup)" in js
     assert "function updateNewsFilterControls(news)" in js
     assert "function renderNewsChips(article)" in js
     assert "articleMatchesNewsFilters(article, category, source)" in js
     assert ".news-filter" in css
     assert ".news-chips" in css
+    assert ".ticker-news-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }" in css
+    assert ".ticker-news-grid.news-view-cards-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in css
+    assert ".ticker-news-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit" not in css
 
 
 def test_static_score_analytics_renders_heat_views():
