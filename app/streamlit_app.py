@@ -87,6 +87,9 @@ NEWS_CATEGORY_LABELS = {
     "rating_changes": "Price Rating Changes",
     "contracts": "Company Contract Announcements",
     "earnings": "Earnings Reports",
+    "legal_regulatory": "Legal & Regulatory",
+    "ma": "M&A",
+    "macro_market": "Macro & Market",
     "general": "General News",
 }
 CHART_TYPE_OPTIONS = ("Line", "Candles")
@@ -149,6 +152,7 @@ AUTO_REFRESH_SECONDS = 60
 STREAMLIT_REPORT_BATCH_SIZE = 3
 REFRESH_BANNER_DEFAULT_TITLE = "Refreshing data"
 STREAMLIT_STATE_ENV = "INVESTMENT_TRADING_STREAMLIT_STATE"
+STREAMLIT_ENV_SECRET_KEYS = ("FINNHUB_API_KEY", "TRADIER_TOKEN")
 STREAMLIT_DATASETS = ("report", "scanner", "sector_analytics", "news", "market_snapshot", "chart")
 STREAMLIT_DATASET_SCHEMA_VERSIONS = {"sector_analytics": 2}
 STREAMLIT_MARKET_DATA_SERVICE_CACHE_VERSION = 2
@@ -233,6 +237,30 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def load_streamlit_secrets_into_environment(secret_names: tuple[str, ...] = STREAMLIT_ENV_SECRET_KEYS) -> None:
+    """Expose selected Streamlit secrets to services that read environment variables."""
+    try:
+        secrets = st.secrets
+    except Exception:
+        return
+
+    for name in secret_names:
+        if os.getenv(name):
+            continue
+        try:
+            value = secrets.get(name)
+        except Exception:
+            continue
+        if value is None:
+            continue
+        value_text = str(value).strip()
+        if value_text:
+            os.environ[name] = value_text
+
+
+load_streamlit_secrets_into_environment()
 
 
 def scanner_service_class(*, reload_module: bool = False) -> type[Any]:
@@ -1729,6 +1757,22 @@ def render_app_chrome() -> str:
             color: #64748b !important;
             font-size: 0.78rem;
             font-weight: 800;
+          }
+          .streamlit-news-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+          }
+          .streamlit-news-chips span {
+            background: #ecfeff;
+            border: 1px solid #a5f3fc;
+            border-radius: 999px;
+            color: #155e75 !important;
+            font-size: 0.68rem;
+            font-weight: 900;
+            line-height: 1;
+            padding: 0.28rem 0.45rem;
+            text-transform: uppercase;
           }
           .streamlit-news-summary {
             color: #334155 !important;
@@ -3616,6 +3660,11 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) div[data-testid="stCaptionContainer"] * {
               color: var(--text-muted) !important;
             }
+            body:has(.streamlit-theme-marker) .streamlit-news-chips span {
+              background: #083344 !important;
+              border-color: #155e75 !important;
+              color: #a5f3fc !important;
+            }
             body:has(.streamlit-theme-marker) [data-testid="stSidebar"] input,
             body:has(.streamlit-theme-marker) [data-testid="stSidebar"] textarea,
             body:has(.streamlit-theme-marker) [data-testid="stSidebar"] [data-baseweb="input"] input,
@@ -5432,6 +5481,7 @@ def article_card_html(article: NewsArticle, compact: bool = False) -> str:
     else:
         title_html = f'<span class="streamlit-news-title">{escape(article.title)}</span>'
     meta_html = f'<div class="streamlit-news-meta">{escape(meta)}</div>' if meta else ""
+    chips_html = news_chips_html(article)
     summary_html = f'<p class="streamlit-news-summary">{escape(article.summary)}</p>' if article.summary else ""
     related_html = ""
     if article.related_tickers:
@@ -5447,10 +5497,25 @@ def article_card_html(article: NewsArticle, compact: bool = False) -> str:
         f'<article class="{classes}">'
         f"{image_html}"
         '<div class="streamlit-news-body">'
-        f"{title_html}{meta_html}{summary_html}{related_html}"
+        f"{title_html}{meta_html}{chips_html}{summary_html}{related_html}"
         "</div>"
         "</article>"
     )
+
+
+def news_chips_html(article: NewsArticle) -> str:
+    """Return source-neutral category and impact chips for a news card."""
+    category = NEWS_CATEGORY_LABELS.get(article.category, NEWS_CATEGORY_LABELS["general"])
+    chips = [f"<span>{escape(category)}</span>"]
+    impact = float(article.impact_score or 0)
+    relevance = float(article.relevance_score or 0)
+    if impact >= 50:
+        chips.append("<span>High impact</span>")
+    elif impact >= 20:
+        chips.append("<span>Impact</span>")
+    if relevance >= 70:
+        chips.append("<span>Direct match</span>")
+    return f'<div class="streamlit-news-chips">{"".join(chips)}</div>'
 
 
 def safe_url(value: object) -> str | None:
@@ -5564,6 +5629,31 @@ def filter_ticker_news_groups(ticker_news: list[Any], query: object) -> list[Any
     if not terms:
         return list(ticker_news)
     return [group for group in ticker_news if any(term in str(group.ticker).upper() for term in terms)]
+
+
+def news_source_options(ticker_news: list[Any]) -> list[str]:
+    """Return stable publisher options available in watchlist news."""
+    sources = {
+        str(article.publisher or "Unknown").strip() or "Unknown"
+        for group in ticker_news
+        for article in list(group.articles or [])
+    }
+    return sorted(sources)
+
+
+def filter_ticker_news_articles(ticker_news: list[Any], category: str = "all", source: str = "all") -> list[Any]:
+    """Return ticker groups with articles narrowed by category and source."""
+    filtered = []
+    for group in ticker_news:
+        articles = [
+            article
+            for article in list(group.articles or [])
+            if (category == "all" or (article.category if article.category in NEWS_CATEGORY_LABELS else "general") == category)
+            and (source == "all" or (str(article.publisher or "Unknown").strip() or "Unknown") == source)
+        ]
+        if articles or list(group.warnings or []):
+            filtered.append(group.model_copy(update={"articles": articles}) if hasattr(group, "model_copy") else group)
+    return filtered
 
 
 def render_ticker_news_grid(ticker_news: list[Any], empty_message: str = "No watchlist news was returned.") -> None:
@@ -5686,7 +5776,7 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
     else:
         st.info("No general market headlines were returned.")
 
-    watchlist_heading_col, watchlist_search_col = st.columns([1.6, 1], vertical_alignment="center")
+    watchlist_heading_col, watchlist_search_col, category_col, source_col = st.columns([1.4, 1, 1, 1], vertical_alignment="center")
     with watchlist_heading_col:
         st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
     with watchlist_search_col:
@@ -5695,9 +5785,27 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
             placeholder="AAPL, MSFT",
             key="watchlist_news_search",
         )
+    with category_col:
+        news_category = st.selectbox(
+            "Category",
+            ["all", *NEWS_CATEGORY_LABELS.keys()],
+            format_func=lambda value: "All" if value == "all" else NEWS_CATEGORY_LABELS.get(value, value),
+            key="watchlist_news_category",
+        )
+    with source_col:
+        source_options = ["all", *news_source_options(report.ticker_news)]
+        news_source = st.selectbox(
+            "Source",
+            source_options,
+            format_func=lambda value: "All" if value == "all" else value,
+            key="watchlist_news_source",
+        )
     visible_ticker_news = filter_ticker_news_groups(report.ticker_news, news_search)
+    visible_ticker_news = filter_ticker_news_articles(visible_ticker_news, news_category, news_source)
     if news_search and not visible_ticker_news:
         render_ticker_news_grid([], f"No ticker matching '{normalize_level_search(news_search)}'.")
+    elif (news_category != "all" or news_source != "all") and not visible_ticker_news:
+        render_ticker_news_grid([], "No watchlist headlines match the selected filters.")
     else:
         if news_search:
             st.caption(f"Showing {len(visible_ticker_news)} of {len(report.ticker_news)} ticker(s).")

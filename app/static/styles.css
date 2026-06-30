@@ -559,9 +559,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .section-heading h3 { margin-bottom: 4px; }
 .section-heading p { margin: 0; font-size: 0.92rem; }
 .section-actions { align-items: center; display: inline-flex; gap: 10px; }
-.news-search, .report-search { align-items: center; background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: inline-flex; gap: 6px; margin: 0; padding: 5px 7px; }
-.news-search span, .report-search span { color: #64748b; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
-.news-search input, .report-search input { background: #ffffff; font-size: 0.84rem; min-height: 30px; min-width: 180px; padding: 5px 8px; }
+.news-search, .news-filter, .report-search { align-items: center; background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: inline-flex; gap: 6px; margin: 0; padding: 5px 7px; }
+.news-search span, .news-filter span, .report-search span { color: #64748b; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
+.news-search input, .news-filter select, .report-search input { background: #ffffff; font-size: 0.84rem; min-height: 30px; min-width: 150px; padding: 5px 8px; }
+.news-search input { min-width: 180px; }
 .report-search .report-search-status { color: #475569; font-size: 0.76rem; letter-spacing: 0; min-width: 54px; text-align: right; text-transform: none; white-space: nowrap; }
 .info-button { align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 999px; box-shadow: none; color: #334155; display: inline-flex; flex: 0 0 auto; font-size: 0.78rem; height: 30px; justify-content: center; line-height: 1; padding: 0; position: relative; width: 30px; }
 .info-button:hover:not(:disabled) { background: #eef2f7; transform: none; }
@@ -596,6 +597,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .news-card h4 a:hover { color: #0f766e; text-decoration: underline; }
 .news-card p { font-size: 0.92rem; margin: 0; }
 .news-meta { color: #64748b; display: flex; flex-wrap: wrap; font-size: 0.78rem; font-weight: 800; gap: 8px; text-transform: uppercase; }
+.news-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.news-chips span { background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 999px; color: #155e75; font-size: 0.68rem; font-weight: 900; line-height: 1; padding: 5px 7px; text-transform: uppercase; }
 .related-tickers { display: flex; flex-wrap: wrap; gap: 6px; }
 .related-tickers span { background: #fef3c7; border: 1px solid #fde68a; border-radius: 999px; color: #92400e; font-size: 0.72rem; font-weight: 900; padding: 4px 7px; }
 .ticker-news-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
@@ -636,8 +639,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-thermometer { grid-template-columns: 1fr; }
   .section-heading { align-items: center; display: flex; }
   .section-actions { align-items: stretch; display: grid; justify-items: end; }
-  .news-search { width: min(100%, 240px); }
-  .news-search input, .report-search input { min-width: 0; width: 100%; }
+  .news-search, .news-filter { width: min(100%, 240px); }
+  .news-search input, .news-filter select, .report-search input { min-width: 0; width: 100%; }
   .news-list, .ticker-news-grid { grid-template-columns: 1fr; }
   .news-card { grid-template-columns: 112px 1fr; }
   .performance-tile, .performance-tile.compact { grid-template-columns: 1fr; }
@@ -724,6 +727,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .chart-select select,
   .score-select select,
   .news-search input,
+  .news-filter select,
   .report-search input,
   .scanner-card-toolbar select {
     background: #1a2230;
@@ -739,6 +743,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .report-layout-select,
   .chart-select,
   .news-search,
+  .news-filter,
   .report-search,
   .info-button,
   .chart-reset,
@@ -838,6 +843,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .score-thermometer span,
   .score-trend-card header span,
   .news-search span,
+  .news-filter span,
   .report-search span,
   .levels-table th,
   .compare-table th,
@@ -850,6 +856,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .watchlist-empty,
   .chart-empty,
   .scanner-data-notes,
+  .news-chips span,
   .scanner-card-toolbar label span,
   .scanner-card-header span,
   .scanner-card-metric > span,
@@ -878,6 +885,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .metric-section h4,
   .level-list h5 {
     color: #cbd5e1;
+  }
+  .news-chips span {
+    background: #083344;
+    border-color: #155e75;
+    color: #a5f3fc;
   }
   .warning,
   .chart-warning,

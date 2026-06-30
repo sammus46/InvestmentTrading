@@ -19,7 +19,15 @@ MetricName = Literal[
     "bollinger_bands",
     "technical_levels",
 ]
-NewsCategory = Literal["rating_changes", "contracts", "earnings", "general"]
+NewsCategory = Literal[
+    "rating_changes",
+    "contracts",
+    "earnings",
+    "legal_regulatory",
+    "ma",
+    "macro_market",
+    "general",
+]
 NewsAnalysisStatus = Literal["pending", "analyzed", "failed", "skipped"]
 RecommendationTone = Literal["focus", "watch", "wait", "note"]
 ChartRange = Literal["1D", "WTD", "5D", "MTD", "1M", "QTD", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
