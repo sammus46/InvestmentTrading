@@ -27,6 +27,11 @@ const NEWS_CATEGORY_LABELS = {
   macro_market: "Macro & Market",
   general: "General News",
 };
+const NEWS_VIEW_OPTIONS = [
+  { id: "cards_1", label: "1-column cards" },
+  { id: "cards_2", label: "2-column cards" },
+  { id: "list", label: "Compact list" },
+];
 
 const CHART_TYPES = ["line", "candles"];
 const DEFAULT_CHART_SETTINGS = { type: "line", range: "1D", interval: "5m" };
@@ -98,6 +103,7 @@ const DEFAULT_SETTINGS = {
   autoRefresh: true,
   scannerView: "auto",
   newsPerTicker: NEWS_EXPANDED_HEADLINE_COUNT,
+  newsView: "cards_1",
   scoreAnalytics: DEFAULT_SCORE_ANALYTICS_SETTINGS,
   sectorAnalytics: DEFAULT_SECTOR_ANALYTICS_SETTINGS,
 };
@@ -227,6 +233,7 @@ const watchlistNewsEl = document.querySelector("#watchlist-news");
 const watchlistNewsSearchEl = document.querySelector("#watchlist-news-search");
 const watchlistNewsCategoryEl = document.querySelector("#watchlist-news-category");
 const watchlistNewsSourceEl = document.querySelector("#watchlist-news-source");
+const watchlistNewsViewEl = document.querySelector("#watchlist-news-view");
 const marketSnapshotEl = document.querySelector("#market-snapshot");
 const watchlistPerformanceEl = document.querySelector("#watchlist-performance");
 const xNewsEl = document.querySelector("#x-news");
@@ -468,6 +475,10 @@ watchlistNewsSearchEl?.addEventListener("input", applyWatchlistNewsSearch);
 watchlistNewsSearchEl?.addEventListener("search", applyWatchlistNewsSearch);
 watchlistNewsCategoryEl?.addEventListener("change", applyWatchlistNewsSearch);
 watchlistNewsSourceEl?.addEventListener("change", applyWatchlistNewsSearch);
+watchlistNewsViewEl?.addEventListener("change", () => {
+  updateSettings({ newsView: watchlistNewsViewEl.value });
+  renderWatchlistNews(currentNews?.ticker_news || []);
+});
 
 scannerSetupEl.addEventListener("click", (event) => {
   const sortButton = event.target.closest("[data-scanner-sort]");
@@ -808,6 +819,7 @@ function normalizeSettings(candidate = {}) {
     autoRefresh: typeof candidate.autoRefresh === "boolean" ? candidate.autoRefresh : DEFAULT_SETTINGS.autoRefresh,
     scannerView: normalizeScannerView(candidate.scannerView),
     newsPerTicker: normalizeNewsCount(candidate.newsPerTicker),
+    newsView: normalizeNewsView(candidate.newsView),
     scoreAnalytics: normalizeScoreAnalyticsSettings(candidate.scoreAnalytics),
     sectorAnalytics: normalizeSectorAnalyticsSettings(candidate.sectorAnalytics),
   };
@@ -837,6 +849,10 @@ function normalizeNewsCount(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return DEFAULT_SETTINGS.newsPerTicker;
   return Math.max(1, Math.min(NEWS_MAX_HEADLINE_COUNT, Math.round(number)));
+}
+
+function normalizeNewsView(value) {
+  return NEWS_VIEW_OPTIONS.some((item) => item.id === value) ? value : DEFAULT_SETTINGS.newsView;
 }
 
 function normalizeScoreAnalyticsSettings(candidate = {}) {
@@ -982,6 +998,7 @@ function renderSettingsControls() {
     settingsScannerViewEl.value = appSettings.scannerView;
   }
   if (settingsNewsCountEl) settingsNewsCountEl.value = String(appSettings.newsPerTicker);
+  if (watchlistNewsViewEl) watchlistNewsViewEl.value = appSettings.newsView;
 }
 
 function renderChartSettingsControls() {
@@ -1843,7 +1860,7 @@ function renderNewsEmptyState() {
   updateNewsInfoTooltips();
   marketNewsEl.className = "news-list empty";
   marketNewsEl.textContent = "";
-  watchlistNewsEl.className = "ticker-news-grid empty";
+  watchlistNewsEl.className = `ticker-news-grid ${newsViewClass(appSettings.newsView)} empty`;
   watchlistNewsEl.textContent = "";
   setNewsStatus("", "");
 }
@@ -2741,8 +2758,10 @@ function renderMarketNews(articles) {
 function renderWatchlistNews(tickerNews) {
   const filteredNews = filterTickerNewsGroups(tickerNews, watchlistNewsSearchEl?.value);
   const terms = searchTickerTerms(watchlistNewsSearchEl?.value || "");
+  const view = normalizeNewsView(appSettings.newsView);
+  const viewClass = newsViewClass(view);
   if (!filteredNews.length) {
-    watchlistNewsEl.className = "ticker-news-grid empty";
+    watchlistNewsEl.className = `ticker-news-grid ${viewClass} empty`;
     const category = watchlistNewsCategoryEl?.value || "all";
     const source = watchlistNewsSourceEl?.value || "all";
     watchlistNewsEl.textContent = terms.length
@@ -2752,8 +2771,12 @@ function renderWatchlistNews(tickerNews) {
       : "No watchlist news was returned.";
     return;
   }
-  watchlistNewsEl.className = "ticker-news-grid";
-  watchlistNewsEl.innerHTML = filteredNews.map(renderTickerNews).join("");
+  watchlistNewsEl.className = `ticker-news-grid ${viewClass}`;
+  watchlistNewsEl.innerHTML = filteredNews.map((group) => renderTickerNews(group, view)).join("");
+}
+
+function newsViewClass(view) {
+  return `news-view-${normalizeNewsView(view).replace("_", "-")}`;
 }
 
 function applyWatchlistNewsSearch(options = {}) {
@@ -2818,10 +2841,13 @@ function updateNewsFilterControls(news) {
   watchlistNewsSourceEl.value = sources.has(selectedSource) ? selectedSource : "all";
 }
 
-function renderTickerNews(tickerGroup) {
+function renderTickerNews(tickerGroup, view = "cards_1") {
   const articles = tickerGroup.articles || [];
   const warnings = tickerGroup.warnings || [];
   const ticker = tickerGroup.ticker || "";
+  if (view === "list") {
+    return renderTickerNewsList(tickerGroup);
+  }
   const isExpanded = expandedNewsTickers.has(ticker);
   const visibleArticles = isExpanded
     ? articles.slice(0, NEWS_EXPANDED_HEADLINE_COUNT)
@@ -2837,6 +2863,41 @@ function renderTickerNews(tickerGroup) {
       </div>
       ${warnings.length ? `<div class="inline-warning">${warnings.map(escapeHtml).join(" ")}</div>` : ""}
       ${articles.length ? articleMarkup : `<p class="news-empty">No recent headlines returned.</p>`}
+    </article>
+  `;
+}
+
+function renderTickerNewsList(tickerGroup) {
+  const articles = tickerGroup.articles || [];
+  const warnings = tickerGroup.warnings || [];
+  const ticker = tickerGroup.ticker || "";
+  const visibleArticles = articles.slice(0, NEWS_EXPANDED_HEADLINE_COUNT);
+  return `
+    <article class="ticker-news-card list-view">
+      <div class="ticker-news-header">
+        <h4>${escapeHtml(ticker)}</h4>
+        <span class="ticker-news-count">${articles.length} headline(s)</span>
+      </div>
+      ${warnings.length ? `<div class="inline-warning">${warnings.map(escapeHtml).join(" ")}</div>` : ""}
+      ${visibleArticles.length ? `<div class="ticker-news-list">${visibleArticles.map(renderArticleListItem).join("")}</div>` : `<p class="news-empty">No recent headlines returned.</p>`}
+    </article>
+  `;
+}
+
+function renderArticleListItem(article) {
+  const published = article.published_at ? new Date(article.published_at).toLocaleString() : "";
+  const articleUrl = safeUrl(article.url);
+  const title = articleUrl
+    ? `<a href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
+    : `<span>${escapeHtml(article.title)}</span>`;
+  return `
+    <article class="news-list-item">
+      <h5>${title}</h5>
+      <div class="news-meta">
+        ${article.publisher ? `<span>${escapeHtml(article.publisher)}</span>` : ""}
+        ${published ? `<time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time>` : ""}
+      </div>
+      ${renderNewsChips(article)}
     </article>
   `;
 }

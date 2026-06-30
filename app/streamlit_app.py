@@ -183,6 +183,12 @@ SCANNER_VIEW_LABELS = {
     "table": "Table",
     "cards": "Cards",
 }
+NEWS_VIEW_OPTIONS = ("cards_1", "cards_2", "list")
+NEWS_VIEW_LABELS = {
+    "cards_1": "1-column cards",
+    "cards_2": "2-column cards",
+    "list": "Compact list",
+}
 SCANNER_SORT_OPTIONS = {
     "score": "Setup score",
     "ticker": "Ticker",
@@ -216,6 +222,7 @@ STREAMLIT_DEFAULT_SETTINGS = {
     "auto_load": True,
     "auto_refresh": True,
     "news_per_ticker": NEWS_EXPANDED_HEADLINE_COUNT,
+    "news_view": "cards_1",
 }
 
 
@@ -689,6 +696,12 @@ def normalize_news_count(value: object) -> int:
     return max(1, min(NEWS_MAX_HEADLINE_COUNT, count))
 
 
+def normalize_news_view(value: object) -> str:
+    """Return a supported watchlist news presentation mode."""
+    candidate = str(value or "")
+    return candidate if candidate in NEWS_VIEW_OPTIONS else str(STREAMLIT_DEFAULT_SETTINGS["news_view"])
+
+
 def normalize_chart_type(value: object) -> str:
     """Return a supported Streamlit chart type label."""
     candidate = str(value or "")
@@ -867,6 +880,7 @@ def normalize_streamlit_settings(value: object) -> dict[str, Any]:
         "auto_load": bool(source.get("auto_load", STREAMLIT_DEFAULT_SETTINGS["auto_load"])),
         "auto_refresh": bool(source.get("auto_refresh", STREAMLIT_DEFAULT_SETTINGS["auto_refresh"])),
         "news_per_ticker": normalize_news_count(source.get("news_per_ticker")),
+        "news_view": normalize_news_view(source.get("news_view")),
     }
 
 
@@ -2569,12 +2583,17 @@ def render_app_chrome() -> str:
             letter-spacing: 0.04em;
           }
           .streamlit-report-grid,
-          .streamlit-chart-grid,
-          .streamlit-ticker-news-grid {
+          .streamlit-chart-grid {
             align-items: start;
             display: grid;
             gap: 0.9rem;
             grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+          }
+          .streamlit-ticker-news-grid {
+            align-items: start;
+            display: grid;
+            gap: 0.75rem;
+            grid-template-columns: 1fr;
           }
           .streamlit-report-layout-price-ladder,
           .streamlit-report-layout-compact {
@@ -3102,6 +3121,20 @@ def render_app_chrome() -> str:
             display: grid;
             gap: 0.65rem;
             padding: 0.85rem;
+          }
+          .streamlit-ticker-news-card.list-view {
+            background: #ffffff;
+            gap: 0.5rem;
+            padding: 0.75rem;
+          }
+          .streamlit-news-list {
+            display: grid;
+            gap: 0.45rem;
+          }
+          .streamlit-news-list-item .streamlit-news-card {
+            border-radius: 0.45rem;
+            box-shadow: none;
+            padding: 0.65rem;
           }
           .streamlit-ticker-news-header {
             align-items: center;
@@ -5618,6 +5651,32 @@ def ticker_news_card_html(ticker_group: Any, expanded: bool = False) -> str:
     )
 
 
+def ticker_news_list_card_html(ticker_group: Any) -> str:
+    """Return a compact one-column ticker news list card."""
+    articles = list(ticker_group.articles or [])[:NEWS_EXPANDED_HEADLINE_COUNT]
+    warnings = "".join(f'<div class="inline-warning">{escape(warning)}</div>' for warning in ticker_group.warnings)
+    article_rows = "".join(
+        (
+            '<article class="streamlit-news-list-item">'
+            f"{article_card_html(article, compact=True)}"
+            "</article>"
+        )
+        for article in articles
+    )
+    if not article_rows:
+        article_rows = '<p class="news-empty">No recent headlines returned.</p>'
+    return (
+        '<article class="streamlit-ticker-news-card list-view">'
+        '<div class="streamlit-ticker-news-header">'
+        f'<div class="streamlit-ticker-news-title"><h4>{escape(ticker_group.ticker)}</h4>'
+        f"<span>{len(ticker_group.articles or [])} headline(s)</span></div>"
+        "</div>"
+        f"{warnings}"
+        f'<div class="streamlit-news-list">{article_rows}</div>'
+        "</article>"
+    )
+
+
 def render_ticker_news_card(ticker_group: Any) -> None:
     """Render one watchlist news card with local HTML expansion."""
     st.markdown(ticker_news_card_html(ticker_group), unsafe_allow_html=True)
@@ -5656,12 +5715,30 @@ def filter_ticker_news_articles(ticker_news: list[Any], category: str = "all", s
     return filtered
 
 
-def render_ticker_news_grid(ticker_news: list[Any], empty_message: str = "No watchlist news was returned.") -> None:
+def ticker_news_grid_column_count(view: object, group_count: int) -> int:
+    """Return the deterministic card column count for the selected news view."""
+    normalized = normalize_news_view(view)
+    if normalized == "cards_2":
+        return min(2, max(1, group_count))
+    return 1
+
+
+def render_ticker_news_grid(
+    ticker_news: list[Any],
+    empty_message: str = "No watchlist news was returned.",
+    view: object | None = None,
+) -> None:
     """Render watchlist news groups in a compact responsive grid."""
     if not ticker_news:
         st.info(empty_message)
         return
-    columns = st.columns(min(3, len(ticker_news)))
+    news_view = normalize_news_view(view or st.session_state.get("news_view"))
+    if news_view == "list":
+        cards = "".join(ticker_news_list_card_html(group) for group in ticker_news)
+        st.markdown(f'<div class="streamlit-ticker-news-grid streamlit-news-view-list">{cards}</div>', unsafe_allow_html=True)
+        return
+
+    columns = st.columns(ticker_news_grid_column_count(news_view, len(ticker_news)))
     for index, group in enumerate(ticker_news):
         with columns[index % len(columns)]:
             render_ticker_news_card(group)
@@ -5776,7 +5853,8 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
     else:
         st.info("No general market headlines were returned.")
 
-    watchlist_heading_col, watchlist_search_col, category_col, source_col = st.columns([1.4, 1, 1, 1], vertical_alignment="center")
+    settings_before_news_controls = current_streamlit_settings()
+    watchlist_heading_col, watchlist_search_col, category_col, source_col, view_col = st.columns([1.4, 1, 1, 1, 1], vertical_alignment="center")
     with watchlist_heading_col:
         st.markdown('<div class="streamlit-section-header"><h2>Watchlist News</h2></div>', unsafe_allow_html=True)
     with watchlist_search_col:
@@ -5800,6 +5878,15 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
             format_func=lambda value: "All" if value == "all" else value,
             key="watchlist_news_source",
         )
+    with view_col:
+        news_view = st.selectbox(
+            "View",
+            NEWS_VIEW_OPTIONS,
+            format_func=lambda value: NEWS_VIEW_LABELS.get(value, value),
+            key="news_view",
+        )
+    if settings_before_news_controls["news_view"] != normalize_news_view(news_view):
+        persist_session_settings()
     visible_ticker_news = filter_ticker_news_groups(report.ticker_news, news_search)
     visible_ticker_news = filter_ticker_news_articles(visible_ticker_news, news_category, news_source)
     if news_search and not visible_ticker_news:
@@ -5809,7 +5896,7 @@ def render_news(report: NewsResponse, snapshot: MarketSnapshotResponse | None = 
     else:
         if news_search:
             st.caption(f"Showing {len(visible_ticker_news)} of {len(report.ticker_news)} ticker(s).")
-        render_ticker_news_grid(visible_ticker_news)
+        render_ticker_news_grid(visible_ticker_news, view=news_view)
 
     st.markdown('<div class="streamlit-section-header"><h2>X.com</h2></div>', unsafe_allow_html=True)
     render_x_timeline()
@@ -7146,6 +7233,7 @@ def ensure_streamlit_settings() -> None:
     st.session_state.auto_load_saved_watchlist = settings["auto_load"]
     st.session_state.auto_refresh_enabled = settings["auto_refresh"]
     st.session_state.news_per_ticker = settings["news_per_ticker"]
+    st.session_state.news_view = settings["news_view"]
     st.session_state.streamlit_settings_loaded = True
 
 
@@ -7174,6 +7262,7 @@ def current_streamlit_settings() -> dict[str, Any]:
             "auto_load": st.session_state.get("auto_load_saved_watchlist", True),
             "auto_refresh": st.session_state.get("auto_refresh_enabled", True),
             "news_per_ticker": st.session_state.get("news_per_ticker", NEWS_EXPANDED_HEADLINE_COUNT),
+            "news_view": st.session_state.get("news_view", STREAMLIT_DEFAULT_SETTINGS["news_view"]),
         }
     )
 
