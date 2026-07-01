@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -1129,7 +1129,13 @@ def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
     group = TickerNews(
         ticker="AAPL",
         articles=[
-            NewsArticle(title=f"Headline {index}", category="general" if index % 2 else "earnings")
+            NewsArticle(
+                title=f"Headline {index}",
+                publisher="Yahoo Finance" if index == 0 else None,
+                published_at=datetime.now(timezone.utc) - timedelta(minutes=5) if index == 0 else None,
+                summary="Investors focus on the product update and margin outlook." if index == 0 else None,
+                category="general" if index % 2 else "earnings",
+            )
             for index in range(8)
         ],
     )
@@ -1140,7 +1146,15 @@ def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
 
     assert "Headline 0" in collapsed
     assert "Headline 5" not in collapsed
+    assert "streamlit-news-collapsed-row" in collapsed
+    assert "streamlit-news-collapsed-headline" in collapsed
+    assert "streamlit-news-chips" in collapsed
+    assert "<time datetime=" in collapsed
+    assert "Yahoo Finance" not in collapsed
+    assert "Investors focus" not in collapsed
     assert "Headline 5" in expanded
+    assert "Investors focus on the product update and margin outlook." in expanded
+    assert "streamlit-news-summary" in expanded
     assert "streamlit-news-category-details" in expanded
     assert "streamlit-news-toggle-details" in card
     assert "streamlit-news-toggle-arrow" in card

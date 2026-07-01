@@ -138,11 +138,18 @@ def test_static_news_filters_and_article_chips_are_wired():
     assert "updateSettings({ newsView: watchlistNewsViewEl.value });" in js
     assert "function newsViewClass(view)" in js
     assert "function renderTickerNewsList(tickerGroup)" in js
+    assert "function renderCollapsedArticleRow(article)" in js
+    assert "function articleKeyMessage(article)" in js
+    assert "function formatNewsDate(value)" in js
+    assert "renderArticleCard(article, { compact: true, showSummary: true })" in js
     assert "function updateNewsFilterControls(news)" in js
     assert "function renderNewsChips(article)" in js
     assert "articleMatchesNewsFilters(article, category, source)" in js
     assert ".news-filter" in css
     assert ".news-chips" in css
+    assert ".news-collapsed-row" in css
+    assert ".news-collapsed-headline" in css
+    assert ".news-key-message" in css
     assert ".ticker-news-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }" in css
     assert ".ticker-news-grid.news-view-cards-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in css
     assert ".ticker-news-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit" not in css

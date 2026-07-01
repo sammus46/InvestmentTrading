@@ -2854,7 +2854,7 @@ function renderTickerNews(tickerGroup, view = "cards_1") {
     : articles.slice(0, NEWS_COLLAPSED_HEADLINE_COUNT);
   const articleMarkup = isExpanded
     ? renderCategorizedTickerArticles(visibleArticles)
-    : `<div class="ticker-articles">${visibleArticles.map((article) => renderArticleCard(article, { compact: true })).join("")}</div>`;
+    : `<div class="ticker-articles collapsed">${visibleArticles.map(renderCollapsedArticleRow).join("")}</div>`;
   return `
     <article class="ticker-news-card ${isExpanded ? "expanded" : ""}">
       <div class="ticker-news-header">
@@ -2885,7 +2885,7 @@ function renderTickerNewsList(tickerGroup) {
 }
 
 function renderArticleListItem(article) {
-  const published = article.published_at ? new Date(article.published_at).toLocaleString() : "";
+  const published = formatNewsDate(article.published_at);
   const articleUrl = safeUrl(article.url);
   const title = articleUrl
     ? `<a href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
@@ -2933,12 +2933,29 @@ function renderCategorizedTickerArticles(articles) {
           <span>${categoryArticles.length}</span>
         </div>
         <div class="ticker-articles">
-          ${categoryArticles.map((article) => renderArticleCard(article, { compact: true })).join("")}
+          ${categoryArticles.map((article) => renderArticleCard(article, { compact: true, showSummary: true })).join("")}
         </div>
       </section>
     `;
   }).join("");
   return groups ? `<div class="ticker-article-groups">${groups}</div>` : `<p class="news-empty">No categorized headlines returned.</p>`;
+}
+
+function renderCollapsedArticleRow(article) {
+  const published = formatNewsDate(article.published_at);
+  const articleUrl = safeUrl(article.url);
+  const title = articleUrl
+    ? `<a href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
+    : `<span>${escapeHtml(article.title)}</span>`;
+  return `
+    <article class="news-collapsed-row">
+      <div class="news-collapsed-headline">
+        <h5>${title}</h5>
+        ${published ? `<time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time>` : ""}
+      </div>
+      ${renderNewsChips(article)}
+    </article>
+  `;
 }
 
 function groupArticlesByCategory(articles) {
@@ -3027,7 +3044,7 @@ function showXTimelineFallbackIfNeeded() {
 }
 
 function renderArticleCard(article, options = {}) {
-  const published = article.published_at ? new Date(article.published_at).toLocaleString() : "";
+  const published = formatNewsDate(article.published_at);
   const related = article.related_tickers?.length
     ? `<div class="related-tickers">${article.related_tickers.slice(0, 6).map((ticker) => `<span>${escapeHtml(ticker)}</span>`).join("")}</div>`
     : "";
@@ -3051,11 +3068,39 @@ function renderArticleCard(article, options = {}) {
           ${published ? `<time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time>` : ""}
         </div>
         ${chips}
-        ${article.summary && !options.compact ? `<p>${escapeHtml(article.summary)}</p>` : ""}
+        ${options.showSummary || !options.compact ? renderArticleKeyMessage(article) : ""}
         ${related}
       </div>
     </article>
   `;
+}
+
+function renderArticleKeyMessage(article) {
+  const message = articleKeyMessage(article);
+  return message ? `<p class="news-key-message">${escapeHtml(message)}</p>` : "";
+}
+
+function articleKeyMessage(article) {
+  return String(article.key_message || article.summary || "").trim();
+}
+
+function formatNewsDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    const ageMinutes = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 60000));
+    if (ageMinutes < 1) return "Just now";
+    if (ageMinutes < 60) return `${ageMinutes} min ago`;
+    const ageHours = Math.floor(ageMinutes / 60);
+    return `${ageHours} hr${ageHours === 1 ? "" : "s"} ago`;
+  }
+  const options = { weekday: "short", month: "short", day: "numeric" };
+  if (date.getFullYear() !== now.getFullYear()) {
+    options.year = "numeric";
+  }
+  return date.toLocaleDateString(undefined, options);
 }
 
 function renderNewsChips(article) {
