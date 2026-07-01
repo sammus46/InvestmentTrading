@@ -2945,13 +2945,15 @@ function renderCollapsedArticleRow(article) {
   const published = formatNewsDate(article.published_at);
   const articleUrl = safeUrl(article.url);
   const title = articleUrl
-    ? `<a href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
-    : `<span>${escapeHtml(article.title)}</span>`;
+    ? `<a class="news-collapsed-title" href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>`
+    : `<span class="news-collapsed-title">${escapeHtml(article.title)}</span>`;
+  const date = published
+    ? `<span class="news-collapsed-date"><span class="news-date-separator" aria-hidden="true">|</span><time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time></span>`
+    : "";
   return `
     <article class="news-collapsed-row">
       <div class="news-collapsed-headline">
-        <h5>${title}</h5>
-        ${published ? `<time datetime="${escapeHtml(article.published_at)}">${escapeHtml(published)}</time>` : ""}
+        <h5>${title}${date}</h5>
       </div>
       ${renderNewsChips(article)}
     </article>

@@ -1149,7 +1149,11 @@ def test_streamlit_watchlist_news_card_supports_collapsed_and_expanded_body():
     assert "streamlit-news-collapsed-row" in collapsed
     assert "streamlit-news-collapsed-headline" in collapsed
     assert "streamlit-news-chips" in collapsed
+    assert "streamlit-news-collapsed-date" in collapsed
+    assert "streamlit-news-date-separator" in collapsed
+    assert 'aria-hidden="true">|</span><time' in collapsed
     assert "<time datetime=" in collapsed
+    assert "</time></span></h5>" in collapsed
     assert "Yahoo Finance" not in collapsed
     assert "Investors focus" not in collapsed
     assert "Headline 5" in expanded

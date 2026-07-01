@@ -608,17 +608,19 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .ticker-news-card { align-content: start; background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: grid; gap: 10px; grid-auto-rows: max-content; padding: 14px; }
 .ticker-news-card.expanded { background: #ffffff; }
 .ticker-news-card.list-view { background: #ffffff; gap: 8px; padding: 12px; }
-.ticker-news-header { align-items: center; display: flex; justify-content: space-between; gap: 12px; }
-.ticker-news-header h4 { color: #12312f; letter-spacing: 0.06em; margin: 0; }
+.ticker-news-header { align-items: center; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; gap: 12px; padding-bottom: 4px; }
+.ticker-news-header h4 { background: #ccfbf1; border: 1px solid #99f6e4; border-radius: 6px; color: #0b3b37; font-size: 1.16rem; font-weight: 1000; letter-spacing: 0.05em; line-height: 1; margin: 0; padding: 5px 8px; }
 .ticker-news-count { color: #64748b; font-size: 0.76rem; font-weight: 900; text-transform: uppercase; }
 .ticker-articles { align-content: start; display: grid; gap: 10px; }
 .ticker-articles.collapsed { gap: 8px; }
 .news-collapsed-row { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 7px; display: grid; gap: 7px; padding: 9px 10px; }
-.news-collapsed-headline { align-items: baseline; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
+.news-collapsed-headline { display: block; }
 .news-collapsed-headline h5 { font-size: 0.92rem; line-height: 1.32; margin: 0; min-width: 0; }
-.news-collapsed-headline h5 a, .news-collapsed-headline h5 span { color: #111827; text-decoration: none; }
-.news-collapsed-headline h5 a:hover { color: #0f766e; text-decoration: underline; }
-.news-collapsed-headline time { color: #64748b; font-size: 0.72rem; font-weight: 900; text-transform: uppercase; white-space: nowrap; }
+.news-collapsed-title { color: #111827; text-decoration: none; }
+.news-collapsed-title:hover { color: #0f766e; text-decoration: underline; }
+.news-collapsed-date { align-items: baseline; color: #64748b; display: inline-flex; font-size: 0.72rem; font-weight: 900; gap: 6px; margin-left: 7px; text-transform: uppercase; white-space: nowrap; }
+.news-collapsed-date time { color: inherit; font: inherit; text-transform: inherit; white-space: nowrap; }
+.news-date-separator { color: #94a3b8; font-weight: 900; }
 .ticker-news-list { display: grid; gap: 8px; }
 .news-list-item { background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 8px; display: grid; gap: 6px; padding: 10px; }
 .news-list-item h5 { font-size: 0.92rem; line-height: 1.3; margin: 0; }
@@ -663,7 +665,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .news-search input, .news-filter select, .report-search input { min-width: 0; width: 100%; }
   .news-list, .ticker-news-grid, .ticker-news-grid.news-view-cards-2 { grid-template-columns: 1fr; }
   .news-card { grid-template-columns: 112px 1fr; }
-  .news-collapsed-headline { grid-template-columns: 1fr; gap: 3px; }
+  .news-collapsed-date { margin-left: 5px; }
   .performance-tile, .performance-tile.compact { grid-template-columns: 1fr; }
 }
 
@@ -900,10 +902,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .analytics-tile h4,
   .recommendation-card h4,
   .news-card h4 a,
-  .news-collapsed-headline h5 a,
-  .news-collapsed-headline h5 span,
+  .news-collapsed-title,
   .news-list-item h5 a,
-  .ticker-news-header h4,
   .pattern-detail summary {
     color: #e5edf4;
   }
@@ -923,9 +923,18 @@ button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   }
   .ticker-article-group-heading h5,
   .ticker-article-group-heading span,
-  .news-collapsed-headline time,
+  .news-collapsed-date,
+  .news-date-separator,
   .news-key-message {
     color: #94a3b8;
+  }
+  .ticker-news-header {
+    border-bottom-color: #263241;
+  }
+  .ticker-news-header h4 {
+    background: #0b3b37;
+    border-color: #0f766e;
+    color: #ccfbf1;
   }
   .news-chips span {
     background: #083344;

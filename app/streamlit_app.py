@@ -1807,9 +1807,7 @@ def render_app_chrome() -> str:
           }
           .streamlit-news-collapsed-headline {
             align-items: baseline;
-            display: grid;
-            gap: 0.5rem;
-            grid-template-columns: minmax(0, 1fr) auto;
+            display: block;
           }
           .streamlit-news-collapsed-headline h5 {
             font-size: 0.92rem;
@@ -1827,11 +1825,25 @@ def render_app_chrome() -> str:
             text-decoration: underline;
           }
           .streamlit-news-collapsed-headline time {
+            color: inherit !important;
+            font: inherit;
+            text-transform: inherit;
+            white-space: nowrap;
+          }
+          .streamlit-news-collapsed-date {
+            align-items: baseline;
             color: #64748b !important;
+            display: inline-flex;
             font-size: 0.72rem;
             font-weight: 900;
+            gap: 0.38rem;
+            margin-left: 0.45rem;
             text-transform: uppercase;
             white-space: nowrap;
+          }
+          .streamlit-news-date-separator {
+            color: #94a3b8 !important;
+            font-weight: 900;
           }
           .streamlit-related-tickers {
             display: flex;
@@ -3178,10 +3190,12 @@ def render_app_chrome() -> str:
           }
           .streamlit-ticker-news-header {
             align-items: center;
+            border-bottom: 1px solid #e2e8f0;
             display: flex;
             gap: 0.5rem;
             justify-content: space-between;
             margin-bottom: 0.65rem;
+            padding-bottom: 0.25rem;
           }
           .streamlit-news-toggle-details {
             display: grid;
@@ -3225,9 +3239,15 @@ def render_app_chrome() -> str:
             gap: 0.5rem;
           }
           .streamlit-ticker-news-title h4 {
+            background: #ccfbf1;
+            border: 1px solid #99f6e4;
+            border-radius: 0.4rem;
             color: #12312f;
+            font-size: 1.16rem;
+            font-weight: 1000;
             letter-spacing: 0.06em;
             margin: 0;
+            padding: 0.3rem 0.5rem;
           }
           .streamlit-ticker-news-title span {
             color: #64748b !important;
@@ -3281,8 +3301,10 @@ def render_app_chrome() -> str:
               grid-template-columns: 1fr;
             }
             .streamlit-news-collapsed-headline {
-              gap: 0.2rem;
-              grid-template-columns: 1fr;
+              display: block;
+            }
+            .streamlit-news-collapsed-date {
+              margin-left: 0.35rem;
             }
             .report-header {
               align-items: stretch;
@@ -3428,7 +3450,8 @@ def render_app_chrome() -> str:
 	            .streamlit-news-meta,
 	            .streamlit-news-related,
 	            .streamlit-news-summary,
-	            .streamlit-news-collapsed-headline time,
+	            .streamlit-news-collapsed-date,
+	            .streamlit-news-date-separator,
 	            .streamlit-ticker-news-title span,
 	            .levels-table th,
 	            .compare-table th,
@@ -3518,6 +3541,14 @@ def render_app_chrome() -> str:
 	              background: #172554 !important;
 	              border-color: #1d4ed8 !important;
 	              color: #bfdbfe !important;
+	            }
+	            .streamlit-ticker-news-header {
+	              border-bottom-color: var(--border) !important;
+	            }
+	            .streamlit-ticker-news-title h4 {
+	              background: var(--brand-soft) !important;
+	              border-color: var(--brand-border) !important;
+	              color: var(--emphasis-text) !important;
 	            }
 	            .metric-card-header,
 	            .compare-table th:first-child,
@@ -3740,7 +3771,8 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .streamlit-news-meta,
             body:has(.streamlit-theme-marker) .streamlit-news-related,
             body:has(.streamlit-theme-marker) .streamlit-news-summary,
-            body:has(.streamlit-theme-marker) .streamlit-news-collapsed-headline time,
+            body:has(.streamlit-theme-marker) .streamlit-news-collapsed-date,
+            body:has(.streamlit-theme-marker) .streamlit-news-date-separator,
             body:has(.streamlit-theme-marker) .streamlit-ticker-news-title span,
             body:has(.streamlit-theme-marker) .levels-table th,
             body:has(.streamlit-theme-marker) .compare-table th,
@@ -3847,12 +3879,20 @@ def render_app_chrome() -> str:
               background: var(--major-market-bg) !important;
               border: 1px solid var(--major-market-border) !important;
             }
-            body:has(.streamlit-theme-marker) .streamlit-market-grid.major .streamlit-market-tile {
-              background: transparent !important;
-              border-color: var(--major-market-tile-border) !important;
-              color: var(--major-market-text) !important;
-              box-shadow: none !important;
-            }
+	            body:has(.streamlit-theme-marker) .streamlit-market-grid.major .streamlit-market-tile {
+	              background: transparent !important;
+	              border-color: var(--major-market-tile-border) !important;
+	              color: var(--major-market-text) !important;
+	              box-shadow: none !important;
+	            }
+	            body:has(.streamlit-theme-marker) .streamlit-ticker-news-header {
+	              border-bottom-color: var(--border) !important;
+	            }
+	            body:has(.streamlit-theme-marker) .streamlit-ticker-news-title h4 {
+	              background: var(--brand-soft) !important;
+	              border-color: var(--brand-border) !important;
+	              color: var(--emphasis-text) !important;
+	            }
             body:has(.streamlit-theme-marker) .metric-card-header,
             body:has(.streamlit-theme-marker) .compare-table th:first-child,
             body:has(.streamlit-theme-marker) .levels-table .current td {
@@ -5633,11 +5673,18 @@ def collapsed_article_row_html(article: NewsArticle) -> str:
         )
     else:
         title_html = f'<span class="streamlit-collapsed-news-title">{escape(article.title)}</span>'
-    date_html = f'<time datetime="{escape(article.published_at.isoformat())}">{escape(published)}</time>' if article.published_at and published else ""
+    date_html = (
+        '<span class="streamlit-news-collapsed-date">'
+        '<span class="streamlit-news-date-separator" aria-hidden="true">|</span>'
+        f'<time datetime="{escape(article.published_at.isoformat())}">{escape(published)}</time>'
+        "</span>"
+        if article.published_at and published
+        else ""
+    )
     return (
         '<article class="streamlit-news-collapsed-row">'
         '<div class="streamlit-news-collapsed-headline">'
-        f"<h5>{title_html}</h5>{date_html}"
+        f"<h5>{title_html}{date_html}</h5>"
         "</div>"
         f"{news_chips_html(article)}"
         "</article>"
