@@ -1790,8 +1790,48 @@ def render_app_chrome() -> str:
           }
           .streamlit-news-summary {
             color: #334155 !important;
+            display: -webkit-box;
             line-height: 1.55;
             margin: 0;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .streamlit-news-collapsed-row {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.45rem;
+            display: grid;
+            gap: 0.45rem;
+            padding: 0.6rem 0.65rem;
+          }
+          .streamlit-news-collapsed-headline {
+            align-items: baseline;
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: minmax(0, 1fr) auto;
+          }
+          .streamlit-news-collapsed-headline h5 {
+            font-size: 0.92rem;
+            line-height: 1.32;
+            margin: 0;
+            min-width: 0;
+          }
+          .streamlit-collapsed-news-title {
+            color: #111827 !important;
+            font-weight: 900;
+            text-decoration: none;
+          }
+          .streamlit-collapsed-news-title:hover {
+            color: #0f766e !important;
+            text-decoration: underline;
+          }
+          .streamlit-news-collapsed-headline time {
+            color: #64748b !important;
+            font-size: 0.72rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            white-space: nowrap;
           }
           .streamlit-related-tickers {
             display: flex;
@@ -3199,25 +3239,35 @@ def render_app_chrome() -> str:
           .streamlit-news-category-details {
             background: #ffffff;
             border: 1px solid #dbe3ef;
-            border-left: 4px solid #0f766e;
+            border-left: 3px solid #0f766e;
             border-radius: 0.5rem;
             margin-top: 0.5rem;
             overflow: hidden;
           }
           .streamlit-news-category-details summary {
-            background: var(--emphasis-bg);
-            color: var(--emphasis-text);
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            color: #334155 !important;
             cursor: pointer;
-            font-size: 0.78rem;
+            font-size: 0.76rem;
             font-weight: 900;
-            letter-spacing: 0.05em;
-            padding: 0.55rem 0.7rem;
+            letter-spacing: 0.04em;
+            padding: 0.5rem 0.65rem;
             text-transform: uppercase;
           }
           .streamlit-news-category-details > div {
             display: grid;
-            gap: 0.5rem;
-            padding: 0.55rem;
+            gap: 0.45rem;
+            padding: 0.5rem;
+          }
+          .streamlit-news-category-details .streamlit-news-card {
+            box-shadow: none;
+            gap: 0.45rem;
+            margin: 0;
+            padding: 0.65rem;
+          }
+          .streamlit-news-category-details .streamlit-news-title {
+            font-size: 0.95rem;
           }
           @media (max-width: 760px) {
             .stApp {
@@ -3228,6 +3278,10 @@ def render_app_chrome() -> str:
               padding-right: 0.5rem;
             }
             .streamlit-news-card.with-image {
+              grid-template-columns: 1fr;
+            }
+            .streamlit-news-collapsed-headline {
+              gap: 0.2rem;
               grid-template-columns: 1fr;
             }
             .report-header {
@@ -3332,6 +3386,7 @@ def render_app_chrome() -> str:
 	            .report-panel,
 	            .metric-card,
 	            .streamlit-news-card,
+	            .streamlit-news-collapsed-row,
 	            .streamlit-market-tile,
 	            .streamlit-scanner-card,
 	            .streamlit-page-hero,
@@ -3355,6 +3410,7 @@ def render_app_chrome() -> str:
 	            .streamlit-chart-header h2,
 	            .metric-value,
 	            .streamlit-news-title,
+	            .streamlit-collapsed-news-title,
 	            .streamlit-scanner-card h2,
 	            .streamlit-scanner-card h3,
 	            .streamlit-scanner-card p,
@@ -3372,6 +3428,7 @@ def render_app_chrome() -> str:
 	            .streamlit-news-meta,
 	            .streamlit-news-related,
 	            .streamlit-news-summary,
+	            .streamlit-news-collapsed-headline time,
 	            .streamlit-ticker-news-title span,
 	            .levels-table th,
 	            .compare-table th,
@@ -3405,6 +3462,7 @@ def render_app_chrome() -> str:
 	            .metric-section-title,
 	            .streamlit-takeaway,
 	            div[data-testid="stExpander"] summary,
+	            .streamlit-news-category-details summary,
 	            .ladder-notes div,
 	            .compact-metric,
 	            .metric-empty,
@@ -3461,7 +3519,6 @@ def render_app_chrome() -> str:
 	              border-color: #1d4ed8 !important;
 	              color: #bfdbfe !important;
 	            }
-	            .streamlit-news-category-details summary,
 	            .metric-card-header,
 	            .compare-table th:first-child,
 	            .levels-table .current td {
@@ -3635,6 +3692,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .report-panel,
             body:has(.streamlit-theme-marker) .metric-card,
             body:has(.streamlit-theme-marker) .streamlit-news-card,
+            body:has(.streamlit-theme-marker) .streamlit-news-collapsed-row,
             body:has(.streamlit-theme-marker) .streamlit-market-tile,
             body:has(.streamlit-theme-marker) .streamlit-scanner-card,
             body:has(.streamlit-theme-marker) .streamlit-page-hero,
@@ -3663,6 +3721,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .streamlit-chart-header h2,
             body:has(.streamlit-theme-marker) .metric-value,
             body:has(.streamlit-theme-marker) .streamlit-news-title,
+            body:has(.streamlit-theme-marker) .streamlit-collapsed-news-title,
             body:has(.streamlit-theme-marker) .streamlit-scanner-card h2,
             body:has(.streamlit-theme-marker) .streamlit-scanner-card h3,
             body:has(.streamlit-theme-marker) .streamlit-scanner-card p,
@@ -3681,6 +3740,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .streamlit-news-meta,
             body:has(.streamlit-theme-marker) .streamlit-news-related,
             body:has(.streamlit-theme-marker) .streamlit-news-summary,
+            body:has(.streamlit-theme-marker) .streamlit-news-collapsed-headline time,
             body:has(.streamlit-theme-marker) .streamlit-ticker-news-title span,
             body:has(.streamlit-theme-marker) .levels-table th,
             body:has(.streamlit-theme-marker) .compare-table th,
@@ -3722,6 +3782,7 @@ def render_app_chrome() -> str:
             body:has(.streamlit-theme-marker) .metric-section-title,
             body:has(.streamlit-theme-marker) .streamlit-takeaway,
             body:has(.streamlit-theme-marker) div[data-testid="stExpander"] summary,
+            body:has(.streamlit-theme-marker) .streamlit-news-category-details summary,
             body:has(.streamlit-theme-marker) .ladder-notes div,
             body:has(.streamlit-theme-marker) .compact-metric,
             body:has(.streamlit-theme-marker) .metric-empty,
@@ -3792,7 +3853,6 @@ def render_app_chrome() -> str:
               color: var(--major-market-text) !important;
               box-shadow: none !important;
             }
-            body:has(.streamlit-theme-marker) .streamlit-news-category-details summary,
             body:has(.streamlit-theme-marker) .metric-card-header,
             body:has(.streamlit-theme-marker) .compare-table th:first-child,
             body:has(.streamlit-theme-marker) .levels-table .current td {
@@ -5492,9 +5552,9 @@ def render_article(article: NewsArticle) -> None:
     st.markdown(article_card_html(article), unsafe_allow_html=True)
 
 
-def article_card_html(article: NewsArticle, compact: bool = False) -> str:
+def article_card_html(article: NewsArticle, compact: bool = False, show_summary: bool = False) -> str:
     """Return one normalized news article card."""
-    published = article.published_at.astimezone().strftime("%Y-%m-%d %H:%M") if article.published_at else None
+    published = format_streamlit_news_date(article.published_at)
     meta = " | ".join(item for item in [article.publisher, published] if item)
     classes = "streamlit-news-card"
     thumbnail_url = safe_url(article.thumbnail_url)
@@ -5515,7 +5575,8 @@ def article_card_html(article: NewsArticle, compact: bool = False) -> str:
         title_html = f'<span class="streamlit-news-title">{escape(article.title)}</span>'
     meta_html = f'<div class="streamlit-news-meta">{escape(meta)}</div>' if meta else ""
     chips_html = news_chips_html(article)
-    summary_html = f'<p class="streamlit-news-summary">{escape(article.summary)}</p>' if article.summary else ""
+    key_message = article_key_message(article)
+    summary_html = f'<p class="streamlit-news-summary">{escape(key_message)}</p>' if key_message and (show_summary or not compact) else ""
     related_html = ""
     if article.related_tickers:
         ticker_spans = "".join(
@@ -5532,6 +5593,53 @@ def article_card_html(article: NewsArticle, compact: bool = False) -> str:
         '<div class="streamlit-news-body">'
         f"{title_html}{meta_html}{chips_html}{summary_html}{related_html}"
         "</div>"
+        "</article>"
+    )
+
+
+def article_key_message(article: Any) -> str:
+    """Return the best available concise article takeaway."""
+    return str(getattr(article, "key_message", None) or getattr(article, "summary", None) or "").strip()
+
+
+def format_streamlit_news_date(value: datetime | None) -> str:
+    """Return a compact local date for news cards."""
+    if value is None:
+        return ""
+    published = value.astimezone()
+    now = datetime.now(published.tzinfo)
+    if published.date() == now.date():
+        age_minutes = max(0, int((now - published).total_seconds() // 60))
+        if age_minutes < 1:
+            return "Just now"
+        if age_minutes < 60:
+            return f"{age_minutes} min ago"
+        age_hours = age_minutes // 60
+        return f"{age_hours} hr{'s' if age_hours != 1 else ''} ago"
+    formatted = f"{published.strftime('%a, %b')} {published.day}"
+    if published.year != now.year:
+        formatted = f"{formatted}, {published.year}"
+    return formatted
+
+
+def collapsed_article_row_html(article: NewsArticle) -> str:
+    """Return one decluttered collapsed watchlist headline row."""
+    published = format_streamlit_news_date(article.published_at)
+    article_url = safe_url(article.url)
+    if article_url:
+        title_html = (
+            f'<a class="streamlit-collapsed-news-title" href="{escape(article_url)}" '
+            f'target="_blank" rel="noopener noreferrer">{escape(article.title)}</a>'
+        )
+    else:
+        title_html = f'<span class="streamlit-collapsed-news-title">{escape(article.title)}</span>'
+    date_html = f'<time datetime="{escape(article.published_at.isoformat())}">{escape(published)}</time>' if article.published_at and published else ""
+    return (
+        '<article class="streamlit-news-collapsed-row">'
+        '<div class="streamlit-news-collapsed-headline">'
+        f"<h5>{title_html}</h5>{date_html}"
+        "</div>"
+        f"{news_chips_html(article)}"
         "</article>"
     )
 
@@ -5603,7 +5711,7 @@ def ticker_news_body_html(ticker_group: Any, expanded: bool = False) -> str:
             category_articles = grouped.get(category, [])
             if not category_articles:
                 continue
-            category_cards = "".join(article_card_html(article, compact=True) for article in category_articles)
+            category_cards = "".join(article_card_html(article, compact=True, show_summary=True) for article in category_articles)
             category_html.append(
                 '<details class="streamlit-news-category-details" open>'
                 f'<summary>{escape(label)} ({len(category_articles)})</summary>'
@@ -5612,7 +5720,7 @@ def ticker_news_body_html(ticker_group: Any, expanded: bool = False) -> str:
             )
         body_html = "".join(category_html) or '<p class="news-empty">No categorized headlines returned.</p>'
     else:
-        body_html = "".join(article_card_html(article, compact=True) for article in visible_articles)
+        body_html = "".join(collapsed_article_row_html(article) for article in visible_articles)
         if not body_html:
             body_html = '<p class="news-empty">No recent headlines returned.</p>'
 
